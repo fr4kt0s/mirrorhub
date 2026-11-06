@@ -91,6 +91,8 @@ def edit_page(
 def _blank_repo_values(repo: Repository) -> dict[str, str]:
     values = _blank_values()
     values.update(repos.preset_values(presets.config_for_repo(repo)))
+    values["slug"] = repo.slug
+    values["name"] = repo.name
     values["extra_args"] = ", ".join(repo.extra_args)
     return values
 
@@ -123,6 +125,9 @@ async def _save(
             400,
         )
     values = {**_blank_values(), **values}
+    if repo is not None:
+        data["slug"] = repo.slug
+        values["slug"] = repo.slug
     errors = repos.validate(data)
 
     slug_error = repos._ensure_unique_slug(db, data["slug"], repo.id if repo else None)

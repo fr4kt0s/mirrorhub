@@ -12,7 +12,11 @@ MAX_LIST_ITEMS = 64
 MAX_EXTRA_FILES = 32
 MAX_STRING = 200
 
-SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+SLUG_RE = re.compile(
+    r"(?=.{1,253}$)"
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"
+)
 HOST_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 ROOT_RE = re.compile(r"^/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]*$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$")
@@ -74,8 +78,8 @@ ALLOWED_ARGS: dict[str, dict[str, ArgSpec]] = {
 def validate_slug(value: str) -> str | None:
     if not SLUG_RE.fullmatch(value):
         return (
-            "slug: 1-63 characters, lowercase letters, digits and hyphens; "
-            "must start and end with a letter or digit"
+            "repository ID: 1-253 characters; lowercase letters, digits, hyphens and dots; "
+            "each dot-separated part must start and end with a letter or digit"
         )
     return None
 

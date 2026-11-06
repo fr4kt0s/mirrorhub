@@ -290,6 +290,9 @@ def update(
 ) -> Repository:
     before = {field: getattr(repo, field) for field in ("slug", "name", "verify_signatures")}
     for field in DATA_FIELDS:
+        if field == "slug":
+            continue
+        setattr(repo, field, data[field])
         setattr(repo, field, data[field])
     audit.record(
         db,

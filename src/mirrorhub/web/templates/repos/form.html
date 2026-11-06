@@ -11,8 +11,11 @@
 
   <fieldset>
     <legend>Identity</legend>
-    <label>Slug <input name="slug" value="{{ values.slug }}" maxlength="63" required></label>
-    <label>Name <input name="name" value="{{ values.name }}" maxlength="128" required></label>
+<label>Repository ID
+  <input name="slug" value="{{ values.slug }}" maxlength="253" required
+         {% if mode == "edit" %}readonly{% endif %}>
+  <small>Permanent. Also the directory name. Use the upstream hostname, for example archive.ubuntu.com.</small>
+</label>    <label>Name <input name="name" value="{{ values.name }}" maxlength="128" required></label>
     <label>Type
       <select name="kind">
         {% for option in ["apt", "arch", "generic"] %}
