@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Jobs{% endblock %}
+{% block content %}
+<h1>Jobs</h1>
+
+<section class="card">
+  <h2>Start a sync</h2>
+  {% if repos %}
+  <table class="table">
+    <thead><tr><th>Repository</th><th>Tool</th><th>Architectures</th><th></th></tr></thead>
+    <tbody>
+    {% for r in repos %}
+      <tr>
+        <td><code>{{ r.slug }}</code></td>
+        <td>{{ r.tool }}</td>
+        <td>{{ r.architectures | join(", ") }}</td>
+        <td class="row-actions">
+          <button class="btn" hx-post="/jobs/{{ r.id }}/start" hx-target="body">Start sync</button>
+          <button class="btn btn-secondary" hx-post="/jobs/{{ r.id }}/start?dry=1" hx-target="body">Dry run</button>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">Create a repository first.</p>{% endif %}
+</section>
+
+<form class="filters" method="get" action="/jobs">
+  <label>Status
+    <select name="status">
+      <option value="">any</option>
+      {% for s in statuses %}<option value="{{ s }}" {% if filters.status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Repository
+    <select name="repo_id">
+      <option value="0">any</option>
+      {% for r in repos %}<option value="{{ r.id }}" {% if filters.repo_id == r.id %}selected{% endif %}>{{ r.slug }}</option>{% endfor %}
+    </select>
+  </label>
+  <button class="btn btn-secondary" type="submit">Filter</button>
+</form>
+
+<table class="table">
+  <thead><tr><th>#</th><th>Repository</th><th>Type</th><th>Status</th><th>Attempt</th><th>Progress</th><th>Started</th><th></th></tr></thead>
+  <tbody>
+  {% for j in jobs %}
+    <tr>
+      <td>{{ j.id }}</td>
+      <td>{{ repo_names.get(j.repo_id, j.repo_id) }}</td>
+      <td>{{ j.type }}{% if j.dry_run %} (dry){% endif %}</td>
+      <td><span class="badge badge-{{ j.status }}">{{ j.status }}</span></td>
+      <td>{{ j.attempt }}/{{ j.max_attempts }}</td>
+      <td>{% if j.progress_pct is not none %}{{ "%.0f"|format(j.progress_pct) }}%{% else %}<span class="muted">n/a</span>{% endif %}</td>
+      <td>{{ j.started_at | ts }}</td>
+      <td class="row-actions"><a href="/jobs/{{ j.id }}">Open</a></td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="muted">No jobs match.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

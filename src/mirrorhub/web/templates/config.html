@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Config as code{% endblock %}
+{% block content %}
+<h1>Config as code</h1>
+{% if errors %}
+<ul class="alert alert-error">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+{% endif %}
+{% if applied %}
+<p class="alert alert-ok">Import applied. The textarea below now shows the current configuration.</p>
+{% endif %}
+
+<section class="card">
+  <h2>Export</h2>
+  <p class="muted">Repositories and schedules, without secrets. Download or copy the YAML.</p>
+  <p><a class="btn" href="/config/export.yaml">Download mirrorhub-config.yaml</a></p>
+</section>
+
+<section class="card">
+  <h2>Import</h2>
+  <form method="post" action="/config/import">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>YAML
+      <textarea name="yaml_text" rows="18" spellcheck="false">{{ yaml_text }}</textarea>
+    </label>
+    <label class="check"><input type="checkbox" name="overwrite" {% if overwrite %}checked{% endif %}>
+      Overwrite repositories whose slug already exists
+    </label>
+    <label class="check"><input type="checkbox" name="allow_disable_signatures" {% if allow_disable %}checked{% endif %}>
+      Allow disabling signature checking for imported repositories (audited)
+    </label>
+    <div class="form-actions">
+      <button class="btn btn-secondary" type="submit">Preview changes</button>
+      <button class="btn" type="submit" name="apply" value="1">Apply changes</button>
+    </div>
+  </form>
+
+  {% if plan %}
+  <section class="plan">
+    <h3>Planned changes</h3>
+    <ul>
+      <li>Create: {{ plan.creates | length }}</li>
+      <li>Update: {{ plan.updates | length }}</li>
+      <li>Schedule entries: {{ plan.schedules | length }}</li>
+      <li>Conflicts: {{ plan.conflicts | length }}</li>
+      <li>Errors: {{ plan.errors | length }}</li>
+    </ul>
+    {% if plan.creates %}
+      <p><strong>New repositories:</strong> {{ plan.creates | map(attribute="slug") | join(", ") }}</p>
+    {% endif %}
+    {% if plan.updates %}
+      <p><strong>Updated repositories:</strong> {{ plan.updates | map(attribute="slug") | join(", ") }}</p>
+    {% endif %}
+    {% if plan.conflicts %}
+      <p class="alert alert-error">Existing slugs skipped (tick overwrite to update them): {{ plan.conflicts | join(", ") }}</p>
+    {% endif %}
+    {% if plan.errors %}
+      <ul class="alert alert-error">{% for e in plan.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+    {% endif %}
+  </section>
+  {% endif %}
+</section>
+{% endblock %}

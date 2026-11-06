@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Repositories{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Repositories</h1>
+  <a class="btn" href="/repos/new">New repository</a>
+</div>
+{% if errors %}
+<ul class="alert alert-error">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+{% endif %}
+<table class="table">
+  <thead>
+    <tr><th>Slug</th><th>Name</th><th>Type</th><th>Tool</th><th>Upstream</th><th>Architectures</th><th>Signatures</th><th>Enabled</th><th></th></tr>
+  </thead>
+  <tbody>
+  {% for r in repos %}
+    <tr>
+      <td><code>{{ r.slug }}</code></td>
+      <td>{{ r.name }}</td>
+      <td>{{ r.kind }}</td>
+      <td>{{ r.tool }}</td>
+      <td>{{ r.method }}://{{ r.upstream_host }}{{ r.upstream_root }}</td>
+      <td>{{ r.architectures | join(", ") }}</td>
+      <td>{{ "on" if r.verify_signatures else "OFF" }}</td>
+      <td>{{ "yes" if r.enabled else "no" }}</td>
+      <td class="row-actions">
+        <a href="/repos/{{ r.id }}/edit">Edit</a>
+        <button class="btn btn-danger" hx-post="/repos/{{ r.id }}/delete"
+                hx-confirm="Delete repository {{ r.slug }}? Mirror data on disk is kept.">Delete</button>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="9" class="muted">No repositories yet. Start from a preset.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

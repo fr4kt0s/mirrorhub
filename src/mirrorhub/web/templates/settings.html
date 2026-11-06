@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+{% if errors %}<ul class="alert alert-error">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+
+<section class="card">
+  <h2>Runtime settings</h2>
+  <form method="post" action="/settings">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Job log retention (days) <input name="log_retention_days" value="{{ values.log_retention_days }}" inputmode="numeric"></label>
+    <label>Disk warning threshold (%) <input name="disk_warn_percent" value="{{ values.disk_warn_percent }}" inputmode="numeric"></label>
+    <label>Disk critical threshold (%) <input name="disk_critical_percent" value="{{ values.disk_critical_percent }}" inputmode="numeric"></label>
+    <button class="btn" type="submit">Save</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Environment (read-only)</h2>
+  <dl class="facts">
+    <dt>State directory</dt><dd>{{ env.state_dir }}</dd>
+    <dt>Data directory</dt><dd>{{ env.data_dir }}</dd>
+    <dt>Export directory</dt><dd>{{ env.export_dir }}</dd>
+    <dt>Global concurrency</dt><dd>{{ env.global_concurrency }} (MIRRORHUB_GLOBAL_CONCURRENCY, restart to change)</dd>
+    <dt>Heartbeat stale after</dt><dd>{{ env.heartbeat_stale_s }} s</dd>
+    <dt>Session lifetime</dt><dd>{{ env.session_ttl_s }} s</dd>
+    <dt>Log format</dt><dd>{{ env.log_format }}</dd>
+  </dl>
+</section>
+{% endblock %}

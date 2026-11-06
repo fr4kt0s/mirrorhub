@@ -1,0 +1,174 @@
+.........FFF.......F....                                                 [100%]
+=================================== FAILURES ===================================
+_____________________ test_first_incremental_becomes_full ______________________
+
+configured = Settings(role='cli', tool='', state_dir=PosixPath('/tmp/pytest-of-fido/pytest-20/test_first_incremental_becomes0/state...0, log_retention_days=30, session_ttl_s=28800, login_max_attempts=5, login_lockout_s=300, max_gpg_upload_bytes=2097152)
+
+    def test_first_incremental_becomes_full(configured: Settings) -> None:
+        repo = _repository(configured)
+        identifier = engine.execute(_job(repo), repo, configured, _pulse)
+        directory = configured.export_dir / repo.slug / identifier
+    
+        assert (directory / ".done").is_file()
+        assert not directory.with_name(f"{identifier}.tmp").exists()
+>       metadata = verify(directory)
+                   ^^^^^^^^^^^^^^^^^
+
+tests/test_export_layout.py:64: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+directory = PosixPath('/tmp/pytest-of-fido/pytest-20/test_first_incremental_becomes0/export/files/20261103T220116Z-full')
+
+    def verify(directory: Path) -> dict[str, Any]:
+        if directory.is_symlink() or not directory.is_dir():
+            raise VerificationError("export directory is missing or is a symlink")
+    
+        entries = list(directory.iterdir())
+        if any(path.is_symlink() or not path.is_file() for path in entries):
+            raise VerificationError("export contains a symlink or non-file entry")
+    
+        names = {path.name for path in entries}
+        if not REQUIRED | {"MANIFEST.sha256", ".done"} <= names:
+            raise VerificationError("required export files are missing")
+    
+        checksums: dict[str, str] = {}
+        for line in (directory / "MANIFEST.sha256").read_text(encoding="ascii").splitlines():
+            digest, separator, name = line.partition("  ")
+            if (
+                not separator
+                or not DIGEST_RE.fullmatch(digest)
+                or not _relative(name)
+                or "/" in name
+                or name in checksums
+                or name in {".done", "MANIFEST.sha256", "MANIFEST.sha256.sig"}
+            ):
+>               raise VerificationError("invalid checksum manifest")
+E               mirrorhub.verify.VerificationError: invalid checksum manifest
+
+src/mirrorhub/verify.py:62: VerificationError
+_______________ test_incremental_contains_changes_and_deletions ________________
+
+configured = Settings(role='cli', tool='', state_dir=PosixPath('/tmp/pytest-of-fido/pytest-20/test_incremental_contains_chan0/state...0, log_retention_days=30, session_ttl_s=28800, login_max_attempts=5, login_lockout_s=300, max_gpg_upload_bytes=2097152)
+
+    def test_incremental_contains_changes_and_deletions(configured: Settings) -> None:
+        repo = _repository(configured)
+        first = engine.execute(_job(repo), repo, configured, _pulse)
+        root = configured.data_dir / repo.slug
+        (root / "first.txt").unlink()
+        (root / "second.txt").write_bytes(b"second")
+    
+        time.sleep(1.05)
+>       second = engine.execute(_job(repo), repo, configured, _pulse)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_export_layout.py:78: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/mirrorhub/export/job.py:155: in execute
+    base_id, previous = _previous(repo.id or 0, settings, repo.slug)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/mirrorhub/export/job.py:123: in _previous
+    verify(directory)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+directory = PosixPath('/tmp/pytest-of-fido/pytest-20/test_incremental_contains_chan0/export/files/20261103T220116Z-full')
+
+    def verify(directory: Path) -> dict[str, Any]:
+        if directory.is_symlink() or not directory.is_dir():
+            raise VerificationError("export directory is missing or is a symlink")
+    
+        entries = list(directory.iterdir())
+        if any(path.is_symlink() or not path.is_file() for path in entries):
+            raise VerificationError("export contains a symlink or non-file entry")
+    
+        names = {path.name for path in entries}
+        if not REQUIRED | {"MANIFEST.sha256", ".done"} <= names:
+            raise VerificationError("required export files are missing")
+    
+        checksums: dict[str, str] = {}
+        for line in (directory / "MANIFEST.sha256").read_text(encoding="ascii").splitlines():
+            digest, separator, name = line.partition("  ")
+            if (
+                not separator
+                or not DIGEST_RE.fullmatch(digest)
+                or not _relative(name)
+                or "/" in name
+                or name in checksums
+                or name in {".done", "MANIFEST.sha256", "MANIFEST.sha256.sig"}
+            ):
+>               raise VerificationError("invalid checksum manifest")
+E               mirrorhub.verify.VerificationError: invalid checksum manifest
+
+src/mirrorhub/verify.py:62: VerificationError
+______________________ test_tampered_archive_is_rejected _______________________
+
+configured = Settings(role='cli', tool='', state_dir=PosixPath('/tmp/pytest-of-fido/pytest-20/test_tampered_archive_is_rejec0/state...0, log_retention_days=30, session_ttl_s=28800, login_max_attempts=5, login_lockout_s=300, max_gpg_upload_bytes=2097152)
+
+    def test_tampered_archive_is_rejected(configured: Settings) -> None:
+        repo = _repository(configured)
+        identifier = engine.execute(_job(repo), repo, configured, _pulse)
+        directory = configured.export_dir / repo.slug / identifier
+        with (directory / "data.tar").open("ab") as handle:
+            handle.write(b"corruption")
+    
+>       with pytest.raises(VerificationError, match="checksum mismatch"):
+E       AssertionError: Regex pattern did not match.
+E         Expected regex: 'checksum mismatch'
+E         Actual message: 'invalid checksum manifest'
+
+tests/test_export_layout.py:96: AssertionError
+________________________ test_recover_published_export _________________________
+
+configured = Settings(role='cli', tool='', state_dir=PosixPath('/tmp/pytest-of-fido/pytest-20/test_recover_published_export0/state'...0, log_retention_days=30, session_ttl_s=28800, login_max_attempts=5, login_lockout_s=300, max_gpg_upload_bytes=2097152)
+
+    def test_recover_published_export(configured: Settings) -> None:
+        repo_id = _repo(configured)
+        job_id = export_jobs.enqueue(repo_id, mode="full", actor="test")
+        claimed = claim.claim_next(worker_id="export-test", tool="export", limit=4)
+        assert claimed is not None
+        _execute(claimed, "export-test", configured, threading.Event())
+    
+>       identifier = export_jobs.published_for_job(job_id, configured)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_worker_export.py:92: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/mirrorhub/services/export_jobs.py:89: in published_for_job
+    metadata = verify(directory)
+               ^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+directory = PosixPath('/tmp/pytest-of-fido/pytest-20/test_recover_published_export0/export/files/20261103T220117Z-full')
+
+    def verify(directory: Path) -> dict[str, Any]:
+        if directory.is_symlink() or not directory.is_dir():
+            raise VerificationError("export directory is missing or is a symlink")
+    
+        entries = list(directory.iterdir())
+        if any(path.is_symlink() or not path.is_file() for path in entries):
+            raise VerificationError("export contains a symlink or non-file entry")
+    
+        names = {path.name for path in entries}
+        if not REQUIRED | {"MANIFEST.sha256", ".done"} <= names:
+            raise VerificationError("required export files are missing")
+    
+        checksums: dict[str, str] = {}
+        for line in (directory / "MANIFEST.sha256").read_text(encoding="ascii").splitlines():
+            digest, separator, name = line.partition("  ")
+            if (
+                not separator
+                or not DIGEST_RE.fullmatch(digest)
+                or not _relative(name)
+                or "/" in name
+                or name in checksums
+                or name in {".done", "MANIFEST.sha256", "MANIFEST.sha256.sig"}
+            ):
+>               raise VerificationError("invalid checksum manifest")
+E               mirrorhub.verify.VerificationError: invalid checksum manifest
+
+src/mirrorhub/verify.py:62: VerificationError
+=========================== short test summary info ============================
+FAILED tests/test_export_layout.py::test_first_incremental_becomes_full - mir...
+FAILED tests/test_export_layout.py::test_incremental_contains_changes_and_deletions
+FAILED tests/test_export_layout.py::test_tampered_archive_is_rejected - Asser...
+FAILED tests/test_worker_export.py::test_recover_published_export - mirrorhub...
+4 failed, 20 passed in 2.71s

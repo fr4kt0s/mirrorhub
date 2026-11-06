@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Notifications{% endblock %}
+{% block content %}
+<h1>Notifications</h1>
+{% if errors %}<ul class="alert alert-error">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+{% if results %}<ul class="alert alert-ok">{% for r in results %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
+
+<section class="card">
+  <h2>Add a channel</h2>
+  <form method="post" action="/notifications/channels">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Name <input name="name" maxlength="64" required></label>
+    <label>Type
+      <select name="type">
+        <option value="webhook">webhook</option>
+        <option value="smtp">smtp</option>
+      </select>
+    </label>
+    <fieldset>
+      <legend>Webhook</legend>
+      <label>URL <input name="webhook_url" placeholder="https://ntfy.example/topic"></label>
+      <label>Format
+        <select name="format">
+          <option value="generic">generic JSON</option>
+          <option value="ntfy">ntfy</option>
+          <option value="gotify">Gotify</option>
+          <option value="slack">Slack</option>
+        </select>
+      </label>
+      <label>Token (stored encrypted) <input name="token" autocomplete="off"></label>
+    </fieldset>
+    <fieldset>
+      <legend>SMTP</legend>
+      <label>Host <input name="host"></label>
+      <label>Port <input name="port" value="587" inputmode="numeric"></label>
+      <label>Username <input name="username" autocomplete="off"></label>
+      <label>Password (stored encrypted) <input name="password" type="password" autocomplete="new-password"></label>
+      <label>From <input name="from"></label>
+      <label>To <input name="to"></label>
+      <label class="check"><input type="checkbox" name="tls" checked> STARTTLS</label>
+    </fieldset>
+    <button class="btn" type="submit">Create channel</button>
+  </form>
+</section>
+
+<table class="table">
+  <thead><tr><th>Name</th><th>Type</th><th>Target</th><th></th></tr></thead>
+  <tbody>
+  {% for c in channels %}
+    <tr>
+      <td>{{ c.name }}</td>
+      <td>{{ c.type }}</td>
+      <td>{{ c.url or c.format }}</td>
+      <td class="row-actions">
+        <button class="btn btn-secondary" hx-post="/notifications/channels/{{ c.id }}/test" hx-target="body">Send test</button>
+        <button class="btn btn-danger" hx-post="/notifications/channels/{{ c.id }}/delete" hx-target="body"
+                hx-confirm="Delete channel {{ c.name }}?">Delete</button>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4" class="muted">No channels.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<section class="card">
+  <h2>Add a rule</h2>
+  <form method="post" action="/notifications/rules">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Channel
+      <select name="channel_id">
+        {% for c in channels %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Event
+      <select name="event">
+        {% for e in events %}<option value="{{ e }}">{{ e }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Repository (optional)
+      <select name="repo_id">
+        <option value="">any repository</option>
+        {% for r in repositories %}<option value="{{ r.id }}">{{ r.slug }}</option>{% endfor %}
+      </select>
+    </label>
+    <button class="btn" type="submit">Create rule</button>
+  </form>
+</section>
+
+<table class="table">
+  <thead><tr><th>#</th><th>Channel</th><th>Event</th><th>Repository</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rules %}
+    <tr>
+      <td>{{ r.id }}</td>
+      <td>{{ r.channel_id }}</td>
+      <td><code>{{ r.event }}</code></td>
+      <td>{{ r.repo_id or "any" }}</td>
+      <td class="row-actions">
+        <button class="btn btn-danger" hx-post="/notifications/rules/{{ r.id }}/delete" hx-target="body"
+                hx-confirm="Delete rule {{ r.id }}?">Delete</button>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5" class="muted">No rules, so nothing is sent.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

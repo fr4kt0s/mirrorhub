@@ -1,0 +1,13 @@
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "C4", "SIM", "RUF"]
+ignore = ["S101"]
+
+[lint.per-file-ignores]
+"tests/*" = ["S"]
+
+[lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends"]

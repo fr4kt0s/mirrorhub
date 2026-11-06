@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}GPG keys{% endblock %}
+{% block content %}
+<h1>GPG keys</h1>
+{% if errors %}
+<ul class="alert alert-error">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+{% endif %}
+<p class="muted">Keys live in a dedicated keyring at <code>trustedkeys.gpg</code> inside the container's private
+<code>GNUPGHOME</code>. The system keyring is never touched. debmirror verifies signatures with gpgv against this keyring.</p>
+
+<section class="card">
+  <h2>Import from a file</h2>
+  <form method="post" action="/keys/upload" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Key file (.gpg or .asc, public key material)
+      <input type="file" name="keyfile" accept=".gpg,.asc,.txt" required>
+    </label>
+    <button class="btn" type="submit">Import key</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Import from an installed keyring package</h2>
+  {% if packages %}
+  <form method="post" action="/keys/import-package">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Keyring file
+      <select name="package">
+        {% for path in packages %}<option value="{{ path.name }}">{{ path.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <button class="btn" type="submit">Import</button>
+  </form>
+  {% else %}
+  <p class="muted">No archive keyring packages are installed in this image. Upload a key file instead.</p>
+  {% endif %}
+</section>
+
+<table class="table">
+  <thead><tr><th>Fingerprint</th><th>User ID</th><th>Keyring</th><th>Imported</th><th></th></tr></thead>
+  <tbody>
+  {% for key in keys %}
+    <tr>
+      <td><code>{{ key.fingerprint }}</code></td>
+      <td>{{ key.uid }}</td>
+      <td>{{ key.keyring_name }}</td>
+      <td>{{ key.imported_at | ts }}</td>
+      <td class="row-actions">
+        <button class="btn btn-danger" hx-post="/keys/{{ key.fingerprint }}/delete"
+                hx-confirm="Delete key {{ key.fingerprint[-16:] }}?">Delete</button>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5" class="muted">No keys imported.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

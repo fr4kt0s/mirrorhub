@@ -1,0 +1,31 @@
+<table class="table">
+  <thead>
+    <tr><th>Time (UTC)</th><th>Actor</th><th>IP</th><th>Action</th><th>Target</th><th>Details</th></tr>
+  </thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td>{{ r.ts | ts }}</td>
+      <td>{{ r.actor }}</td>
+      <td>{{ r.ip }}</td>
+      <td><code>{{ r.action }}</code></td>
+      <td>{% if r.target_type %}{{ r.target_type }}:{{ r.target_id }}{% endif %}</td>
+      <td class="detail"><code>{{ r.detail | tojson }}</code></td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="muted">No entries match.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="pager">
+  {% if page > 0 %}
+    <a href="/audit?page={{ page - 1 }}&actor={{ f.actor | urlencode }}&action={{ f.action | urlencode }}&text={{ f.text | urlencode }}&since={{ f.since | urlencode }}&until={{ f.until | urlencode }}"
+       hx-get="/audit?page={{ page - 1 }}&actor={{ f.actor | urlencode }}&action={{ f.action | urlencode }}&text={{ f.text | urlencode }}&since={{ f.since | urlencode }}&until={{ f.until | urlencode }}"
+       hx-target="#audit-results" hx-push-url="true">&larr; Newer</a>
+  {% endif %}
+  {% if has_next %}
+    <a href="/audit?page={{ page + 1 }}&actor={{ f.actor | urlencode }}&action={{ f.action | urlencode }}&text={{ f.text | urlencode }}&since={{ f.since | urlencode }}&until={{ f.until | urlencode }}"
+       hx-get="/audit?page={{ page + 1 }}&actor={{ f.actor | urlencode }}&action={{ f.action | urlencode }}&text={{ f.text | urlencode }}&since={{ f.since | urlencode }}&until={{ f.until | urlencode }}"
+       hx-target="#audit-results" hx-push-url="true">Older &rarr;</a>
+  {% endif %}
+</p>

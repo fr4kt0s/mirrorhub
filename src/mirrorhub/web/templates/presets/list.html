@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Presets{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Presets</h1>
+  <form method="post" action="/presets/reseed">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="btn btn-secondary" type="submit">Restore missing seed presets</button>
+  </form>
+</div>
+<p class="muted">Presets are editable seed data. Clone one to start a repository, or save any repository as a preset from its form.</p>
+<table class="table">
+  <thead><tr><th>Name</th><th>Type</th><th>Tool</th><th>Upstream</th><th>Architectures</th><th>Seed</th><th></th></tr></thead>
+  <tbody>
+  {% for p in presets %}
+    <tr>
+      <td>{{ p.name }}</td>
+      <td>{{ p.kind }}</td>
+      <td>{{ p.config.tool }}</td>
+      <td>{{ p.config.method }}://{{ p.config.upstream_host }}{{ p.config.upstream_root }}</td>
+      <td>{{ p.config.architectures | join(", ") }}</td>
+      <td>{{ "yes" if p.is_seed else "no" }}</td>
+      <td class="row-actions">
+        <a href="/repos/new?preset={{ p.id }}">Clone into new repository</a>
+        <button class="btn btn-danger" hx-post="/presets/{{ p.id }}/delete"
+                hx-confirm="Delete preset {{ p.name }}?">Delete</button>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7" class="muted">No presets.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,19 @@
+<dl class="facts">
+  <dt>Repository</dt><dd>{{ job.repo_id }}</dd>
+  <dt>Type</dt><dd>{{ job.type }}{% if job.dry_run %} (dry run){% endif %}</dd>
+  <dt>Status</dt><dd><span class="badge badge-{{ job.status }}">{{ job.status }}</span></dd>
+  <dt>Attempt</dt><dd>{{ job.attempt }} of {{ job.max_attempts }}</dd>
+  <dt>Progress</dt>
+  <dd>
+    {% if job.progress_pct is not none %}
+      <progress max="100" value="{{ job.progress_pct }}"></progress> {{ "%.0f"|format(job.progress_pct) }}%
+    {% else %}
+      <progress></progress> <span class="muted">indeterminate</span>
+    {% endif %}
+    <div class="muted progress-text">{{ job.progress_text }}</div>
+  </dd>
+  <dt>Exit code</dt><dd>{{ job.exit_code if job.exit_code is not none else "-" }}</dd>
+  <dt>Started</dt><dd>{{ job.started_at | ts }}</dd>
+  <dt>Finished</dt><dd>{{ job.finished_at | ts }}</dd>
+  {% if job.error_summary %}<dt>Detail</dt><dd>{{ job.error_summary }}</dd>{% endif %}
+</dl>

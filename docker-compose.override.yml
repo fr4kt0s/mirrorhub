@@ -1,0 +1,13 @@
+services:
+  web:
+    environment:
+      MIRRORHUB_PUBLIC_ORIGIN: ${MIRRORHUB_PUBLIC_ORIGIN:-https://localhost:8443}
+
+  proxy:
+    image: mirrorhub/proxy:${MIRRORHUB_TAG:-dev}
+    build:
+      context: .
+      dockerfile: caddy/Dockerfile
+      args:
+        PUID: ${PUID:-1000}
+        PGID: ${PGID:-1000}

@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Exports{% endblock %}
+{% block content %}
+<h1>Exports</h1>
+
+<section class="card">
+  <h2>Create an export</h2>
+  <p class="muted">
+    Incremental exports compare complete file inventories with the last published
+    export. The first export is always full. MirrorHub never deletes exports.
+  </p>
+  <table class="table">
+    <thead>
+      <tr><th>Repository</th><th>Default</th><th>Archive</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+    {% for repo in repositories %}
+      <tr>
+        <td>{{ repo.slug }}</td>
+        <td>{{ repo.export_mode }}</td>
+        <td>{{ repo.export_format }}</td>
+        <td>
+          <form method="post" action="/exports/{{ repo.id }}/start">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="btn btn-secondary" name="mode" value="incr" type="submit">
+              Incremental export
+            </button>
+            <button class="btn" name="mode" value="full" type="submit">
+              Full export
+            </button>
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">Create a repository first.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Export history</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Export</th><th>Repository</th><th>Mode</th><th>Base</th>
+        <th>Status</th><th>Payload</th><th>Deleted</th><th>Archive size</th>
+        <th>Signed</th><th>Job</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for export in exports %}
+      <tr>
+        <td><code>{{ export.export_id }}</code></td>
+        <td>{{ repo_names.get(export.repo_id, export.repo_id) }}</td>
+        <td>{{ export.mode }}</td>
+        <td>{{ export.base_export_id or "-" }}</td>
+        <td>{{ export.status }}</td>
+        <td>{{ export.file_count }}</td>
+        <td>{{ export.deleted_count }}</td>
+        <td>{{ export.total_bytes | bytes }}</td>
+        <td>{{ "yes" if export.signed else "no" }}</td>
+        <td>
+          {% if export.job_id %}
+          <a href="/jobs/{{ export.job_id }}">Open</a>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="10" class="muted">No exports yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<p class="muted">
+  The external pickup tool must only read directories containing a .done marker.
+  Failed temporary exports are retained for inspection.
+</p>
+{% endblock %}

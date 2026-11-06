@@ -1,0 +1,33 @@
+:root {
+  --bg: #f5f6f8; --fg: #1d2330; --muted: #667085; --card: #ffffff;
+  --accent: #2459d6; --border: #d9dde5; --err-bg: #fdecec; --err-fg: #a12020;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 15px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+a { color: var(--accent); }
+code { font-family: ui-monospace, monospace; font-size: 0.9em; }
+.muted { color: var(--muted); }
+.topbar { display: flex; align-items: center; gap: 1.5rem; padding: 0.6rem 1.25rem; background: var(--card); border-bottom: 1px solid var(--border); }
+.brand { font-weight: 700; text-decoration: none; color: var(--fg); }
+.topbar nav { display: flex; gap: 1rem; flex: 1; }
+.topbar nav a { text-decoration: none; color: var(--muted); padding: 0.25rem 0; }
+.topbar nav a.active { color: var(--fg); border-bottom: 2px solid var(--accent); }
+.logout { display: flex; align-items: center; gap: 0.75rem; margin: 0; }
+.container { max-width: 1100px; margin: 1.5rem auto; padding: 0 1.25rem; }
+.footer { text-align: center; padding: 1rem; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; }
+.card.narrow { max-width: 380px; margin: 4rem auto; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
+label { display: block; margin: 0.75rem 0 0.25rem; font-weight: 600; }
+input { width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+.btn { margin-top: 1rem; padding: 0.5rem 1rem; border: 0; border-radius: 6px; background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
+.btn-secondary { margin-top: 0; background: #eceff4; color: var(--fg); border: 1px solid var(--border); }
+.alert { padding: 0.6rem 0.8rem; border-radius: 6px; }
+.alert-error { background: var(--err-bg); color: var(--err-fg); }
+.filters { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; margin-bottom: 1rem; }
+.filters label { margin: 0; font-weight: 500; }
+.filters input { width: auto; }
+.table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); }
+.table th, .table td { padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.table .detail { max-width: 340px; overflow-wrap: anywhere; }
+.pager { display: flex; justify-content: space-between; }

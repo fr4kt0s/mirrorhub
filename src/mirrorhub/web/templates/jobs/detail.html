@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Job {{ job.id }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Job {{ job.id }}</h1>
+  <div class="row-actions">
+    {% if not is_terminal %}
+    <form method="post" action="/jobs/{{ job.id }}/cancel">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn btn-danger" type="submit">Stop</button>
+    </form>
+    {% endif %}
+    <a class="btn btn-secondary" href="/jobs">All jobs</a>
+  </div>
+</div>
+
+<section class="card">
+  <dl class="facts">
+    <dt>Repository</dt>
+    <dd>{{ repo.slug if repo else job.repo_id }}</dd>
+
+    <dt>Type</dt>
+    <dd>{{ job.type }}{% if job.dry_run %} (dry run){% endif %}</dd>
+
+    <dt>Status</dt>
+    <dd>
+      <span id="job-status" class="badge badge-{{ job.status }}">
+        {{ job.status }}
+      </span>
+    </dd>
+
+    <dt>Attempt</dt>
+    <dd id="job-attempt">{{ job.attempt }} of {{ job.max_attempts }}</dd>
+
+    <dt>Progress</dt>
+    <dd>
+      <progress id="job-progress" max="100"
+        {% if job.progress_pct is not none %}
+        value="{{ job.progress_pct }}"
+        {% endif %}></progress>
+      <span id="job-progress-pct">
+        {% if job.progress_pct is not none %}
+          {{ "%.0f"|format(job.progress_pct) }}%
+        {% else %}
+          indeterminate
+        {% endif %}
+      </span>
+      <div class="muted progress-text" id="job-progress-text">
+        {{ job.progress_text }}
+      </div>
+    </dd>
+
+    <dt>Exit code</dt>
+    <dd id="job-exit-code">
+      {{ job.exit_code if job.exit_code is not none else "-" }}
+    </dd>
+
+    <dt>Started</dt>
+    <dd>{{ job.started_at | ts }}</dd>
+
+    <dt>Finished</dt>
+    <dd id="job-finished">{{ job.finished_at | ts }}</dd>
+
+    <dt>Detail</dt>
+    <dd id="job-error">{{ job.error_summary }}</dd>
+  </dl>
+</section>
+
+<section class="card">
+  <h2>{{ "Final log" if is_terminal else "Live log" }}</h2>
+  <p class="muted">
+    Showing a bounded log tail. Older output remains in the server log file.
+  </p>
+  <pre class="log" id="job-log"
+    {% if not is_terminal %}
+    data-sse="/jobs/{{ job.id }}/events?offset={{ log_offset }}"
+    {% endif %}>{% for line in lines %}{{ line }}
+{% endfor %}</pre>
+</section>
+{% endblock %}

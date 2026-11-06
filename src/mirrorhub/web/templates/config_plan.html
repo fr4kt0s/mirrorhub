@@ -1,0 +1,22 @@
+<section class="card plan">
+  <h2>Planned changes</h2>
+  <ul>
+    <li>Create: {{ plan.creates | length }}</li>
+    <li>Update: {{ plan.updates | length }}</li>
+    <li>Schedule entries: {{ plan.schedules | length }}</li>
+    <li>Conflicts: {{ plan.conflicts | length }}</li>
+    <li>Errors: {{ plan.errors | length }}</li>
+  </ul>
+  {% if plan.creates %}
+    <p><strong>New repositories:</strong> {{ plan.creates | map(attribute="slug") | join(", ") }}</p>
+  {% endif %}
+  {% if plan.updates %}
+    <p><strong>Updated repositories:</strong> {{ plan.updates | map(attribute="slug") | join(", ") }}</p>
+  {% endif %}
+  {% if plan.conflicts %}
+    <p class="alert alert-error">Existing slugs skipped (tick overwrite to update them): {{ plan.conflicts | join(", ") }}</p>
+  {% endif %}
+  {% if plan.errors %}
+    <ul class="alert alert-error">{% for e in plan.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+  {% endif %}
+</section>

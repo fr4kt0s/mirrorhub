@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Storage{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Storage</h1>
+  <button class="btn" hx-post="/storage/refresh" hx-target="body">Refresh sizes</button>
+</div>
+
+<section class="card">
+  <h2>Data mount</h2>
+  <p>{{ usage.used_bytes | bytes }} used of {{ usage.total_bytes | bytes }} ({{ usage.percent_used }}%), {{ usage.free_bytes | bytes }} free</p>
+  <progress max="100" value="{{ usage.percent_used }}"></progress>
+  <p class="muted">{{ usage.path }} - measured with statvfs</p>
+  {% if refreshing %}<p class="alert alert-ok">A background refresh is running.</p>{% endif %}
+</section>
+
+<table class="table">
+  <thead><tr><th>Repository</th><th>Size</th><th>Per architecture</th><th>Measured</th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+    <tr>
+      <td><code>{{ row.repo.slug }}</code></td>
+      <td>{% if row.cache %}{{ row.cache.bytes | bytes }}{% else %}<span class="muted">not measured</span>{% endif %}</td>
+      <td>
+        {% if row.cache %}
+          {% for arch, size in row.cache.per_arch_bytes.items() %}
+            <span class="chip">{{ arch }}: {{ size | bytes }}</span>
+          {% endfor %}
+        {% endif %}
+      </td>
+      <td>{{ row.cache.computed_at | ts if row.cache else "-" }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4" class="muted">No repositories.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

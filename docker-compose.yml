@@ -1,0 +1,211 @@
+name: mirrorhub
+
+x-build-args: &build-args
+  PUID: ${PUID:-1000}
+  PGID: ${PGID:-1000}
+
+x-hardened: &hardened
+  env_file: .env
+  user: "${PUID:-1000}:${PGID:-1000}"
+  read_only: true
+  init: true
+  restart: unless-stopped
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=256m
+  depends_on:
+    init-volumes:
+      condition: service_completed_successfully
+
+x-worker-healthcheck: &worker-healthcheck
+  test: ["CMD", "python", "-m", "mirrorhub.healthcheck", "worker"]
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 20s
+
+services:
+  # One-shot: fixes ownership of LOCAL named volumes only (never NFS data/export dirs).
+  init-volumes:
+    image: mirrorhub/web:${MIRRORHUB_TAG:-dev}
+    build:
+      context: .
+      target: web
+      args: *build-args
+    user: "0:0"
+    read_only: true
+    restart: "no"
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      MIRRORHUB_ALLOW_ROOT: "1"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        chown -R ${PUID:-1000}:${PGID:-1000} /var/lib/mirrorhub /gnupg /caddy_data /caddy_config &&
+        chmod 700 /gnupg
+    volumes:
+      - state:/var/lib/mirrorhub
+      - gnupg:/gnupg
+      - caddy_data:/caddy_data
+      - caddy_config:/caddy_config
+
+  web:
+    <<: *hardened
+    image: mirrorhub/web:${MIRRORHUB_TAG:-dev}
+    build:
+      context: .
+      target: web
+      args: *build-args
+    environment:
+      MIRRORHUB_ROLE: web
+      HOME: /tmp
+    volumes:
+      - state:/var/lib/mirrorhub
+      - gnupg:/gnupg                       # read-write: only web imports keys
+      - mirror_data:/data:ro               # never written from web
+      - export_dir:/export:ro
+    expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "mirrorhub.healthcheck", "web"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  worker-debmirror:
+    <<: *hardened
+    image: mirrorhub/worker-debmirror:${MIRRORHUB_TAG:-dev}
+    build:
+      context: .
+      target: worker-debmirror
+      args: *build-args
+    environment:
+      MIRRORHUB_ROLE: worker
+      MIRRORHUB_TOOL: debmirror
+      GNUPGHOME: /gnupg
+      HOME: /tmp
+    volumes:
+      - state:/var/lib/mirrorhub
+      - gnupg:/gnupg:ro                    # gpgv only reads trustedkeys.gpg
+      - mirror_data:/data
+    healthcheck: *worker-healthcheck
+
+  worker-rsync:
+    <<: *hardened
+    image: mirrorhub/worker-rsync:${MIRRORHUB_TAG:-dev}
+    build:
+      context: .
+      target: worker-rsync
+      args: *build-args
+    environment:
+      MIRRORHUB_ROLE: worker
+      MIRRORHUB_TOOL: rsync
+      HOME: /tmp
+    volumes:
+      - state:/var/lib/mirrorhub
+      - mirror_data:/data
+    healthcheck: *worker-healthcheck
+
+  worker-wget:
+    <<: *hardened
+    image: mirrorhub/worker-wget:${MIRRORHUB_TAG:-dev}
+    build:
+      context: .
+      target: worker-wget
+      args: *build-args
+    environment:
+      MIRRORHUB_ROLE: worker
+      MIRRORHUB_TOOL: wget
+      HOME: /tmp
+    volumes:
+      - state:/var/lib/mirrorhub
+      - mirror_data:/data
+    healthcheck: *worker-healthcheck
+
+  worker-export:
+    <<: *hardened
+    image: mirrorhub/worker-export:${MIRRORHUB_TAG:-dev}
+    build:
+      context: .
+      target: worker-export
+      args: *build-args
+    environment:
+      MIRRORHUB_ROLE: worker
+      MIRRORHUB_TOOL: export
+      GNUPGHOME: /gnupg
+      HOME: /tmp
+    volumes:
+      - state:/var/lib/mirrorhub
+      - gnupg:/gnupg:ro
+      - mirror_data:/data:ro               # export reads the mirror only
+      - export_dir:/export                 # the only writer of the drop folder
+    healthcheck: *worker-healthcheck
+
+  proxy:
+    image: caddy:2-alpine
+    user: "${PUID:-1000}:${PGID:-1000}"
+    read_only: true
+    init: true
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    environment:
+      MIRRORHUB_HOSTNAME: ${MIRRORHUB_HOSTNAME:-localhost}
+      XDG_DATA_HOME: /data
+      XDG_CONFIG_HOME: /config
+    depends_on:
+      init-volumes:
+        condition: service_completed_successfully
+      web:
+        condition: service_healthy
+    ports:
+      - "${HTTPS_PORT:-8443}:8443"         # HTTPS only; no port 80 published
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data                   # holds the internal CA
+      - caddy_config:/config
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:2019/config/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  state:        # SQLite (WAL), job logs, manifest snapshots: LOCAL volume, never NFS
+  gnupg:        # dedicated GNUPGHOME (trustedkeys.gpg)
+  caddy_data:
+  caddy_config:
+
+  # Mirror data and export drop folder: bind mounts by default (NFS mounted on the host).
+  mirror_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${HOST_DATA_DIR:?set HOST_DATA_DIR in .env}
+  export_dir:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${HOST_EXPORT_DIR:?set HOST_EXPORT_DIR in .env}
+
+  # ---- Alternative: NFS-backed named volumes (replace the two blocks above) ----
+  # mirror_data:
+  #   driver: local
+  #   driver_opts:
+  #     type: nfs
+  #     o: "addr=nas.example.lan,nfsvers=4.1,rw,hard,noatime"
+  #     device: ":/export/mirrors"
+  # export_dir:
+  #   driver: local
+  #   driver_opts:
+  #     type: nfs
+  #     o: "addr=nas.example.lan,nfsvers=4.1,rw,hard,noatime"
+  #     device: ":/export/diode-drop"

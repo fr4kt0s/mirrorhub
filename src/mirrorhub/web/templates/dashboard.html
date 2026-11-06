@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+<section class="grid">
+  <article class="card">
+    <h2>Jobs</h2>
+    <ul class="counters">
+      {% for status, count in counts.items() %}<li><span class="badge badge-{{ status }}">{{ status }}</span> {{ count }}</li>{% endfor %}
+    </ul>
+    <a href="/jobs">All jobs</a>
+  </article>
+  <article class="card">
+    <h2>Storage</h2>
+    <p>{{ usage.used_bytes | bytes }} of {{ usage.total_bytes | bytes }} used ({{ usage.percent_used }}%)</p>
+    <progress max="100" value="{{ usage.percent_used }}"></progress>
+    <p class="muted">{{ usage.path }}</p>
+    <a href="/storage">Details</a>
+  </article>
+  <article class="card">
+    <h2>Next schedules</h2>
+    <ul class="plain">
+      {% for s in upcoming %}<li><code>{{ s.cron_expr }}</code> {{ s.next_fire_at | ts }}</li>
+      {% else %}<li class="muted">Nothing scheduled.</li>{% endfor %}
+    </ul>
+    <a href="/schedules">Schedules</a>
+  </article>
+</section>
+
+<section class="card">
+  <h2>Recent failures</h2>
+  <table class="table">
+    <thead><tr><th>#</th><th>Repository</th><th>Attempt</th><th>Detail</th><th></th></tr></thead>
+    <tbody>
+    {% for j in failures %}
+      <tr>
+        <td>{{ j.id }}</td>
+        <td>{{ repo_names.get(j.repo_id, j.repo_id) }}</td>
+        <td>{{ j.attempt }}/{{ j.max_attempts }}</td>
+        <td>{{ j.error_summary }}</td>
+        <td><a href="/jobs/{{ j.id }}">Open</a></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">No failures.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

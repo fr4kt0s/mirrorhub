@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Schedules{% endblock %}
+{% block content %}
+<h1>Schedules</h1>
+{% if errors %}<ul class="alert alert-error">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+
+<section class="card">
+  <h2>Add a schedule</h2>
+  <form method="post" action="/schedules">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Repository
+      <select name="repo_id" required>
+        {% for r in repositories %}<option value="{{ r.id }}">{{ r.slug }} ({{ r.tool }})</option>{% endfor %}
+      </select>
+    </label>
+    <label>Preset
+      <select name="preset_label">
+        <option value="">custom</option>
+        {% for key, preset in presets.items() %}<option value="{{ key }}">{{ preset[1] }} - {{ preset[0] }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Cron expression (UTC)
+      <input name="cron_expr" value="0 3 * * *" maxlength="120" required>
+    </label>
+    <label class="check"><input type="checkbox" name="enabled" checked> Enabled</label>
+    <label class="check"><input type="checkbox" name="chain_export"> Queue an export after a successful sync</label>
+    <button class="btn" type="submit">Create schedule</button>
+  </form>
+</section>
+
+<table class="table">
+  <thead><tr><th>#</th><th>Repository</th><th>Cron</th><th>Preset</th><th>Next run</th><th>Last run</th><th>Enabled</th><th></th></tr></thead>
+  <tbody>
+  {% for s in schedules %}
+    <tr>
+      <td>{{ s.id }}</td>
+      <td>{{ s.repo_id }}</td>
+      <td><code>{{ s.cron_expr }}</code></td>
+      <td>{{ s.preset_label }}</td>
+      <td>{{ s.next_fire_at | ts }}</td>
+      <td>{{ s.last_fire_at | ts }}</td>
+      <td>{{ "yes" if s.enabled else "no" }}</td>
+      <td class="row-actions">
+        <button class="btn btn-danger" hx-post="/schedules/{{ s.id }}/delete" hx-target="body"
+                hx-confirm="Delete schedule {{ s.id }}?">Delete</button>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="muted">No schedules.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

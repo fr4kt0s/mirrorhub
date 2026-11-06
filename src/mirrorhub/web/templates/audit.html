@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Audit log{% endblock %}
+{% block content %}
+<h1>Audit log</h1>
+<form class="filters" method="get" action="/audit"
+      hx-get="/audit" hx-target="#audit-results" hx-push-url="true"
+      hx-trigger="change, input delay:300ms">
+  <label>Actor <input name="actor" value="{{ f.actor }}" maxlength="64"></label>
+  <label>Action prefix <input name="action" value="{{ f.action }}" maxlength="64" placeholder="login"></label>
+  <label>Target contains <input name="text" value="{{ f.text }}" maxlength="128"></label>
+  <label>From <input type="date" name="since" value="{{ f.since }}"></label>
+  <label>To <input type="date" name="until" value="{{ f.until }}"></label>
+  <button type="submit" class="btn btn-secondary">Filter</button>
+</form>
+<div id="audit-results">
+  {% include "partials/audit_results.html" %}
+</div>
+{% endblock %}
