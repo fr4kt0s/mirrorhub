@@ -16,6 +16,7 @@ from mirrorhub.web.deps import CurrentUser, get_db, render, require_user
 
 router = APIRouter()
 
+from fastapi import APIRouter, Depends, Form, Query, Request, Response
 
 @router.get("/jobs")
 def list_page(
@@ -157,3 +158,37 @@ def cancel(
 
     jobsvc.request_cancel(db, job, actor=user.admin.username)
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+@router.post("/jobs/cleanup")
+def cleanup(
+    status: str = Form(""),
+    repo_id: int = Form(0),
+    user: CurrentUser = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    jobsvc.delete_finished(
+        db,
+        actor=user.admin.username,
+        finished=sse.TERMINAL,
+        status=status,
+        repo_id=repo_id,
+    )
+    params = {k: v for k, v in (("status", status), ("repo_id", repo_id)) if v}
+    query = f"?{urlencode(params)}" if params else ""
+    return RedirectResponse(f"/jobs{query}", status_code=303)
+
+
+@router.post("/jobs/{job_id}/delete")
+def delete(
+    job_id: int,
+    request: Request,
+    user: CurrentUser = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    job = jobsvc.get(db, job_id)
+    if job is None:
+        return render(
+            request, "error.html", {"status": 404, "detail": "Job not found"}, 404
+        )
+    jobsvc.delete_job(db, job, actor=user.admin.username, finished=sse.TERMINAL)
+    return RedirectResponse("/jobs", status_code=303)

@@ -9,7 +9,10 @@ from sqlmodel import Session, col, select
 from mirrorhub.enums import JobStatus, JobType, Tool, Trigger
 from mirrorhub.models import Job, Repository, utcnow
 from mirrorhub.services import audit
+from sqlalchemy import delete, update
 
+from mirrorhub.models import Export, Job, ManifestSnapshot, RepoLock, Repository, utcnow
+from collections.abc import Collection
 ACTIVE = (JobStatus.QUEUED.value, JobStatus.RUNNING.value, JobStatus.CANCELLING.value)
 
 # Phase 6 flips this on once the export worker can execute export jobs.
@@ -121,3 +124,74 @@ def request_cancel(db: Session, job: Job, *, actor: str) -> str:
     )
     db.commit()
     return action
+
+def _release_references(db: Session, ids: list[int]) -> None:
+    """Drop or clear every row that points at the given jobs."""
+    if not ids:
+        return
+    db.exec(update(Job).where(col(Job.parent_job_id).in_(ids)).values(parent_job_id=None))
+    db.exec(update(Export).where(col(Export.job_id).in_(ids)).values(job_id=None))
+    db.exec(
+        update(ManifestSnapshot)
+        .where(col(ManifestSnapshot.job_id).in_(ids))
+        .values(job_id=None)
+    )
+    db.exec(delete(RepoLock).where(col(RepoLock.job_id).in_(ids)))
+    db.flush()
+
+
+def delete_job(
+    db: Session, job: Job, *, actor: str, finished: Collection[str]
+) -> bool:
+    """Delete one finished job. Active jobs are refused."""
+    if job.status not in finished:
+        return False
+    job_id, repo_id, status = job.id, job.repo_id, job.status
+    _release_references(db, [job_id])
+    db.delete(job)
+    audit.record(
+        db,
+        actor=actor,
+        action="job.delete",
+        target_type="job",
+        target_id=str(job_id),
+        detail={"repo_id": repo_id, "status": status},
+        commit=False,
+    )
+    db.commit()
+    return True
+
+
+def delete_finished(
+    db: Session,
+    *,
+    actor: str,
+    finished: Collection[str],
+    status: str = "",
+    repo_id: int = 0,
+) -> int:
+    """Delete finished jobs, optionally limited by status or repository."""
+    statement = select(Job).where(col(Job.status).in_(list(finished)))
+    if status:
+        statement = statement.where(col(Job.status) == status)
+    if repo_id:
+        statement = statement.where(Job.repo_id == repo_id)
+    rows = list(db.exec(statement).all())
+    if not rows:
+        return 0
+
+    ids = [row.id for row in rows if row.id is not None]
+    _release_references(db, ids)
+    for row in rows:
+        db.delete(row)
+    audit.record(
+        db,
+        actor=actor,
+        action="jobs.cleanup",
+        target_type="job",
+        target_id="*",
+        detail={"count": len(ids), "status": status or "all finished", "repo_id": repo_id},
+        commit=False,
+    )
+    db.commit()
+    return len(ids)

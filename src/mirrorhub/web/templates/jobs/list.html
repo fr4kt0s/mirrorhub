@@ -41,6 +41,16 @@
   <button class="btn btn-secondary" type="submit">Filter</button>
 </form>
 
+{% if jobs %}
+<p>
+  <button class="btn btn-secondary"
+          hx-post="/jobs/cleanup"
+          hx-vals='{"status": "{{ filters.status }}", "repo_id": "{{ filters.repo_id or 0 }}"}'
+          hx-confirm="Delete all finished jobs matching the current filter? Running and queued jobs are kept."
+          hx-target="body">Clear finished</button>
+</p>
+{% endif %}
+
 <table class="table">
   <thead><tr><th>#</th><th>Repository</th><th>Type</th><th>Status</th><th>Attempt</th><th>Progress</th><th>Started</th><th></th></tr></thead>
   <tbody>
@@ -53,7 +63,15 @@
       <td>{{ j.attempt }}/{{ j.max_attempts }}</td>
       <td>{% if j.progress_pct is not none %}{{ "%.0f"|format(j.progress_pct) }}%{% else %}<span class="muted">n/a</span>{% endif %}</td>
       <td>{{ j.started_at | ts }}</td>
-      <td class="row-actions"><a href="/jobs/{{ j.id }}">Open</a></td>
+      <td class="row-actions">
+        <a href="/jobs/{{ j.id }}">Open</a>
+        {% if j.status not in ["queued", "running", "cancelling"] %}
+        <button class="btn btn-secondary"
+                hx-post="/jobs/{{ j.id }}/delete"
+                hx-confirm="Delete job {{ j.id }}?"
+                hx-target="body">Delete</button>
+        {% endif %}
+      </td>
     </tr>
   {% else %}
     <tr><td colspan="8" class="muted">No jobs match.</td></tr>
