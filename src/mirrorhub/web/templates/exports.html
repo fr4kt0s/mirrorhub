@@ -7,8 +7,9 @@
   <h2>Create an export</h2>
   <p class="muted">
     Incremental exports compare complete file inventories with the last published
-    export. The first export is always full. MirrorHub never deletes exports.
+    export. MirrorHub deletes exports only when you apply the retention rule below.
   </p>
+
   <table class="table">
     <thead>
       <tr><th>Repository</th><th>Default</th><th>Archive</th><th>Actions</th></tr>
@@ -37,7 +38,37 @@
     </tbody>
   </table>
 </section>
-
+<section class="card">
+  <h2>Retention</h2>
+  <p class="muted">
+    A chain is one full export plus its incrementals. The newest chain of each
+    repository is always kept.
+  </p>
+  <form hx-post="/exports/retention/save" hx-target="body">
+    <label>Chains to keep per repository (0 = never delete)
+      <input type="number" name="keep_chains" min="0" max="100" value="{{ retention.keep }}">
+    </label>
+    <button class="btn" type="submit">Save</button>
+  </form>
+  {% if retention.keep %}
+    {% if retention.count %}
+    <p>{{ retention.count }} exports ({{ retention.bytes | bytes }}) would be deleted from disk and database.</p>
+    <button class="btn btn-secondary"
+            hx-post="/exports/retention/apply"
+            hx-confirm="Permanently delete {{ retention.count }} exports and their files? This cannot be undone."
+            hx-target="body">Apply retention now</button>
+    {% else %}<p class="muted">Nothing to clean up.</p>{% endif %}
+  {% endif %}
+</section>
+{% if failed_count %}
+<p>
+  {{ failed_count }} failed or aborted exports.
+  <button class="btn btn-secondary"
+          hx-post="/exports/failed/cleanup"
+          hx-confirm="Delete {{ failed_count }} failed or aborted exports and their unfinished directories?"
+          hx-target="body">Clean up failed</button>
+</p>
+{% endif %}
 <section class="card">
   <h2>Export history</h2>
   <table class="table">
