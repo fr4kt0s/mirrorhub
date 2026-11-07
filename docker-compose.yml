@@ -66,7 +66,7 @@ services:
       - state:/var/lib/mirrorhub
       - gnupg:/gnupg                       # read-write: only web imports keys
       - mirror_data:/data:ro               # never written from web
-      - export_dir:/export:ro
+      - export_dir:/export
     expose: ["8000"]
     healthcheck:
       test: ["CMD", "python", "-m", "mirrorhub.healthcheck", "web"]
