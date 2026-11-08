@@ -13,8 +13,23 @@ def test_valid_ids(value: str) -> None:
 
 @pytest.mark.parametrize(
     "value",
-    ["", ".", "..", ".x", "x.", "a..b", "-a", "a-", "a.-b", "a-.b",
-     "A.b", "a_b", "a/b", "a" * 64 + ".com", "a." * 130 + "a"],
+    [
+        "",
+        ".",
+        "..",
+        ".x",
+        "x.",
+        "a..b",
+        "-a",
+        "a-",
+        "a.-b",
+        "a-.b",
+        "A.b",
+        "a_b",
+        "a/b",
+        "a" * 64 + ".com",
+        "a." * 130 + "a",
+    ],
 )
 def test_invalid_ids(value: str) -> None:
     assert validate_slug(value) is not None

@@ -7,3 +7,4 @@ __pycache__/
 .pytest_cache/
 caddy-root.crt
 /output.log
+importer.tomlimporter.toml

@@ -142,6 +142,8 @@ def test_inventory_is_covered_by_checksums(configured: Settings) -> None:
     assert "  deleted.txt\n" in checksums
     inventory = json.loads((directory / "files.json").read_text())
     assert inventory["first.txt"]["size"] == 5
+
+
 def test_full_and_incremental_restore_round_trip(
     configured: Settings,
     tmp_path: Path,
@@ -183,11 +185,9 @@ def test_full_and_incremental_restore_round_trip(
         "first.txt",
         "nested/added.txt",
     ]
-    assert (
-        (second_directory / "deleted.txt")
-        .read_text(encoding="utf-8")
-        .splitlines()
-    ) == ["delete.txt"]
+    assert ((second_directory / "deleted.txt").read_text(encoding="utf-8").splitlines()) == [
+        "delete.txt"
+    ]
 
     restored = tmp_path / "restored"
     restored.mkdir()
@@ -201,11 +201,7 @@ def test_full_and_incremental_restore_round_trip(
         assert len(metadata["archive_parts"]) == 1
         assert all(entry["type"] == "file" for entry in inventory.values())
 
-        deleted = (
-            (directory / "deleted.txt")
-            .read_text(encoding="utf-8")
-            .splitlines()
-        )
+        deleted = (directory / "deleted.txt").read_text(encoding="utf-8").splitlines()
         for relative in deleted:
             manifest.validate_relative(relative)
             target = restored / relative

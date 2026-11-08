@@ -17,7 +17,6 @@ from mirrorhub.web.deps import CurrentUser, get_db, render, require_user
 router = APIRouter()
 
 
-
 @router.get("/jobs")
 def list_page(
     request: Request,
@@ -159,6 +158,7 @@ def cancel(
     jobsvc.request_cancel(db, job, actor=user.admin.username)
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
+
 @router.post("/jobs/cleanup")
 def cleanup(
     status: str = Form(""),
@@ -187,8 +187,6 @@ def delete(
 ) -> Response:
     job = jobsvc.get(db, job_id)
     if job is None:
-        return render(
-            request, "error.html", {"status": 404, "detail": "Job not found"}, 404
-        )
+        return render(request, "error.html", {"status": 404, "detail": "Job not found"}, 404)
     jobsvc.delete_job(db, job, actor=user.admin.username, finished=sse.TERMINAL)
     return RedirectResponse("/jobs", status_code=303)

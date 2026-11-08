@@ -32,8 +32,9 @@ def test_failed_and_stale_exports_are_removed(configured: Settings) -> None:
             (done, "failed", None),
         ):
             db.add(
-                Export(export_id=export_id, repo_id=repo.id, mode="full",
-                       status=status, job_id=job_id)
+                Export(
+                    export_id=export_id, repo_id=repo.id, mode="full", status=status, job_id=job_id
+                )
             )
         (root / f"{failed}.tmp").mkdir()
         (root / f"{stale}.tmp").mkdir()

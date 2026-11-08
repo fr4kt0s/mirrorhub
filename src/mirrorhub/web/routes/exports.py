@@ -110,6 +110,7 @@ def retention_apply(
         return Response(str(exc), status_code=400, media_type="text/plain")
     return RedirectResponse("/exports", status_code=303)
 
+
 @router.post("/exports/failed/cleanup")
 def failed_cleanup(
     request: Request,

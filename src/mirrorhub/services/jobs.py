@@ -13,6 +13,7 @@ from sqlalchemy import delete, update
 
 from mirrorhub.models import Export, Job, ManifestSnapshot, RepoLock, Repository, utcnow
 from collections.abc import Collection
+
 ACTIVE = (JobStatus.QUEUED.value, JobStatus.RUNNING.value, JobStatus.CANCELLING.value)
 
 # Phase 6 flips this on once the export worker can execute export jobs.
@@ -125,6 +126,7 @@ def request_cancel(db: Session, job: Job, *, actor: str) -> str:
     db.commit()
     return action
 
+
 def _release_references(db: Session, ids: list[int]) -> None:
     """Drop or clear every row that points at the given jobs."""
     if not ids:
@@ -132,17 +134,13 @@ def _release_references(db: Session, ids: list[int]) -> None:
     db.exec(update(Job).where(col(Job.parent_job_id).in_(ids)).values(parent_job_id=None))
     db.exec(update(Export).where(col(Export.job_id).in_(ids)).values(job_id=None))
     db.exec(
-        update(ManifestSnapshot)
-        .where(col(ManifestSnapshot.job_id).in_(ids))
-        .values(job_id=None)
+        update(ManifestSnapshot).where(col(ManifestSnapshot.job_id).in_(ids)).values(job_id=None)
     )
     db.exec(delete(RepoLock).where(col(RepoLock.job_id).in_(ids)))
     db.flush()
 
 
-def delete_job(
-    db: Session, job: Job, *, actor: str, finished: Collection[str]
-) -> bool:
+def delete_job(db: Session, job: Job, *, actor: str, finished: Collection[str]) -> bool:
     """Delete one finished job. Active jobs are refused."""
     if job.status not in finished:
         return False

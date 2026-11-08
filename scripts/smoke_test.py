@@ -110,12 +110,7 @@ def _get(
             return response.status, response.read(200_000).decode("utf-8", "replace")
     except urllib.error.HTTPError as error:
         body = error.read(200_000).decode("utf-8", "replace")
-        if (
-            upgrade
-            and error.code == 400
-            and HTTPS_ONLY_BODY in body
-            and url.startswith("http://")
-        ):
+        if upgrade and error.code == 400 and HTTPS_ONLY_BODY in body and url.startswith("http://"):
             return _get(
                 "https://" + url[len("http://") :],
                 options,
@@ -128,8 +123,7 @@ def _get(
         reason = error.reason
         if isinstance(reason, ssl.SSLCertVerificationError):
             raise CheckError(
-                f"TLS verification failed ({reason.verify_message}); "
-                "use --insecure or --ca-bundle"
+                f"TLS verification failed ({reason.verify_message}); use --insecure or --ca-bundle"
             ) from error
         if isinstance(reason, ssl.SSLError):
             raise CheckError(f"TLS handshake failed: {reason}") from error
@@ -226,8 +220,7 @@ def check_compose(required: tuple[str, ...]) -> tuple[str, str]:
         raise CheckError("no services reported by docker compose ps")
 
     states = {
-        str(service.get("Service", "?")): str(service.get("State", "?"))
-        for service in services
+        str(service.get("Service", "?")): str(service.get("State", "?")) for service in services
     }
     detail = ", ".join(f"{name}={state}" for name, state in sorted(states.items()))
 
@@ -298,8 +291,7 @@ def check_api_auth(
 def check_worker_tools(worker: str) -> tuple[str, str]:
     output = _exec(
         worker,
-        "for tool in debmirror gpgv patch ed; do "
-        'command -v "$tool" || echo "MISSING:$tool"; done',
+        'for tool in debmirror gpgv patch ed; do command -v "$tool" || echo "MISSING:$tool"; done',
     )
     missing = {
         line.split(":", 1)[1].strip()
@@ -389,9 +381,7 @@ def main(argv: list[str] | None = None) -> int:
         ca_bundle=args.ca_bundle,
         host_header=args.host_header,
     )
-    required = tuple(
-        item.strip() for item in args.required_services.split(",") if item.strip()
-    )
+    required = tuple(item.strip() for item in args.required_services.split(",") if item.strip())
     user = os.environ.get("SMOKE_USER", "")
     password = os.environ.get("SMOKE_PASS", "")
 

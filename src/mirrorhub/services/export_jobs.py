@@ -17,6 +17,7 @@ import shutil
 from dataclasses import dataclass, field
 from mirrorhub.services import appsettings
 from mirrorhub.models import Export, Job, Repository, Setting
+
 ACTIVE = ("queued", "running", "cancelling")
 
 
@@ -130,6 +131,8 @@ def publication_directory(settings: Settings, slug: str, export_id: str) -> Path
     if path.resolve().parent.parent != settings.export_dir.resolve():
         raise ExportError("export directory escapes the drop folder")
     return path
+
+
 RETENTION_KEY = "export_keep_chains"
 _EXPORT_ID = re.compile(r"\d{8}T\d{6}Z-(?:full|incr)")
 
@@ -218,18 +221,15 @@ def apply_retention(
             db.commit()
     return removed, freed
 
+
 def failed_exports(db: Session) -> list[Export]:
     """Failed exports and stale 'building' rows without an active job."""
     active = set(db.exec(select(Job.id).where(col(Job.status).in_(ACTIVE))).all())
-    rows = db.exec(
-        select(Export).where(col(Export.status).in_(("failed", "building")))
-    ).all()
+    rows = db.exec(select(Export).where(col(Export.status).in_(("failed", "building")))).all()
     return [row for row in rows if row.status == "failed" or row.job_id not in active]
 
 
-def delete_failed(
-    db: Session, settings: Settings, *, actor: str, ip: str = ""
-) -> list[str]:
+def delete_failed(db: Session, settings: Settings, *, actor: str, ip: str = "") -> list[str]:
     """Remove failed/aborted export rows and their unfinished directories."""
     slugs = {repo.id: repo.slug for repo in db.exec(select(Repository)).all()}
     removed: list[str] = []

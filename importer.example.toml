@@ -1,0 +1,17 @@
+# MirrorHub importer configuration (TOML). Relative paths are relative to this file.
+
+# Inbox: the data-diode pickup writes EXPORT_DIR/<repo-slug>/<export-id>/ here.
+export_dir = "/srv/mirrorhub/inbox"
+
+# One mirror tree per slug: <mirror_root>/<repo-slug>/ (served by your web server).
+mirror_root = "/srv/mirrorhub/mirror"
+
+# Receiver state and lock files. Must be OUTSIDE the mirror tree.
+state_dir = "/var/lib/mirrorhub-importer"
+
+# Optional. Default: <mirror_root>/.mirrorhub-import (must be on the same filesystem as mirror_root).
+# staging_dir = "/srv/mirrorhub/mirror/.mirrorhub-import"
+
+# Optional signature check with an independently provisioned trusted keyring (gpgv).
+# keyring = "/etc/mirrorhub/export-signers.gpg"
+# require_signature = false
