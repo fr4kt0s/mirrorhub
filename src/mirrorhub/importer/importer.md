@@ -1,313 +1,541 @@
-# MirrorHub importer (receiver side)
+# MirrorHub Receiver: Importer and Audit Guide
 
-> **Status: experimental.** The importer has only been tested against hand-built fixtures that follow
-> `docs/export-contract.md`. It has not been validated against the real export writer, a real data
-> diode, or large mirrors. Do not treat it as production-ready.
+Status: experimental. Validate real exports, filesystem behavior, interrupted operations,
+and recovery on the intended receiver before production use. Passing unit tests alone
+is not a production-readiness guarantee.
 
-The importer runs on the air-gapped side. It applies MirrorHub export packages (full and incremental)
-to a local mirror tree, one tree per repository slug. It uses only the Python 3.12 standard library
-plus the external `zstd` binary (for `.tar.zst` exports) and `gpgv` (only for signature checks).
+## 1. Overview
 
-## 1. Concepts
+MirrorHub runs on the sender side and produces offline mirror export packages. An
+external data-diode tool transfers those packages to the receiver inbox. The importer
+applies exports to a local mirror tree, one directory per repository slug.
+
+The standalone audit script checks an existing mirror against an export inventory
+and/or checks whether packages referenced by APT indexes exist.
+
+Neither program downloads missing packages. The audit script does not repair mirrors.
+
+### Example layout
+
+```text
+/srv/mirrorhub/
+├── inbox/
+│   ├── ansible/
+│   │   ├── 20261107T185852Z-full/
+│   │   └── 20261108T171030Z-incr/
+│   └── ubuntu/
+│       └── <export-id>/
+└── mirror/
+    ├── ansible/
+    │   ├── dists/
+    │   └── pool/
+    ├── ubuntu/
+    │   ├── dists/
+    │   └── pool/
+    └── .mirrorhub-import/
+
+/var/lib/mirrorhub-importer/
+├── ansible.json
+├── ansible.lock
+├── ubuntu.json
+└── ubuntu.lock
+```
+
+Terminology:
 
 | Term | Meaning |
 | --- | --- |
-| Slug | Repository id. Inbox folder, mirror tree, state file and lock are all per slug. |
-| Export | Directory `<export_dir>/<slug>/<YYYYMMDDThhmmssZ>-<full\|incr>/` containing the archive, metadata and `.done`. |
-| Full export | Complete inventory of the repository. No base. |
-| Incremental export | Only new or changed entries plus `deleted.txt`. Its `base_export_id` must be the last export applied. |
-| State | `<state_dir>/<slug>.json`: last applied export id and the history. Lives outside the mirror tree. |
-| Staging | `<staging_dir>/<slug>/` with `journal.json` and `files/`. Exists only while an import is running or was interrupted. |
-| Inbox | `export_dir`, where the data-diode pickup tool puts the exports. The importer only reads it. |
+| Mirror root | Parent directory of all receiver repository trees, such as `/srv/mirrorhub/mirror`. |
+| Slug | Repository identifier and directory name, such as `ansible`. |
+| Repository tree | One mirror, such as `/srv/mirrorhub/mirror/ansible`. |
+| Inbox | Transferred export packages under `<export_dir>/<slug>/<export-id>/`. |
+| State | Per-slug record of the last applied export and applied history. |
+| Staging | Temporary payload and journal used during application or recovery. |
 
-The importer never modifies or deletes anything in the export directory.
+## 2. Export semantics
 
-## 2. Setup
+- A full export contains the complete payload and has no base export.
+- An incremental export contains only new/changed entries and a deletion list. Its base
+  must equal the last export applied to that slug.
+- `files.json` always describes the complete resulting inventory, including in incrementals.
+- Only exports with `.done` are published. Incomplete and `.tmp` directories are ignored
+  by inbox discovery.
+- Already applied export identifiers are no-ops, even with `--rebase`.
+- Export directories are inputs: do not modify their files, checksums, identifiers or markers.
 
-1. Copy `importer.example.toml` to `importer.toml` and edit it. Relative paths are relative to the config file.
+## 3. Setup
 
-   ```toml
-   export_dir  = "/srv/mirrorhub/inbox"            # inbox: <export_dir>/<slug>/<export-id>/
-   mirror_root = "/srv/mirrorhub/mirror"           # mirror tree: <mirror_root>/<slug>/
-   state_dir   = "/var/lib/mirrorhub-importer"     # state + lock files, OUTSIDE the mirror tree
-   # staging_dir = "/srv/mirrorhub/mirror/.mirrorhub-import"   # default; same filesystem as mirror_root
-   # keyring = "/etc/mirrorhub/export-signers.gpg"             # optional, trusted public keys
-   # require_signature = false
-   ```
+Use Python 3.12. Importing `.tar.zst` exports also requires the external `zstd` executable.
+Optional signature verification requires `gpgv` and an independently provisioned trusted
+public keyring. Never establish trust using a key delivered only with the export.
 
-2. Run from the repository root (or install the package) with Python 3.12:
-
-   ```sh
-   python3 -m mirrorhub.importer --config importer.toml import --slug ubuntu
-   ```
-
-   The config path can also be set with `MIRRORHUB_IMPORTER_CONFIG`.
-
-Notes:
-
-- `staging_dir` must be on the same filesystem as `mirror_root` and must not be inside a repository tree.
-  The default `<mirror_root>/.mirrorhub-import` is below the mirror root, so exclude it from your web server.
-- `zstd` must be installed for `.tar.zst` exports. The importer stops with exit code 8 if it is missing.
-- Keep `state_dir` out of the mirror tree and back it up.
-
-## 3. Everyday use
+From the repository root:
 
 ```sh
-# Plan only (no writes). Shows A(dded) / C(hanged) / D(eleted) paths for the first pending export.
-python3 -m mirrorhub.importer --config importer.toml import --slug ubuntu --dry-run
+cp importer.example.toml importer.toml
+```
 
-# Apply all pending exports of one repository, oldest first.
-python3 -m mirrorhub.importer --config importer.toml import --slug ubuntu
+Edit the receiver paths:
 
-# Apply every repository found in the inbox. One failing slug does not stop the others.
+```toml
+export_dir = "/srv/mirrorhub/inbox"
+mirror_root = "/srv/mirrorhub/mirror"
+state_dir = "/var/lib/mirrorhub-importer"
+
+# Optional; default is <mirror_root>/.mirrorhub-import.
+# Staging and the repository target must be on the same filesystem.
+# staging_dir = "/srv/mirrorhub/mirror/.mirrorhub-import"
+
+# Optional independently provisioned keyring.
+# keyring = "/etc/mirrorhub/export-signers.gpg"
+# require_signature = false
+```
+
+Relative paths are resolved relative to the configuration file. Keep state outside the
+mirror and inbox. Staging must not be inside an individual repository tree. Exclude it
+from the web server if it is under the served mirror root. Protect local configuration
+and do not accidentally commit deployment-specific settings.
+
+The configuration path is selected with `--config`, or with the environment variable
+`MIRRORHUB_IMPORTER_CONFIG`. Commands below assume the package is available to Python
+and the working directory is the repository root.
+
+## 4. Importing exports
+
+### Plan one repository without applying changes
+
+```sh
+python3 -m mirrorhub.importer --config importer.toml import \
+  --slug ansible --dry-run
+```
+
+The plan uses `A` for additions, `C` for changes and `D` for deletions. Dry-run checks
+package checksums/metadata and the chain, but does not unpack or validate tar members.
+It makes no receiver writes. Inbox mode plans only the first pending export per slug,
+because later plans depend on application of their predecessors.
+
+### Apply pending exports for one slug
+
+```sh
+python3 -m mirrorhub.importer --config importer.toml import --slug ansible
+```
+
+### Import all slugs
+
+```sh
 python3 -m mirrorhub.importer --config importer.toml import --all
+```
 
-# Apply one specific export directory (slug is taken from its parent folder).
-python3 -m mirrorhub.importer --config importer.toml import --export /srv/mirrorhub/inbox/ubuntu/20261101T000000Z-full
+Repositories are processed sequentially. A failed slug does not stop the others. The
+highest per-slug error code is returned. This is not a severity ranking.
 
-# Show the receiver state.
+```sh
+# Plan the first pending export of EACH slug.
+python3 -m mirrorhub.importer --config importer.toml import --all --dry-run
+```
+
+### Apply one explicit export
+
+```sh
+python3 -m mirrorhub.importer --config importer.toml import \
+  --export /srv/mirrorhub/inbox/ansible/20261108T171030Z-incr
+```
+
+### Show state
+
+```sh
 python3 -m mirrorhub.importer --config importer.toml status
 ```
 
-Options:
+### Important options
 
-| Option | Effect |
+| Option | Behavior |
 | --- | --- |
-| `--dry-run` | Verify and print the plan. Writes nothing. It hashes the archive parts during verification but does not unpack the archive. With `--slug`/`--all` it plans only the first pending export of each slug, because later plans depend on the earlier ones. |
-| `--rebase` | Allow a full export over existing state or existing files. Deletes everything in the slug tree that is not in the new inventory. Not allowed with `--all`. |
-| `--full-check` | After applying, hash the whole tree and compare it with `files.json` (always done for full exports). |
-| `--discard-staging` | Drop an unfinished import of a *different* export. Not allowed with `--all`. |
-| `--log-level` | `debug`, `info`, `warning`, `error`. |
+| `--dry-run` | Verification and planning only; no tar extraction and no receiver writes. |
+| `--full-check` | Compare the whole tree after application; full exports already request this. Incrementals normally check touched paths. |
+| `--rebase` | Explicitly allow a full export over existing content/state; remove entries absent from its inventory, subject to skipped directories. |
+| `--discard-staging` | Allow discarding another export's unfinished journal; does not undo partial changes. |
 
-Logs are JSON lines on stderr. Every event that belongs to a repository carries a `slug` field:
+`--rebase` and `--discard-staging` are refused with importer `--all`.
+
+The importer verifies first, stages the payload, writes a journal, applies deletions and
+per-file replacements, checks the result, and updates state last. A per-slug lock prevents
+imports using the same state location from running concurrently. Per-file replacement
+is not an atomic switch of the entire repository tree.
+
+### Logs
+
+Repository-specific JSON events include `slug`, for example:
 
 ```json
-{"event": "applied", "export_id": "20261107T185852Z-full", "level": "info", "slug": "ubuntu", "ts": "2026-11-08T17:18:33+00:00"}
+{"event": "applied", "export_id": "20261108T171030Z-incr", "level": "info", "slug": "ansible", "ts": "2026-11-08T17:18:33+00:00"}
 ```
 
-## 4. What happens during an import
+JSON events go to stderr; human-readable summaries go to stdout. Global configuration
+errors may have no slug.
 
-1. `mirrorhub.verify.verify()` runs first (checksums, metadata, `.done`). Any failure stops the import. Additional checks follow: slug and export id match the directory, archive parts are numbered `00000…` without gaps, symlink targets stay inside the repository, no path conflicts.
-2. Optional signature check with `gpgv` against the configured keyring. The key must be provisioned independently, never taken from the export.
-3. A per-slug lock is taken. Already applied exports are a no-op.
-4. Chain check: an incremental export must have `base_export_id` equal to the last applied export. A full export over existing state or a non-empty tree needs `--rebase`.
-5. The archive is streamed (parts are re-hashed while reading). Every tar member is checked and written to staging. Only regular files and symlinks listed in the payload are accepted; absolute paths, `..`, backslashes, hardlinks and special files are rejected.
-6. A journal is written, `deleted.txt` entries are removed, and files are moved into place one by one. Empty parent directories of deleted files are removed.
-7. Post-check: touched paths (or the whole tree for full exports or `--full-check`) must match `files.json` in type, size, sha256 and mtime.
-8. The state file is updated and the staging directory is removed.
+## 5. Inventory audit
 
-The state is updated last. If a run is interrupted before that, running the same import again continues from the journal.
-
-## 5. Exit codes
-
-| Code | Meaning | Typical action |
-| --- | --- | --- |
-| 0 | Success or no-op | None. |
-| 2 | Usage or config error | Fix the command or `importer.toml`. |
-| 3 | Verification failed | The export is damaged or incomplete. See 6.6. |
-| 4 | Signature check failed | Check the keyring and the export. |
-| 5 | Chain, base or gap error | See 6.3. |
-| 6 | Unsafe or inconsistent archive | Do not use this export. See 6.6. |
-| 7 | Lock held | Another import of the same slug is running. See 6.8. |
-| 8 | Tool missing (`zstd`, `gpgv`) | Install it. |
-| 9 | I/O error or resume needed | See 6.1, 6.2 and 6.7. |
-| 10 | Post-check failed | See 6.5. |
-
-With `--all` the exit code is the highest code of any failed slug.
-
-## 6. Repairing a repository
-
-The importer has no separate "repair" command. Repairs use three tools: re-running an import
-(it resumes), a full export together with `--rebase`, and, as a last resort, resetting the state file
-by hand. Pick the situation that matches the symptom.
-
-### Before you touch anything
-
-- Never edit, move or delete anything inside the export directories. If an export is bad, ask for it to be transferred again.
-- Stop other importers for the same slug (cron jobs, other terminals).
-- Back up the state file: `cp <state_dir>/<slug>.json <state_dir>/<slug>.json.bak`.
-- Look at the last log lines and `status` first:
-
-  ```sh
-  python3 -m mirrorhub.importer --config importer.toml status
-  ```
-
-### 6.1 An import was interrupted (crash, power loss, Ctrl-C)
-
-Symptom: the state still shows the old export, and `<staging_dir>/<slug>/journal.json` exists. The
-mirror tree may be partly updated.
-
-Fix: run the same import again.
+The standalone script is `scripts/audit_tree.py`. It does not read `importer.toml`.
+Supply explicit paths. Use importer `status` to identify the last applied export:
 
 ```sh
-python3 -m mirrorhub.importer --config importer.toml import --slug ubuntu
+python3 -m mirrorhub.importer --config importer.toml status
+
+python3 scripts/audit_tree.py \
+  /srv/mirrorhub/inbox/ansible/20261108T171030Z-incr \
+  /srv/mirrorhub/mirror/ansible \
+  --log-dir ./audit-logs
 ```
 
-The log shows `resuming interrupted import`. The remaining steps are idempotent, so nothing is lost.
-Do not delete the staging directory by hand.
+Use the last applied export, not necessarily the newest one present in the inbox. An old
+full export will legitimately differ after newer incrementals have been applied.
 
-### 6.2 "staging holds an unfinished import of …" (exit 9)
+| Terminal label | Meaning |
+| --- | --- |
+| `MISSING` | Inventory path is absent from the tree. |
+| `DIFFERS` | Type, size, file SHA-256 or symlink target differs. |
+| `EXTRA` | A tree entry is absent from the inventory. |
+| `UNSAFE` | A checked path would traverse outside the mirror. |
 
-Staging contains a journal for a different export than the one you are importing.
+The inventory audit does not compare mtimes, permissions or ownership. It does not
+verify export signatures or substitute for `mirrorhub.verify`. Use trusted, verified
+metadata. Stop imports and other writers while auditing to avoid inconsistent results.
 
-1. Preferred: import the export named in the message first. It resumes and finishes (see 6.1). Then import the others.
-2. Only if that export is no longer available, run with `--discard-staging`. The tree may then be a mix of two versions, so afterwards repair the tree as in 6.4.
+Skipped directory names in the current audit script are `.temp`, `.tmp`, `.mirrorhub`,
+`.rsync-partial` and `.mirrorhub-import`.
 
-### 6.3 Chain errors: "base mismatch", "no export has been applied yet", gap (exit 5)
+## 6. APT package audit
 
-The incremental export does not build on what the receiver has.
+A mirror may match its exported inventory while APT indexes reference packages absent
+from that inventory. The APT check catches those missing references independently.
 
-- **A middle export is missing.** Get the missing export(s) from the sender, put them into the inbox, and run the import again. Exports are applied oldest first.
-- **The state is behind or ahead of the tree** (for example, a restored backup). Compare `status` with the exports in the inbox. If the chain cannot be completed, rebuild from a full export as in 6.4.
-- **Older export in the inbox that was never applied.** It is skipped with a warning (`skipping older unapplied export`). It cannot be applied after a newer one.
-
-Never force an incremental export onto a different base.
-
-### 6.4 The mirror tree is damaged, modified or has stray files
-
-Symptoms: files were deleted or changed by hand, a disk problem, `--discard-staging` was used, a
-post-check keeps failing, or the state and the tree no longer agree.
-
-First, find out what is wrong without changing anything. The importer has no standalone check, so
-use the read-only audit script from section 7 with the `files.json` of the last applied export:
+### One slug, no export required
 
 ```sh
-python3 audit_tree.py /srv/mirrorhub/inbox/ubuntu/<last-export-id> /srv/mirrorhub/mirror/ubuntu
+python3 scripts/audit_tree.py \
+  /srv/mirrorhub/mirror/ansible \
+  --apt-only --log-dir ./audit-logs
 ```
 
-It prints `MISSING`, `DIFFERS` and `EXTRA` paths. Then rebuild the tree from a full export.
+### Combine inventory and APT checks
 
-**Option A: a new full export from the sender (recommended).**
-
-1. Ask the sender side to produce a new full export and transfer it into the inbox.
-2. Check the plan: `import --slug ubuntu --dry-run --rebase` (the `D` lines are files that will be deleted).
-3. Apply it with rebase. Every file of a full export is rewritten, files that are not in its inventory are deleted, and the whole tree is checked afterwards.
-
-   ```sh
-   python3 -m mirrorhub.importer --config importer.toml import --slug ubuntu --rebase
-   ```
-
-   Later incremental exports of the new chain are applied normally.
-
-A full export that was already applied cannot be applied again ("already applied", no-op). That is why a
-new export is needed for option A.
-
-**Option B: re-apply the existing chain (full export plus all later incrementals are still in the inbox).**
-
-1. Make sure nothing else is importing this slug.
-2. Move the state file away (keep the backup): `mv <state_dir>/ubuntu.json <state_dir>/ubuntu.json.old`
-3. Run the import with `--rebase`. The first export (the full one) is applied over the existing tree, then the incrementals follow in order:
-
-   ```sh
-   python3 -m mirrorhub.importer --config importer.toml import --slug ubuntu --rebase
-   ```
-
-   `--rebase` applies only to the first export of the run; later ones are applied normally.
-4. Run `status` and the audit script to confirm.
-
-Option B requires that the full export and every later incremental are still present and valid in the
-inbox. If a retention cleanup removed any of them, use option A.
-
-Important:
-
-- Rebase deletes every file in `<mirror_root>/<slug>` that is not in the full export's inventory, except the directories `.temp`, `.tmp`, `.mirrorhub` and `.rsync-partial`. Do not keep local files in that tree.
-- Rebase is a deliberate decision per repository, so it is refused with `--all`.
-
-### 6.5 Post-check failed (exit 10)
-
-The files were applied, but the tree does not match `files.json` (for example a sha256 or mtime mismatch,
-or paths that are not in the inventory). The state was not updated and the staging directory was removed.
-
-1. Read the error message: it names the path.
-2. Check the disk, filesystem and permissions of `mirror_root`. A mtime mismatch can mean the filesystem does not support setting nanosecond mtimes.
-3. Run the same import again. It extracts and applies once more.
-4. If it fails again with the same path, rebuild the tree as in 6.4.
-
-### 6.6 Verification failed or unsafe archive (exit 3 or 6)
-
-The export itself is damaged, incomplete or does not match its manifest. The importer has not changed
-the mirror tree.
-
-1. Check that the directory has a `.done` file and that the transfer finished.
-2. Run the verifier on its own: `python3 -m mirrorhub.verify <export-directory>`.
-3. Ask for the export to be transferred again, or for the sender to produce a new full export. Do not edit files in the export.
-4. Do not disable checks to get past an error.
-
-### 6.7 State file is invalid or lost (exit 9, "state file is invalid")
-
-- Restore the backup of `<state_dir>/<slug>.json` if you have one. The tree and the state must belong together.
-- Without a backup, treat it as a lost state: the first import then needs `--rebase` because the tree is not empty. Follow option B in 6.4.
-
-### 6.8 "another import holds the lock" (exit 7)
-
-Another importer process is running for this slug. Wait for it, or check with `ps`. The lock is released
-automatically when the process ends, so a leftover `<slug>.lock` file is harmless. Do not delete it while an import is running.
-
-### 6.9 Tool missing (exit 8)
-
-Install `zstd` (for `.tar.zst`) or `gpgv` (for signature checks) and run the import again. Nothing was changed.
-
-## 7. Audit script (read-only)
-
-Save as `audit_tree.py`. It compares a mirror tree with the `files.json` of an export and changes nothing.
-Exit code 0 means the tree matches.
-
-```python
-#!/usr/bin/env python3
-"""Compare a mirror tree with the files.json of an export (read-only)."""
-import hashlib
-import json
-import os
-import sys
-from pathlib import Path
-
-SKIP = {".temp", ".tmp", ".mirrorhub", ".rsync-partial"}
-
-
-def digest(path):
-    h = hashlib.sha256()
-    with path.open("rb") as handle:
-        while chunk := handle.read(1024 * 1024):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-export, tree = Path(sys.argv[1]), Path(sys.argv[2])
-inventory = json.loads((export / "files.json").read_text(encoding="utf-8"))
-problems = 0
-for rel, entry in sorted(inventory.items()):
-    path = tree / rel
-    if not os.path.lexists(path):
-        print("MISSING ", rel)
-        problems += 1
-    elif entry["type"] == "symlink":
-        if not (path.is_symlink() and os.readlink(path) == entry["target"]):
-            print("DIFFERS ", rel)
-            problems += 1
-    elif path.is_symlink() or not path.is_file():
-        print("DIFFERS ", rel)
-        problems += 1
-    elif path.stat().st_size != entry["size"] or digest(path) != entry["sha256"]:
-        print("DIFFERS ", rel)
-        problems += 1
-present = set()
-for directory, dirs, files in os.walk(tree):
-    base = Path(directory)
-    links = [n for n in dirs if (base / n).is_symlink()]
-    dirs[:] = [n for n in dirs if n not in SKIP and n not in links]
-    for name in [*files, *links]:
-        present.add((base / name).relative_to(tree).as_posix())
-for rel in sorted(present - set(inventory)):
-    print("EXTRA   ", rel)
-    problems += 1
-print(f"{problems} problem(s)")
-sys.exit(1 if problems else 0)
+```sh
+python3 scripts/audit_tree.py \
+  /srv/mirrorhub/inbox/ansible/20261108T171030Z-incr \
+  /srv/mirrorhub/mirror/ansible \
+  --apt --log-dir ./audit-logs
 ```
 
-## 8. Limits
+### Also compare package SHA-256
 
-- Exports are applied one slug at a time and one after another. There is no parallel mode.
-- Dry-run plans only the first pending export, and it does not unpack the archive. Problems inside the tar show up during a real import.
-- File modes are `0644`, as written by the sender. Executable bits are not preserved.
-- The importer cannot repair a repository from a damaged export. It needs a valid full export for that.
-- There is no standalone integrity check of the mirror tree besides the post-check and the audit script above.
+```sh
+python3 scripts/audit_tree.py \
+  /srv/mirrorhub/mirror/ansible \
+  --apt-only --apt-hash --log-dir ./audit-logs
+```
+
+`--apt-hash` also enables APT checks when used with the two-path inventory invocation.
+
+### What is checked
+
+Below `dists/`, one index is selected per directory: `Packages.gz`, otherwise
+`Packages.xz`, otherwise plain `Packages`. The different compression variants are not
+compared with one another. `Filename` is resolved relative to the individual slug tree.
+
+The script checks existence and declared size. `--apt-hash` additionally compares SHA-256
+when supplied. Missing optional metadata is not itself an error. Identical filename,
+size and hash declarations are checked once; conflicting declarations separately.
+
+| Terminal label | Meaning |
+| --- | --- |
+| `APT-MISSING` | Referenced package file is absent. |
+| `APT-SIZE` | File size differs from the index. |
+| `APT-HASH` | SHA-256 differs (`--apt-hash`). |
+| `APT-TYPE` | Referenced path exists but is not a regular file. |
+| `APT-BADNAME` | Invalid/missing Filename or a target outside the mirror. |
+| `APT-METADATA` | Size is present but not an ASCII nonnegative integer. |
+| `APT-INDEX` | No index found, or an index could not be read/checked. |
+
+This does not check Release/InRelease signatures, Sources indexes, source package
+references, Arch databases or upstream availability. It is consistency checking, not
+APT authentication or a package downloader.
+
+## 7. Audit every APT slug with --all
+
+Pass the parent mirror root, not an individual repository tree:
+
+```sh
+python3 scripts/audit_tree.py \
+  /srv/mirrorhub/mirror \
+  --all --log-dir ./audit-logs
+```
+
+The alias `-all` is also accepted:
+
+```sh
+python3 scripts/audit_tree.py \
+  /srv/mirrorhub/mirror \
+  -all --log-dir ./audit-logs
+```
+
+To compare package hashes in every discovered APT repository:
+
+```sh
+python3 scripts/audit_tree.py \
+  /srv/mirrorhub/mirror \
+  --all --apt-hash --log-dir ./audit-logs
+```
+
+Discovery is limited to direct child directories containing `dists/`:
+
+```text
+mirror/
+├── ansible/dists/       -> checked as slug ansible
+├── ubuntu/dists/        -> checked as slug ubuntu
+├── debian/dists/        -> checked as slug debian
+├── arch/                -> skipped: no dists/
+├── .mirrorhub-import/   -> skipped
+└── group/nested/dists/  -> not recursively discovered
+```
+
+Symlink repository directories are skipped. A child with `dists/` but no usable Packages
+index is selected and reports a problem. A root containing no APT repositories returns
+exit code 2. Reports must be outside the entire mirror root in this mode.
+
+Audit `--all`:
+
+- Implies APT-only checking: no export path or `files.json` comparison.
+- Accepts exactly one positional path, the mirror root.
+- Does not require `--apt-only` or `--apt`.
+- Processes discovered slugs sequentially and continues after repository failures.
+- Includes the slug in terminal messages and writes a separate report for every completed audit.
+- Returns the highest repository exit code.
+
+Example output:
+
+```text
+[ansible] starting audit: /srv/mirrorhub/mirror/ansible
+[ansible] APT-MISSING 'pool/main/r/resolvelib/example.deb' (listed in dists/focal/main/binary-amd64/Packages.gz)
+[ansible] missing-file report: audit-logs/ansible-missing.log (1 unique paths)
+[ansible] 1 problem(s)
+[ubuntu] starting audit: /srv/mirrorhub/mirror/ubuntu
+[ubuntu] missing-file report: audit-logs/ubuntu-missing.log (0 unique paths)
+[ubuntu] 0 problem(s)
+ALL: 2 repositories, 1 clean, 1 with problems, 0 failed
+```
+
+The two `--all` options are different commands:
+
+| Command | Purpose |
+| --- | --- |
+| `python3 -m mirrorhub.importer ... import --all` | Apply pending exports from the configured inbox. |
+| `python3 scripts/audit_tree.py MIRROR_ROOT --all` | Check APT package references in existing mirror trees; do not import anything. |
+
+## 8. Missing-file logs with slug prefixes
+
+For `TREE_DIR=/srv/mirrorhub/mirror/ansible`, the slug is `ansible` and the report is
+`<log-dir>/ansible-missing.log`.
+
+Example report content:
+
+```text
+ansible/pool/main/a/ansible/ansible_5.10.0-1ppa~focal_all.deb
+ansible/pool/main/r/resolvelib/python3-resolvelib_0.5.4-2ppa~focal_all.deb
+```
+
+Each report path is relative to the parent MIRROR ROOT and includes its slug:
+
+```text
+Mirror root: /srv/mirrorhub/mirror/
+Log entry:   ansible/pool/main/r/resolvelib/python3-resolvelib_0.5.4-2ppa~focal_all.deb
+Full path:   /srv/mirrorhub/mirror/ansible/pool/main/r/resolvelib/python3-resolvelib_0.5.4-2ppa~focal_all.deb
+```
+
+Do not prepend the slug twice. Internally, index Filename values and files.json keys
+remain relative to the slug tree, without the slug prefix. Only report writing adds it.
+
+### Report rules
+
+- `--log-dir` defaults to the current working directory; missing parents are created.
+- Logs must be outside the checked tree/export; with `--all`, outside the entire mirror root.
+- One sorted, deduplicated, slug-prefixed path per line; no leading slash or extra log text.
+- `MISSING` and `APT-MISSING` paths are combined. Other errors remain in terminal output.
+- A completed report is atomically replaced, never appended. No missing paths means an empty file.
+- A fatal error may leave an old report untouched: check exit status and terminal output.
+- An unreadable APT index can yield an incomplete report from the remaining indexes, with exit 1.
+- A zero-length report is not proof of a clean audit: hash errors, size errors and index failures
+  do not create missing-file entries.
+- Reports contain no timestamp or history. Copy them elsewhere for retention.
+- Concurrent audits writing the same slug/report can overwrite one another. Use separate log
+  directories or run sequentially.
+- Reports for slugs skipped or no longer present are not automatically deleted; they may be stale.
+
+After `--all`, you may have:
+
+```text
+audit-logs/
+├── ansible-missing.log   # entries begin ansible/
+├── ubuntu-missing.log    # entries begin ubuntu/
+└── debian-missing.log    # entries begin debian/
+```
+
+Logs are diagnostic lists, not deletion lists or instructions to alter export metadata.
+
+## 9. Repairing a repository
+
+There is no dedicated repair command. First identify whether the fault is in the receiver
+mirror, its state/chain, the transferred export, or the sender's repository snapshot.
+
+### 9.1 Preserve evidence before repair
+
+1. Stop scheduled/manual importers and other writers for the affected slug.
+2. Pause serving if clients must not see mixed or partially repaired contents.
+3. Record importer `status`, error messages, export id and missing-file reports.
+4. Back up consistent mirror/state/staging together when practical; preserve a usable backup.
+5. Correct disk-space, permission or storage problems before retrying.
+
+Never invent base ids, weaken the verifier, edit checksums, or delete live lock files.
+Do not reset state just to silence a chain error.
+
+### 9.2 Interrupted import
+
+The mirror may be partly updated while state still names the predecessor. A journal may
+remain at `<staging_dir>/<slug>/journal.json`. Prefer retrying the exact export it names:
+
+```sh
+python3 -m mirrorhub.importer --config importer.toml import \
+  --export /srv/mirrorhub/inbox/ansible/20261108T171030Z-incr
+```
+
+The importer attempts roll-forward, not rollback. Resume is not guaranteed for every
+failure, especially path-type transitions. If resume fails, preserve the journal and
+consider an isolated rebuild. Discarding staging never undoes changes already applied.
+
+### 9.3 Wrong base or missing predecessor
+
+Obtain the missing chain members and apply in base order. If the chain cannot be completed,
+request a new full export. Never change `last_export_id` to pretend an export was applied.
+Restore state only alongside its matching mirror tree.
+
+### 9.4 Damaged receiver mirror: obtain a new full export
+
+If the sender mirror is correct, request a NEW full export with a new export id. Use its
+exact path rather than `--slug`, avoiding unrelated pending exports:
+
+```sh
+python3 -m mirrorhub.importer --config importer.toml import \
+  --export /srv/mirrorhub/inbox/ansible/NEW_TIMESTAMP-full \
+  --rebase --dry-run
+
+python3 -m mirrorhub.importer --config importer.toml import \
+  --export /srv/mirrorhub/inbox/ansible/NEW_TIMESTAMP-full \
+  --rebase --full-check
+```
+
+Replace `NEW_TIMESTAMP-full` with the actual directory name. Rebase removes local entries
+absent from the full inventory, subject to skipped directories. Inspect the deletion plan
+and back up first. A journal for another unfinished export blocks the operation; prefer
+finishing it, or use an isolated rebuild if in-place recovery is uncertain.
+
+An already applied full id remains a no-op even with `--rebase`. Obtain a new export id
+or use fresh recovery state. Subsequent incrementals must base on the chosen full export.
+
+### 9.5 Isolated rebuild with separate state
+
+Use this if tree/state consistency is uncertain, a full export was already applied, or
+resume repeatedly fails. It requires space for another mirror tree.
+
+1. Copy the config to `importer-recovery.toml`.
+2. Keep the same inbox, but use new empty mirror and state locations. Explicitly configure
+   separate staging on the recovery mirror filesystem; do not reuse unfinished staging.
+3. Import a valid full export using `--export`. Fresh state and an empty tree need no rebase.
+   Apply its dependent incrementals one by one in base order if needed.
+4. Audit against the last applied inventory and run APT checks with `--apt-hash`.
+5. Stop importers and serving. Switch to the recovered mirror AND its matching state/config
+   together, checking permissions and paths before restarting.
+6. Preserve old mirror/state/staging for rollback until recovery is confirmed.
+
+Never run importers with separate state/lock directories against the same target tree:
+their locks would not coordinate writes. Do not pair a rebuilt tree with old state.
+
+### 9.6 APT missing packages while the inventory audit passes
+
+The receiver may match its export exactly while indexes reference packages the sender
+did not include. Re-importing that export cannot supply files absent from its inventory.
+
+1. Find the path in the last export's files.json. Remove the slug prefix from the report
+   entry when looking up inventory keys or APT Filename fields.
+2. Check sender architecture/component/source selections and upstream snapshot consistency.
+3. Correct the sender mirror, complete a successful sync and generate a new full export.
+4. Transfer, import and audit again. Do not fabricate packages or edit signed metadata.
+
+Example mapping:
+
+```text
+Log entry:
+ansible/pool/main/r/resolvelib/python3-resolvelib_0.5.4-2ppa~focal_all.deb
+
+files.json key / APT Filename:
+pool/main/r/resolvelib/python3-resolvelib_0.5.4-2ppa~focal_all.deb
+```
+
+### 9.7 Other failures
+
+- Post-check failure leaves state unadvanced. In the current implementation that failure
+  path removes staging; preserve output and investigate the named path. The importer checks
+  nanosecond mtimes while the standalone audit does not, so audit can pass despite an mtime
+  post-check failure.
+- Damaged or unsafe export: preserve it and obtain a correct retransmission through the
+  transfer process or a new export. Do not edit published files or checksum manifests.
+- Invalid/lost state: restore matching tree/state backups or rebuild in isolation.
+- Lock held: wait or investigate the process. A leftover `.lock` filename alone does not
+  prove a lock is held. Never delete it while an import is running.
+- Missing zstd/gpgv: provision the executable and retry after checking state/staging.
+
+## 10. Exit codes
+
+### Importer
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Success or already applied/no-op. |
+| 2 | Usage/configuration error. |
+| 3 | Verification failure. |
+| 4 | Signature failure. |
+| 5 | Chain/base error. |
+| 6 | Unsafe/inconsistent archive. |
+| 7 | Lock held. |
+| 8 | External tool missing. |
+| 9 | I/O failure or unfinished import needs attention. |
+| 10 | Post-check failure. |
+
+### Audit script
+
+| Code | Meaning |
+| --- | --- |
+| 0 | No problems found by the selected checks. |
+| 1 | Differences, missing files, unsafe paths or APT-index errors. |
+| 2 | Usage/fatal input/I/O error; or --all found no APT repositories. Report may not be refreshed. |
+
+Audit `--all` returns the highest per-repository code. Check both the per-slug summary and
+its overall summary; do not infer health only from whether missing-file logs are empty.
+
+## 11. Help and development checks
+
+```sh
+python3 scripts/audit_tree.py --help
+python3 -m mirrorhub.importer --help
+
+python3 -m ruff check scripts/audit_tree.py src/mirrorhub/importer tests/test_importer.py
+python3 -m ruff format --check scripts/audit_tree.py src/mirrorhub/importer tests/test_importer.py
+python3 -m mypy src/mirrorhub/importer tests/test_importer.py
+python3 -m pytest -q tests/test_importer.py
+
+# Whole-repository release checks; do not bypass unrelated failures.
+sh scripts/check.sh
+python3 -m pytest -q
+```
+
+Test real exports, zstd, split archives, path-type changes, interrupted application and
+storage failures on the actual receiver. Keep serving and importer execution separate.
