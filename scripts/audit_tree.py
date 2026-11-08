@@ -39,7 +39,9 @@ import hashlib
 import json
 import os
 import sys
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 SKIP = {".temp", ".tmp", ".mirrorhub", ".rsync-partial"}
 
@@ -50,6 +52,15 @@ def digest(path: Path) -> str:
         while chunk := handle.read(1024 * 1024):
             h.update(chunk)
     return h.hexdigest()
+
+
+def differs(path: Path, entry: Mapping[str, Any]) -> bool:
+    """True if an existing path does not match its inventory entry."""
+    if entry["type"] == "symlink":
+        return not (path.is_symlink() and os.readlink(path) == entry["target"])
+    if path.is_symlink() or not path.is_file():
+        return True
+    return path.stat().st_size != entry["size"] or digest(path) != entry["sha256"]
 
 
 def main(argv: list[str]) -> int:
@@ -78,14 +89,7 @@ def main(argv: list[str]) -> int:
         if not os.path.lexists(path):
             print("MISSING ", rel)
             problems += 1
-        elif entry["type"] == "symlink":
-            if not (path.is_symlink() and os.readlink(path) == entry["target"]):
-                print("DIFFERS ", rel)
-                problems += 1
-        elif path.is_symlink() or not path.is_file():
-            print("DIFFERS ", rel)
-            problems += 1
-        elif path.stat().st_size != entry["size"] or digest(path) != entry["sha256"]:
+        elif differs(path, entry):
             print("DIFFERS ", rel)
             problems += 1
 
