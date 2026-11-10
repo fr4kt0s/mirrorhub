@@ -106,7 +106,7 @@ def build(repo: Repository, job: Job, target: Path, cwd: Path) -> BuildPlan:
         cwd=cwd,
         target=target,
         warnings=[
-            "Arch sync downloads the entire pool/packages directory, including unselected repositories.",
+            "Arch sync downloads the entire pool/packages directory.",
             "Arch deletion is disabled pending safe pool garbage collection.",
             "Two-pass sync is not an atomic snapshot; an upstream change may require a retry.",
         ],
