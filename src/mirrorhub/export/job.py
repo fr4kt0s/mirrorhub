@@ -322,15 +322,15 @@ def execute(
         _fsync_directory(final)
 
         with Session(get_engine()) as db:
-            row = db.get(Export, row_id)
-            if row is None:
+            published = db.get(Export, row_id)
+            if published is None:
                 raise ExportError("export database record disappeared")
-            row.status = "published"
-            row.signed = signed
-            row.file_count = len(changed)
-            row.deleted_count = len(deleted)
-            row.total_bytes = metadata["sizes"]["archive_bytes"]
-            db.add(row)
+            published.status = "published"
+            published.signed = signed
+            published.file_count = len(changed)
+            published.deleted_count = len(deleted)
+            published.total_bytes = metadata["sizes"]["archive_bytes"]
+            db.add(published)
             audit.record(
                 db,
                 actor="worker",

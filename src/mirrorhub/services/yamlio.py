@@ -138,7 +138,7 @@ def export_document(db: Session) -> dict[str, Any]:
 
 
 def export_yaml(db: Session) -> str:
-    return yaml.safe_dump(export_document(db), sort_keys=False, allow_unicode=True)
+    return str(yaml.safe_dump(export_document(db), sort_keys=False, allow_unicode=True))
 
 
 def parse_yaml(text: str) -> dict[str, Any]:
@@ -265,12 +265,12 @@ def apply_plan(db: Session, plan: ImportPlan, *, actor: str, ip: str = "") -> Im
         if repo is None:
             plan.errors.append(f"schedules: unknown repository '{entry['repo_slug']}'")
             continue
-        existing = db.exec(
+        schedule = db.exec(
             select(Schedule).where(
                 Schedule.repo_id == repo.id, col(Schedule.job_type) == entry["job_type"]
             )
         ).first()
-        if existing is None:
+        if schedule is None:
             db.add(
                 Schedule(
                     repo_id=repo.id or 0,
@@ -282,11 +282,11 @@ def apply_plan(db: Session, plan: ImportPlan, *, actor: str, ip: str = "") -> Im
                 )
             )
         else:
-            existing.cron_expr = entry["cron_expr"]
-            existing.preset_label = entry["preset_label"]
-            existing.enabled = entry["enabled"]
-            existing.chain_export = entry["chain_export"]
-            db.add(existing)
+            schedule.cron_expr = entry["cron_expr"]
+            schedule.preset_label = entry["preset_label"]
+            schedule.enabled = entry["enabled"]
+            schedule.chain_export = entry["chain_export"]
+            db.add(schedule)
     audit.record(
         db,
         actor=actor,

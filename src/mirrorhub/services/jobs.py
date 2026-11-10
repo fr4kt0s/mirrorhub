@@ -33,10 +33,13 @@ def enqueue(
     requested_by: str = "system",
     parent_job_id: int | None = None,
 ) -> Job:
+    if repo.id is None:
+        raise ValueError("repository must be persisted before enqueueing a job")
+    repo_id = repo.id
     tool = repo.tool if job_type == JobType.SYNC.value else Tool.EXPORT.value
     policy = dict(repo.retry_policy or {})
     job = Job(
-        repo_id=repo.id,
+        repo_id=repo_id,
         type=job_type,
         tool=tool,
         trigger=trigger,
@@ -142,7 +145,10 @@ def delete_job(db: Session, job: Job, *, actor: str, finished: Collection[str]) 
     """Delete one finished job. Active jobs are refused."""
     if job.status not in finished:
         return False
-    job_id, repo_id, status = job.id, job.repo_id, job.status
+    if job.id is None:
+        return False
+    job_id = job.id
+    repo_id, status = job.repo_id, job.status
     _release_references(db, [job_id])
     db.delete(job)
     audit.record(
