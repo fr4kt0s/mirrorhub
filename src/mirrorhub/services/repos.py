@@ -187,6 +187,9 @@ def preset_values(config: dict[str, Any]) -> dict[str, str]:
 
 def validate(data: dict[str, Any]) -> list[str]:
     errors: list[str] = []
+    tool = data["tool"]
+    method = data["method"]
+
     for check in (
         validators.validate_slug(data["slug"]),
         validators.validate_name(data["name"]),
@@ -195,7 +198,7 @@ def validate(data: dict[str, Any]) -> list[str]:
         validators.validate_architectures(data["architectures"]),
         validators.validate_patterns("include patterns", data["include_patterns"]),
         validators.validate_patterns("exclude patterns", data["exclude_patterns"]),
-        validators.validate_extra_args(data["tool"], data["extra_args"]),
+        validators.validate_extra_args(tool, data["extra_args"]),
         validators.validate_bwlimit(data["bwlimit_kbps"]),
         validators.validate_retry_policy(data["retry_policy"]),
         validators.validate_export_fields(
@@ -208,22 +211,19 @@ def validate(data: dict[str, Any]) -> list[str]:
 
     if data["kind"] not in RepoKind:
         errors.append("type: must be apt, arch or generic")
-    if data["tool"] not in Tool or data["tool"] == Tool.EXPORT:
+    if tool not in Tool or tool == Tool.EXPORT:
         errors.append("tool: must be debmirror, rsync or wget")
-    if data["method"] not in Method:
+        return errors
+    if method not in Method:
         errors.append("method: http, https or rsync")
-    if data["diff_mode"] not in DiffMode:
-        errors.append("diff mode: use, mirror or none")
-    if data["cleanup_mode"] not in CleanupMode:
-        errors.append("cleanup mode: post, cleanup or none")
 
-    if data["kind"] == "apt":
-        if data["tool"] != "debmirror":
-            errors.append("apt mirrors must use the debmirror tool")
+    if tool == "debmirror":
+        if method not in ("http", "https"):
+            errors.append("method: debmirror supports http and https only")
         if not data["suites"]:
-            errors.append("suites: at least one suite or dist is required for APT mirrors")
+            errors.append("suites: at least one suite or dist is required")
         if not data["sections"]:
-            errors.append("sections/components: required for APT mirrors")
+            errors.append("sections/components: required")
         error = validators.validate_list_field("suites", data["suites"])
         if error:
             errors.append(error)
@@ -233,17 +233,22 @@ def validate(data: dict[str, Any]) -> list[str]:
         error = validators.validate_list_field("rsync extra directories", data["rsync_extra"])
         if error:
             errors.append(error)
-    if data["kind"] == "arch":
-        if data["tool"] != "rsync":
-            errors.append("Arch mirrors must use the rsync tool")
-        if not data["suites"]:
-            errors.append(
-                "repositories: at least one Arch repository (core, extra, ...) is required"
-            )
-    if data["kind"] == "generic" and data["tool"] == "wget" and not data["extra_files"]:
-        errors.append("extra files: wget mirrors need at least one URL -> path entry")
-    if data["tool"] == "wget" and data["method"] not in ("http", "https"):
-        errors.append("method: wget supports http and https only")
+        if data["diff_mode"] not in DiffMode:
+            errors.append("diff mode: use, mirror or none")
+        if data["cleanup_mode"] not in CleanupMode:
+            errors.append("cleanup mode: post, cleanup or none")
+
+    elif tool == "rsync":
+        if method != "rsync":
+            errors.append("method: the rsync tool requires method rsync")
+        if not data["upstream_root"].strip("/"):
+            errors.append("root path: must start with the rsync module, e.g. /packages")
+
+    elif tool == "wget":
+        if method not in ("http", "https"):
+            errors.append("method: wget supports http and https only")
+        if not data["extra_files"]:
+            errors.append("extra files: wget mirrors need at least one URL -> path entry")
 
     return errors
 

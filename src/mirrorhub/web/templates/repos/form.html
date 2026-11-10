@@ -23,7 +23,7 @@
         {% endfor %}
       </select>
     </label>
-    <label>Tool
+    <label>Download method
       <select name="tool">
         {% for option in ["debmirror", "rsync", "wget"] %}
         <option value="{{ option }}" {% if values.tool == option %}selected{% endif %}>{{ option }}</option>
@@ -36,20 +36,29 @@
   <fieldset>
     <legend>Upstream</legend>
     <label>Host <input name="upstream_host" value="{{ values.upstream_host }}" maxlength="253" required></label>
+    {% if values.tool == "rsync" %}
+    <label>Rsync module <input name="upstream_root" value="{{ values.upstream_root }}" maxlength="200" required>
+      <small>Module name on the rsync server, for example /packages</small>
+    </label>
+    {% else %}
     <label>Root path <input name="upstream_root" value="{{ values.upstream_root }}" maxlength="200" required></label>
+    {% endif %}
+    {% if values.tool != "rsync" %}
     <label>Method
       <select name="method">
-        {% for option in ["https", "http", "rsync"] %}
+        {% for option in ["https", "http"] %}
         <option value="{{ option }}" {% if values.method == option %}selected{% endif %}>{{ option }}</option>
         {% endfor %}
       </select>
     </label>
+    {% endif %}
     <label>Bandwidth limit (KB/s, 0 = unlimited) <input name="bwlimit_kbps" value="{{ values.bwlimit_kbps }}" inputmode="numeric"></label>
   </fieldset>
 
+  {% if values.tool == "debmirror" %}
   <fieldset>
     <legend>Suites, sections, architectures</legend>
-    <label>Suites / dists / repositories (comma separated)
+    <label>Suites / dists (comma separated)
       <input name="suites" value="{{ values.suites }}" maxlength="400">
     </label>
     <label>Sections / components (comma separated)
@@ -64,7 +73,7 @@
       </datalist>
     </label>
     <label class="check"><input type="checkbox" name="include_source" {% if values.include_source %}checked{% endif %}> Include source packages</label>
-    <label>Extra rsync directories (comma separated, debmirror only)
+    <label>Extra rsync directories (comma separated)
       <input name="rsync_extra" value="{{ values.rsync_extra }}" maxlength="200">
     </label>
   </fieldset>
@@ -102,6 +111,27 @@
       <input name="sig_off_confirm" value="" autocomplete="off">
     </label>
   </fieldset>
+  {% endif %}
+
+  {% if values.tool == "rsync" %}
+  <fieldset>
+    <legend>rsync options</legend>
+    <label>Extra tool arguments (comma separated, allow-listed)
+      <input name="extra_args" value="{{ values.extra_args }}" maxlength="300" placeholder="--compress, --partial">
+    </label>
+    <label>Include patterns <input name="include_patterns" value="{{ values.include_patterns }}"></label>
+    <label>Exclude patterns <input name="exclude_patterns" value="{{ values.exclude_patterns }}"></label>
+  </fieldset>
+  {% endif %}
+
+  {% if values.tool == "wget" %}
+  <fieldset>
+    <legend>Single files</legend>
+    <label>One entry per line: <code>https://host/file.asc -&gt; relative/path</code>
+      <textarea name="extra_files" rows="4">{{ values.extra_files }}</textarea>
+    </label>
+  </fieldset>
+  {% endif %}
 
   <fieldset>
     <legend>Retry policy</legend>
@@ -134,13 +164,6 @@
     </label>
     <label>Split parts at (MB, 0 = no split) <input name="export_split_mb" value="{{ values.export_split_mb }}" inputmode="numeric"></label>
     <label class="check"><input type="checkbox" name="chain_export" {% if values.chain_export %}checked{% endif %}> Queue an export after a successful sync</label>
-  </fieldset>
-
-  <fieldset>
-    <legend>Single files (wget / generic)</legend>
-    <label>One entry per line: <code>https://host/file.asc -&gt; relative/path</code>
-      <textarea name="extra_files" rows="4">{{ values.extra_files }}</textarea>
-    </label>
   </fieldset>
 
   <fieldset>
