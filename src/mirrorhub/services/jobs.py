@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any
 
+from sqlalchemy import delete, update
 from sqlmodel import Session, col, select
 
 from mirrorhub.enums import JobStatus, JobType, Tool, Trigger
-from mirrorhub.models import Job, Repository, utcnow
-from mirrorhub.services import audit
-from sqlalchemy import delete, update
-
 from mirrorhub.models import Export, Job, ManifestSnapshot, RepoLock, Repository, utcnow
-from collections.abc import Collection
+from mirrorhub.services import audit
 
 ACTIVE = (JobStatus.QUEUED.value, JobStatus.RUNNING.value, JobStatus.CANCELLING.value)
 

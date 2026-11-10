@@ -1,6 +1,7 @@
 """Job list, execution controls and bounded live logs."""
 
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Query, Request, Response
 from fastapi.responses import RedirectResponse, StreamingResponse
