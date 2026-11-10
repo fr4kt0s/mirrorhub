@@ -11,8 +11,14 @@ from .base import BuildError, BuildPlan, Step
 
 BASE_FLAGS = ("rsync", "-aH", "--numeric-ids", "--safe-links", "--no-motd", "--info=progress2")
 DB_PATTERNS = (
-    "*.db", "*.db.sig", "*.db.tar.*", "*.files", "*.files.sig",
-    "*.files.tar.*", "*.abs.tar.*", "*.links.tar.*",
+    "*.db",
+    "*.db.sig",
+    "*.db.tar.*",
+    "*.files",
+    "*.files.sig",
+    "*.files.tar.*",
+    "*.abs.tar.*",
+    "*.links.tar.*",
 )
 
 
@@ -96,7 +102,11 @@ def build(repo: Repository, job: Job, target: Path, cwd: Path) -> BuildPlan:
         f"{target}/",
     ]
     databases = [
-        *common, "--delay-updates", *database_rules, source, f"{target}/",
+        *common,
+        "--delay-updates",
+        *database_rules,
+        source,
+        f"{target}/",
     ]
     return BuildPlan(
         steps=[

@@ -215,10 +215,7 @@ def check_apt(tree: Path, hashes: bool, findings: Findings) -> None:
                     findings.add(f"APT-{kind}", name, f"listed in {label}")
         except (OSError, EOFError, ValueError, lzma.LZMAError, zlib.error) as exc:
             findings.add("APT-INDEX", label, f"cannot check: {exc}")
-        print(
-            f"[{tree.name}] APT {label}: {listed} packages, "
-            f"{findings.count - before} problem(s)"
-        )
+        print(f"[{tree.name}] APT {label}: {listed} packages, {findings.count - before} problem(s)")
 
 
 def write_report(log_dir: Path, findings: Findings) -> Path:
@@ -331,9 +328,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     only = args.apt_only or args.all_slugs
     if len(args.paths) != (1 if only else 2):
-        parser.error(
-            "give one root/tree with --all/--apt-only; otherwise export and tree"
-        )
+        parser.error("give one root/tree with --all/--apt-only; otherwise export and tree")
     tree = Path(args.paths[-1]).absolute()
     if args.all_slugs:
         return audit_all(tree, args.apt_hash, args.log_dir)
