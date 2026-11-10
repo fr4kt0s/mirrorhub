@@ -96,21 +96,33 @@ def test_arch_rsync_two_passes_with_database_last(configured) -> None:
         tool="rsync",
         method="rsync",
         upstream_host="geo.mirror.pkgbuild.com",
-        upstream_root="/",
-        suites=["core"],
+        upstream_root="/packages",
+        suites=["core", "extra"],
         sections=[],
         architectures=["x86_64"],
     )
     plan = builders.build(repo, _job(repo), get_settings())
     assert len(plan.steps) == 2
     packages, databases = plan.steps
+
     assert packages.argv[0] == "rsync"
-    assert "rsync://geo.mirror.pkgbuild.com/core/os/x86_64/" in packages.argv
-    assert "--delete-after" in packages.argv
+    assert "rsync://geo.mirror.pkgbuild.com/packages/" in packages.argv
+    assert "--include=/pool/" in packages.argv
+    assert "--include=/pool/packages/***" in packages.argv
+    assert "--include=/core/os/x86_64/***" in packages.argv
+    assert "--include=/extra/os/x86_64/***" in packages.argv
+    assert "--exclude=*" in packages.argv
     assert "--exclude=*.db" in packages.argv
+    assert "--delete" not in packages.argv
+    assert "--delete-after" not in packages.argv
+
+    assert databases.argv[0] == "rsync"
+    assert "rsync://geo.mirror.pkgbuild.com/packages/" in databases.argv
     assert "--delay-updates" in databases.argv
-    assert "--delete" in databases.argv
+    assert "--include=/core/os/x86_64/*.db" in databases.argv
+    assert "--include=/extra/os/x86_64/*.db" in databases.argv
     assert "--exclude=*" in databases.argv
+    assert "--delete" not in databases.argv
 
 
 def test_rsync_requires_module(configured) -> None:
@@ -123,6 +135,37 @@ def test_rsync_requires_module(configured) -> None:
         suites=["core"],
         sections=[],
         architectures=["x86_64"],
+    )
+    with pytest.raises(BuildError):
+        builders.build(repo, _job(repo), get_settings())
+
+
+def test_rsync_rejects_wrong_method(configured) -> None:
+    repo = _repo(
+        slug="archlinux",
+        kind="arch",
+        tool="rsync",
+        method="https",
+        upstream_root="/packages",
+        suites=["core"],
+        sections=[],
+        architectures=["x86_64"],
+    )
+    with pytest.raises(BuildError):
+        builders.build(repo, _job(repo), get_settings())
+
+
+def test_rsync_rejects_custom_filters_for_arch(configured) -> None:
+    repo = _repo(
+        slug="archlinux",
+        kind="arch",
+        tool="rsync",
+        method="rsync",
+        upstream_root="/packages",
+        suites=["core"],
+        sections=[],
+        architectures=["x86_64"],
+        include_patterns=["*.pkg.tar.zst"],
     )
     with pytest.raises(BuildError):
         builders.build(repo, _job(repo), get_settings())
