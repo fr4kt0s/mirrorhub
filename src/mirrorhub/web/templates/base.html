@@ -3,19 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false, "allowScriptTags": false, "selfRequestsOnly": true}'>
   <title>{% block title %}MirrorHub{% endblock %} - MirrorHub</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
-<body hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+<body class="{% if user %}authenticated{% else %}guest{% endif %}" hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+  <a class="skip-link" href="#main-content">Skip to content</a>
 {% if user %}
   <header class="topbar">
-    <a class="brand" href="/">MirrorHub</a>
-    <nav>
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">M</span><span>MirrorHub<small>OPS CONSOLE</small></span></a>
+    <nav aria-label="Main navigation">
       {% for label, href in nav %}
-        <a href="{{ href }}"{% if request.url.path == href %} class="active"{% endif %}>{{ label }}</a>
+        <a href="{{ href }}"{% if request.url.path == href or (href != '/' and request.url.path.startswith(href ~ '/')) %} class="active" aria-current="page"{% endif %}>{{ label }}</a>
       {% endfor %}
     </nav>
     <form method="post" action="/logout" class="logout">
@@ -25,9 +27,9 @@
     </form>
   </header>
 {% endif %}
-  <main class="container">
+  <main id="main-content" class="container">
     {% block content %}{% endblock %}
   </main>
-  <footer class="footer muted">MirrorHub {{ version }}</footer>
+  <footer class="footer muted">MirrorHub {{ version }} <span aria-hidden="true">/</span> Ops Console</footer>
 </body>
 </html>
