@@ -26,7 +26,7 @@ ALEMBIC_INI = "/app/alembic.ini"
 def _install_hooks(engine: Engine) -> None:
     @event.listens_for(engine, "connect")
     def _on_connect(dbapi_conn: DBAPIConnection, _rec: ConnectionPoolEntry) -> None:
-        dbapi_conn.isolation_level = None  # type: ignore[attr-defined]
+        dbapi_conn.isolation_level = None
         cur = dbapi_conn.cursor()
         cur.execute("PRAGMA journal_mode=WAL")
         cur.execute("PRAGMA synchronous=NORMAL")

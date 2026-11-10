@@ -7,7 +7,8 @@ from sqlmodel import Session
 from mirrorhub.models import Repository
 from mirrorhub.services import presets, repos
 from mirrorhub.web.deps import CurrentUser, client_ip, get_db, render, require_user
-
+from collections.abc import Mapping
+from typing import Any
 router = APIRouter()
 
 
@@ -97,7 +98,9 @@ def _blank_repo_values(repo: Repository) -> dict[str, str]:
     return values
 
 
-async def _form_data(form) -> tuple[dict, dict]:
+async def _form_data(
+    form: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, str]]:
     data, raw = repos.parse_form(form)
     return data, repos.form_values(data, raw)
 
