@@ -113,6 +113,21 @@ def test_arch_rsync_two_passes_with_database_last(configured) -> None:
     assert "--exclude=*" in databases.argv
 
 
+def test_rsync_requires_module(configured) -> None:
+    repo = _repo(
+        slug="archlinux",
+        kind="arch",
+        tool="rsync",
+        method="rsync",
+        upstream_root="/",
+        suites=["core"],
+        sections=[],
+        architectures=["x86_64"],
+    )
+    with pytest.raises(BuildError):
+        builders.build(repo, _job(repo), get_settings())
+
+
 def test_rsync_dry_run_flag(configured) -> None:
     repo = _repo(slug="generic", kind="generic", tool="rsync", method="rsync")
     plan = builders.build(repo, _job(repo, dry_run=True), get_settings())

@@ -175,6 +175,84 @@ def test_preset_page_and_clone_prefill(admin: TestClient) -> None:
     assert "noble" in form.text
 
 
+def test_rsync_requires_rsync_method(admin: TestClient, csrf_token: str) -> None:
+    form = _form(
+        slug="archlinux",
+        name="Arch Linux",
+        kind="arch",
+        tool="rsync",
+        method="https",
+        upstream_root="/packages",
+        suites="core",
+        sections="",
+        architectures="x86_64",
+    )
+    response = _post(admin, csrf_token, "/repos", form)
+    assert response.status_code == 400
+    assert "rsync tool requires method rsync" in response.text
+
+
+def test_rsync_requires_module(admin: TestClient, csrf_token: str) -> None:
+    form = _form(
+        slug="archlinux",
+        name="Arch Linux",
+        kind="arch",
+        tool="rsync",
+        method="rsync",
+        upstream_root="/",
+        suites="core",
+        sections="",
+        architectures="x86_64",
+    )
+    response = _post(admin, csrf_token, "/repos", form)
+    assert response.status_code == 400
+    assert "must start with the rsync module" in response.text
+
+
+def test_wget_requires_http_or_https(admin: TestClient, csrf_token: str) -> None:
+    form = _form(
+        slug="files",
+        name="Files",
+        kind="generic",
+        tool="wget",
+        method="rsync",
+        upstream_root="/",
+        suites="",
+        sections="",
+        architectures="none",
+        extra_files="https://example.org/file.asc -> keys/archive.asc",
+    )
+    response = _post(admin, csrf_token, "/repos", form)
+    assert response.status_code == 400
+    assert "wget supports http and https only" in response.text
+
+
+def test_wget_requires_entries(admin: TestClient, csrf_token: str) -> None:
+    form = _form(
+        slug="files",
+        name="Files",
+        kind="generic",
+        tool="wget",
+        method="https",
+        upstream_root="/",
+        suites="",
+        sections="",
+        architectures="none",
+        extra_files="",
+    )
+    response = _post(admin, csrf_token, "/repos", form)
+    assert response.status_code == 400
+    assert "wget mirrors need at least one URL -> path entry" in response.text
+
+
+def test_debmirror_requires_suites_and_sections(admin: TestClient, csrf_token: str) -> None:
+    form = _form(suites="", sections="")
+    response = _post(admin, csrf_token, "/repos", form)
+    assert response.status_code == 400
+    assert "at least one suite" in response.text
+    assert "sections/components" in response.text
+
+
 @pytest.mark.parametrize("path", ["/repos", "/presets", "/keys", "/config"])
 def test_pages_require_login(client: TestClient, path: str) -> None:
     response = client.get(path)
