@@ -62,8 +62,8 @@ files = ["src", "tests"]
 
 [[tool.mypy.overrides]]
 module = [
-  "croniter.*",
-  "migrations.*",
-  "alembic.*",
+    "croniter.*",
+    "migrations.*",
+    "alembic.*",
 ]
 ignore_missing_imports = true
