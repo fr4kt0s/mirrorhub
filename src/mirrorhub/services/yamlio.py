@@ -185,6 +185,9 @@ def build_plan(
         if not isinstance(data["retry_policy"], dict):
             data["retry_policy"] = default_retry_policy()
 
+        if data["tool"] == "rsync":
+            data["method"] = "rsync"
+
         slug = str(data.get("slug") or "")
         if slug in seen:
             plan.errors.append(f"repositories[{index}]: duplicate slug '{slug}' in the document")
