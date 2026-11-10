@@ -1,5 +1,8 @@
 """Repository list, create, edit, delete."""
 
+from collections.abc import Mapping
+from typing import Any
+
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session
@@ -7,8 +10,7 @@ from sqlmodel import Session
 from mirrorhub.models import Repository
 from mirrorhub.services import presets, repos
 from mirrorhub.web.deps import CurrentUser, client_ip, get_db, render, require_user
-from collections.abc import Mapping
-from typing import Any
+
 router = APIRouter()
 
 
