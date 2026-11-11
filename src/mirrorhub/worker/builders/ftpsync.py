@@ -44,11 +44,13 @@ def build(
 
     runtime = settings.tmp_dir / "ftpsync" / repo.slug
     runtime.mkdir(parents=True, exist_ok=True)
-    (runtime / "etc").mkdir(parents=True, exist_ok=True)
     (runtime / "log").mkdir(parents=True, exist_ok=True)
 
-    config = runtime / "etc" / "ftpsync.conf"
-    config.write_text(
+    config_dir = Path.home() / ".config" / "ftpsync"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_path = config_dir / f"ftpsync-{repo.slug}.conf"
+
+    config_path.write_text(
         "".join(
             [
                 _config("MIRRORNAME", repo.slug),
@@ -72,10 +74,8 @@ def build(
     )
 
     argv = [
-        "env",
-        f"BASEDIR={runtime}",
         "ftpsync",
-        "sync:all",
+        f"sync:archive:{repo.slug}",
     ]
 
     return BuildPlan(
