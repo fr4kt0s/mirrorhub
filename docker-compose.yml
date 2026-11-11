@@ -125,6 +125,22 @@ services:
       - mirror_data:/data
     healthcheck: *worker-healthcheck
 
+  worker-ftpsync:
+    <<: *hardened
+    image: mirrorhub/worker-ftpsync:${MIRRORHUB_TAG:-dev}
+    build:
+      context: .
+      target: worker-ftpsync
+      args: *build-args
+    environment:
+      MIRRORHUB_ROLE: worker
+      MIRRORHUB_TOOL: ftpsync
+      HOME: /tmp
+    volumes:
+      - state:/var/lib/mirrorhub
+      - mirror_data:/data
+    healthcheck: *worker-healthcheck
+
   worker-export:
     <<: *hardened
     image: mirrorhub/worker-export:${MIRRORHUB_TAG:-dev}

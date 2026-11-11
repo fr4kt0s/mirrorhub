@@ -84,6 +84,15 @@ USER mirror
 ENV MIRRORHUB_ROLE=worker MIRRORHUB_TOOL=wget
 CMD ["python", "-m", "mirrorhub.worker.main", "--tool", "wget"]
 
+# ---------- worker-ftpsync ----------
+FROM apt-base AS worker-ftpsync
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ftpsync rsync ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+USER mirror
+ENV MIRRORHUB_ROLE=worker MIRRORHUB_TOOL=ftpsync
+CMD ["python", "-m", "mirrorhub.worker.main", "--tool", "ftpsync"]
+
 # ---------- worker-export: tar, zstd, gnupg for signing ----------
 FROM apt-base AS worker-export
 RUN apt-get update \

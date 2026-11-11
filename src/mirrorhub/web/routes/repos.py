@@ -17,6 +17,7 @@ METHOD_TEMPLATES = {
     "debmirror": "repos/form_debmirror.html",
     "rsync": "repos/form_rsync.html",
     "wget": "repos/form_wget.html",
+    "ftpsync": "repos/form_ftpsync.html",
 }
 
 
@@ -70,8 +71,8 @@ def new_page(
 
     values = _blank_values()
     values["tool"] = tool
-    values["method"] = "rsync" if tool == "rsync" else "https"
-    values["kind"] = "apt" if tool == "debmirror" else "generic"
+    values["method"] = "rsync" if tool in {"rsync", "ftpsync"} else "https"
+    values["kind"] = "apt" if tool in {"debmirror", "ftpsync"} else "generic"
     values.update(
         {
             "diff_mode": "use",
@@ -166,6 +167,8 @@ async def _save(
         data["kind"] = "apt"
     elif data["tool"] == "wget":
         data["kind"] = "generic"
+    elif data["tool"] == "ftpsync":
+        data["kind"] = "apt"
     if data["tool"] != "debmirror":
         data["verify_signatures"] = repo.verify_signatures if repo is not None else True
     errors = repos.validate(data)

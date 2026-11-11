@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if mode == "edit" else "New" }} ftpsync repository{% endblock %}
+{% block content %}
+<h1>{{ "Edit ftpsync repository" if mode == "edit" else "New ftpsync repository" }}</h1>
+{% if values.preset_source %}<p class="muted">Prefilled from preset: {{ values.preset_source }}</p>{% endif %}
+{% if errors %}
+<ul class="alert alert-error">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+{% endif %}
+
+<form method="post" action="{{ '/repos/' ~ repo.id if mode == 'edit' else '/repos' }}" class="form-grid">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="tool" value="ftpsync">
+
+  {% include "repos/_identity.html" %}
+  {% include "repos/_upstream.html" %}
+
+  <fieldset>
+    <legend>Transfer</legend>
+    <label>Method
+      <select name="method">
+        <option value="rsync" {% if values.method == "rsync" %}selected{% endif %}>rsync</option>
+      </select>
+    </label>
+    <p class="muted">ftpsync performs a two-stage rsync-based archive sync.</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Architectures</legend>
+    <label>Architectures (comma separated)
+      <input name="architectures" value="{{ values.architectures }}" required>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Filters</legend>
+    <label>Exclude patterns (rsync --exclude)
+      <input name="exclude_patterns" value="{{ values.exclude_patterns }}">
+    </label>
+    <label>Bandwidth limit (KB/s, 0 = unlimited)
+      <input name="bwlimit_kbps" value="{{ values.bwlimit_kbps }}">
+    </label>
+  </fieldset>
+
+  {% include "repos/_retry.html" %}
+  {% include "repos/_export.html" %}
+  {% include "repos/_preset.html" %}
+  {% include "repos/_actions.html" %}
+</form>
+{% endblock %}
