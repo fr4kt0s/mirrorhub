@@ -37,6 +37,12 @@ def build(repo: Repository, job: Job, target: Path, cwd: Path) -> BuildPlan:
         "--tries=3",
         "--timeout=60",
     ]
+    if repo.include_regex or repo.exclude_regex:
+        argv.append("--regex-type=posix")
+    if repo.include_regex:
+        argv.extend(["--accept-regex", repo.include_regex])
+    if repo.exclude_regex:
+        argv.extend(["--reject-regex", repo.exclude_regex])
     if repo.bwlimit_kbps:
         argv.append(f"--limit-rate={repo.bwlimit_kbps}k")
     argv.extend(repo.extra_args)

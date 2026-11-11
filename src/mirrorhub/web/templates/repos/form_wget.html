@@ -30,6 +30,17 @@
     <p class="muted">MirrorHub downloads the complete directory tree below the configured upstream root.</p>
   </fieldset>
 
+  <fieldset>
+    <legend>Optional regex filters</legend>
+    <p class="muted">POSIX regular expressions are matched against the complete URL.</p>
+    <label>Include regex
+      <input name="include_regex" value="{{ values.include_regex }}" placeholder="https://example\\.com/.*\\.iso$">
+    </label>
+    <label>Exclude regex
+      <input name="exclude_regex" value="{{ values.exclude_regex }}" placeholder="https://example\\.com/pool/.*\\.sig$">
+    </label>
+  </fieldset>
+
   {% include "repos/_retry.html" %}
   {% include "repos/_export.html" %}
   {% include "repos/_preset.html" %}

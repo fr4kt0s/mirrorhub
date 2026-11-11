@@ -44,14 +44,14 @@ class UTCDateTime(TypeDecorator[datetime]):
     def process_bind_param(self, value: Any, dialect: Any) -> Any:
         if value is None:
             return None
-        if value.tzinfo is None or value.utcoffset() is None:
+        if value.tzinfo is None or value.tzinfo is None:
             return value
         return value.astimezone(UTC).replace(tzinfo=None)
 
     def process_result_value(self, value: Any, dialect: Any) -> Any:
         if value is None:
             return None
-        if value.tzinfo is None or value.utcoffset() is None:
+        if value.tzinfo is None:
             return value
         return value.astimezone(UTC).replace(tzinfo=None)
 
@@ -120,6 +120,8 @@ class Repository(SQLModel, table=True):
     keyring_name: str = "trustedkeys.gpg"
     include_patterns: list[str] = Field(default_factory=list, sa_column=_json())
     exclude_patterns: list[str] = Field(default_factory=list, sa_column=_json())
+    include_regex: str = ""
+    exclude_regex: str = ""
     extra_args: list[str] = Field(default_factory=list, sa_column=_json())
 
     retry_policy: dict[str, Any] = Field(default_factory=default_retry_policy, sa_column=_json())
@@ -269,7 +271,7 @@ class AuditLog(SQLModel, table=True):
 
     __tablename__ = "audit_log"
     id: int | None = Field(default=None, primary_key=True)
-    ts: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime, index=True)
+    ts: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime)
     actor: str = Field(index=True)
     ip: str = ""
     action: str = Field(index=True)

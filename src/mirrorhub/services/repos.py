@@ -38,6 +38,8 @@ TEXT_FIELDS = (
     "method",
     "upstream_host",
     "upstream_root",
+    "include_regex",
+    "exclude_regex",
     "diff_mode",
     "cleanup_mode",
     "export_mode",
@@ -207,6 +209,13 @@ def validate(data: dict[str, Any]) -> list[str]:
     ):
         if check:
             errors.append(check)
+
+    for field in ("include_regex", "exclude_regex"):
+        value = data[field]
+        if len(value) > 500:
+            errors.append(f"{field.replace('_', ' ')}: at most 500 characters")
+        if "\n" in value or "\r" in value:
+            errors.append(f"{field.replace('_', ' ')}: newlines are not allowed")
 
     if data["kind"] not in RepoKind:
         errors.append("type: must be apt, arch or generic")
