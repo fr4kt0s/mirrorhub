@@ -1,8 +1,8 @@
 <fieldset>
   <legend>Upstream</legend>
   <label>Host <input name="upstream_host" value="{{ values.upstream_host }}" maxlength="253" required></label>
-  <label>Root path / rsync module <input name="upstream_root" value="{{ values.upstream_root }}" maxlength="200" required>
-    <small>For rsync, enter the module name, for example /packages.</small>
+  <label>Root path / rsync module <input name="upstream_root" value="{{ values.upstream_root }}" maxlength="200">
+    <small>Optional for wget. For rsync, enter the module name, for example /packages.</small>
   </label>
   <label>Bandwidth limit (KB/s, 0 = unlimited) <input name="bwlimit_kbps" value="{{ values.bwlimit_kbps }}" inputmode="numeric"></label>
 </fieldset>
