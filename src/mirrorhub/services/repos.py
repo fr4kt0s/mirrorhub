@@ -343,12 +343,19 @@ def delete(db: Session, repo: Repository, *, actor: str, ip: str = "") -> list[s
     blockers = deletion_blockers(db, repo.id or 0)
     if blockers:
         return blockers
-    from mirrorhub.models import ManifestSnapshot, RepoLock, Schedule, StorageCache
+    from mirrorhub.models import ManifestSnapshot, NotificationRule, RepoLock, Schedule, StorageCache
 
-    for model in (Export, Schedule, RepoLock, StorageCache, ManifestSnapshot, Job):
+    for model in (NotificationRule, Export, Schedule, RepoLock, StorageCache, ManifestSnapshot):
         rows = db.exec(select(model).where(model.repo_id == repo.id)).all()
         for row in rows:
             db.delete(row)
+
+    jobs = db.exec(
+        select(Job).where(Job.repo_id == repo.id).order_by(col(Job.id).desc())
+    ).all()
+    for job in jobs:
+        db.delete(job)
+
     audit.record(
         db,
         actor=actor,
