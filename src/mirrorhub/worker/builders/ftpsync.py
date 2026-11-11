@@ -74,6 +74,8 @@ def build(
     )
 
     argv = [
+        "env",
+        "LOGNAME=mirror",
         "ftpsync",
         f"sync:archive:{repo.slug}",
     ]
