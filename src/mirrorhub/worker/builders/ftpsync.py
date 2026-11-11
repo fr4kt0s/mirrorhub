@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import shlex
-import shutil
-import subprocess
 from pathlib import Path
 
 from mirrorhub.models import Job, Repository
@@ -16,32 +14,6 @@ from .base import BuildError, BuildPlan, Step
 
 def _config(key: str, value: str) -> str:
     return f"{key}={shlex.quote(value)}\n"
-
-
-def _locate_common(executable: str) -> Path | None:
-    try:
-        result = subprocess.run(
-            ["dpkg", "-L", "ftpsync"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:
-        result = None
-
-    if result is not None and result.returncode == 0:
-        for line in result.stdout.splitlines():
-            path = Path(line.strip())
-            if path.name == "common" and path.parent.name == "etc":
-                return path
-
-    candidates = [
-        Path("/usr/share/ftpsync/etc/common"),
-        Path("/usr/lib/ftpsync/etc/common"),
-        Path("/usr/local/share/ftpsync/etc/common"),
-        Path(executable).resolve().parent.parent / "etc" / "common",
-    ]
-    return next((path for path in candidates if path.is_file()), None)
 
 
 def build(
@@ -70,20 +42,10 @@ def build(
     if error:
         raise BuildError(error)
 
-    executable = shutil.which("ftpsync")
-    if executable is None:
-        raise BuildError("ftpsync is not installed in this image")
-
-    installed_common = _locate_common(executable)
-    if installed_common is None:
-        raise BuildError("ftpsync installation is missing etc/common")
-
     runtime = settings.tmp_dir / "ftpsync" / repo.slug
     runtime.mkdir(parents=True, exist_ok=True)
     (runtime / "etc").mkdir(parents=True, exist_ok=True)
     (runtime / "log").mkdir(parents=True, exist_ok=True)
-
-    shutil.copy2(installed_common, runtime / "etc" / "common")
 
     config = runtime / "etc" / "ftpsync.conf"
     config.write_text(
