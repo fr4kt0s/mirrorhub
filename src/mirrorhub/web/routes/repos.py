@@ -1,5 +1,8 @@
 """Repository list, create, edit, delete."""
 
+from collections.abc import Mapping
+from typing import Any
+
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session
@@ -9,6 +12,16 @@ from mirrorhub.services import presets, repos
 from mirrorhub.web.deps import CurrentUser, client_ip, get_db, render, require_user
 
 router = APIRouter()
+
+METHOD_TEMPLATES = {
+    "debmirror": "repos/form_debmirror.html",
+    "rsync": "repos/form_rsync.html",
+    "wget": "repos/form_wget.html",
+}
+
+
+def _template_for(tool: str) -> str:
+    return METHOD_TEMPLATES.get(tool, "repos/form.html")
 
 
 @router.get("/repos")
@@ -46,16 +59,21 @@ def _blank_values() -> dict[str, str]:
 @router.get("/repos/new")
 def new_page(
     request: Request,
+    tool: str = "",
     preset: int = 0,
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    template = _template_for(tool)
+    if template == "repos/form.html":
+        return render(request, template, {"errors": []})
+
     values = _blank_values()
+    values["tool"] = tool
+    values["method"] = "rsync" if tool == "rsync" else "https"
+    values["kind"] = "apt" if tool == "debmirror" else "generic"
     values.update(
         {
-            "kind": "apt",
-            "tool": "debmirror",
-            "method": "https",
             "diff_mode": "use",
             "cleanup_mode": "post",
             "export_mode": "incr",
@@ -68,7 +86,9 @@ def new_page(
             values.update(repos.preset_values(row.config))
             values["preset_source"] = row.name
     return render(
-        request, "repos/form.html", {"values": values, "errors": [], "repo": None, "mode": "create"}
+        request,
+        template,
+        {"values": values, "errors": [], "repo": None, "mode": "create"},
     )
 
 
@@ -84,7 +104,9 @@ def edit_page(
         return render(request, "error.html", {"status": 404, "detail": "Repository not found"}, 404)
     values = _blank_repo_values(repo)
     return render(
-        request, "repos/form.html", {"values": values, "errors": [], "repo": repo, "mode": "edit"}
+        request,
+        _template_for(repo.tool),
+        {"values": values, "errors": [], "repo": repo, "mode": "edit"},
     )
 
 
@@ -97,7 +119,18 @@ def _blank_repo_values(repo: Repository) -> dict[str, str]:
     return values
 
 
-async def _form_data(form) -> tuple[dict, dict]:
+def _form_template(data: dict[str, Any], repo: Repository | None) -> str:
+    tool = str(data.get("tool") or "")
+    if tool in METHOD_TEMPLATES:
+        return METHOD_TEMPLATES[tool]
+    if repo is not None:
+        return METHOD_TEMPLATES.get(repo.tool, "repos/form.html")
+    return "repos/form.html"
+
+
+async def _form_data(
+    form: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, str]]:
     data, raw = repos.parse_form(form)
     return data, repos.form_values(data, raw)
 
@@ -113,9 +146,10 @@ async def _save(
         data, values = await _form_data(form)
     except repos.FormError as exc:
         values = {name: str(form.get(name) or "") for name in form}
+        template = _form_template(values, repo)
         return render(
             request,
-            "repos/form.html",
+            template,
             {
                 "values": {**_blank_values(), **values},
                 "errors": exc.messages,
@@ -128,23 +162,34 @@ async def _save(
     if repo is not None:
         data["slug"] = repo.slug
         values["slug"] = repo.slug
+    if data["tool"] == "debmirror":
+        data["kind"] = "apt"
+    elif data["tool"] == "wget":
+        data["kind"] = "generic"
+    if data["tool"] != "debmirror":
+        data["verify_signatures"] = repo.verify_signatures if repo is not None else True
     errors = repos.validate(data)
 
     slug_error = repos._ensure_unique_slug(db, data["slug"], repo.id if repo else None)
     if slug_error:
         errors.append(slug_error)
 
-    disabling = not data["verify_signatures"] and (repo is None or repo.verify_signatures)
+    disabling = (
+        data["tool"] == "debmirror"
+        and not data["verify_signatures"]
+        and (repo is None or repo.verify_signatures)
+    )
     phrase = str(form.get("sig_off_confirm") or "").strip()
     if disabling and phrase != repos.SIG_OFF_PHRASE:
         errors.append(
             f"signature checking: type '{repos.SIG_OFF_PHRASE}' to disable it for this repository"
         )
 
+    template = _form_template(data, repo)
     if errors:
         return render(
             request,
-            "repos/form.html",
+            template,
             {
                 "values": values,
                 "errors": errors,
@@ -169,7 +214,7 @@ async def _save(
             errors.append(str(exc))
             return render(
                 request,
-                "repos/form.html",
+                template,
                 {"values": values, "errors": errors, "repo": saved, "mode": "edit"},
                 400,
             )

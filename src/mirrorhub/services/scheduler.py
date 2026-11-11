@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
+from typing import cast
 
 from croniter import croniter
 from sqlmodel import Session, col, select
@@ -34,7 +35,7 @@ TICK_SECONDS = 30.0
 
 def next_after(expr: str, after: datetime | None = None) -> datetime:
     base = after or utcnow()
-    return croniter(expr, base).get_next(datetime)
+    return cast(datetime, croniter(expr, base).get_next(datetime))
 
 
 def ensure_next_fire(db: Session) -> int:

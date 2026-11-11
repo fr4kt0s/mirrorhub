@@ -104,8 +104,6 @@ def retention_apply(
             actor=user.admin.username,
             ip=client_ip(request),
         )
-    except ExportError as exc:
-        return Response(str(exc), status_code=400, media_type="text/plain")
     except (ExportError, OSError) as exc:
         return Response(str(exc), status_code=400, media_type="text/plain")
     return RedirectResponse("/exports", status_code=303)

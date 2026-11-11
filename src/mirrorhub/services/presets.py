@@ -77,7 +77,7 @@ SEED_PRESETS: list[dict[str, Any]] = [
             "tool": "rsync",
             "method": "rsync",
             "upstream_host": "geo.mirror.pkgbuild.com",
-            "upstream_root": "/",
+            "upstream_root": "/packages",
             "suites": ["core", "extra", "multilib"],
             "sections": [],
             "architectures": ["x86_64"],
@@ -128,7 +128,7 @@ def get(db: Session, preset_id: int) -> Preset | None:
 
 
 def config_for_repo(repo: Repository) -> dict[str, Any]:
-    return {
+    config = {
         "kind": repo.kind,
         "tool": repo.tool,
         "method": repo.method,
@@ -154,6 +154,18 @@ def config_for_repo(repo: Repository) -> dict[str, Any]:
         "chain_export": repo.chain_export,
         "enabled": repo.enabled,
     }
+    if repo.tool == "rsync":
+        config["method"] = "rsync"
+        config["diff_mode"] = "none"
+        config["cleanup_mode"] = "none"
+        config["include_source"] = False
+        config["rsync_extra"] = []
+    elif repo.tool == "wget":
+        config["diff_mode"] = "none"
+        config["cleanup_mode"] = "none"
+        config["include_source"] = False
+        config["rsync_extra"] = []
+    return config
 
 
 def save_from_repo(

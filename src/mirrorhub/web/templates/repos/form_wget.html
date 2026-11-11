@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if mode == "edit" else "New" }} wget repository{% endblock %}
+{% block content %}
+<h1>{{ "Edit wget repository" if mode == "edit" else "New wget repository" }}</h1>
+{% if values.preset_source %}<p class="muted">Prefilled from preset: {{ values.preset_source }}</p>{% endif %}
+{% if errors %}
+<ul class="alert alert-error">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+{% endif %}
+
+<form method="post" action="{{ '/repos/' ~ repo.id if mode == 'edit' else '/repos' }}" class="form-grid">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="tool" value="wget">
+
+  {% include "repos/_identity.html" %}
+  {% include "repos/_upstream.html" %}
+
+  <fieldset>
+    <legend>Protocol</legend>
+    <label>Method
+      <select name="method">
+        {% for option in ["https", "http"] %}
+        <option value="{{ option }}" {% if values.method == option %}selected{% endif %}>{{ option }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Complete directory tree</legend>
+    <p class="muted">MirrorHub downloads the complete directory tree below the configured upstream root.</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Optional regex filters</legend>
+    <p class="muted">POSIX regular expressions are matched against the complete URL.</p>
+    <label>Include regex
+      <input name="include_regex" value="{{ values.include_regex }}" placeholder="https://example\\.com/.*\\.iso$">
+    </label>
+    <label>Exclude regex
+      <input name="exclude_regex" value="{{ values.exclude_regex }}" placeholder="https://example\\.com/pool/.*\\.sig$">
+    </label>
+  </fieldset>
+
+  {% include "repos/_retry.html" %}
+  {% include "repos/_export.html" %}
+  {% include "repos/_preset.html" %}
+  {% include "repos/_actions.html" %}
+</form>
+{% endblock %}

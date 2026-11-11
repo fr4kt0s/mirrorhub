@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from sqlmodel import Session, select
 
 from mirrorhub.db import get_engine

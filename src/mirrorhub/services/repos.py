@@ -38,6 +38,8 @@ TEXT_FIELDS = (
     "method",
     "upstream_host",
     "upstream_root",
+    "include_regex",
+    "exclude_regex",
     "diff_mode",
     "cleanup_mode",
     "export_mode",
@@ -187,15 +189,17 @@ def preset_values(config: dict[str, Any]) -> dict[str, str]:
 
 def validate(data: dict[str, Any]) -> list[str]:
     errors: list[str] = []
+    tool = data["tool"]
+    method = data["method"]
+
     for check in (
         validators.validate_slug(data["slug"]),
         validators.validate_name(data["name"]),
         validators.validate_host(data["upstream_host"]),
         validators.validate_root(data["upstream_root"]),
-        validators.validate_architectures(data["architectures"]),
         validators.validate_patterns("include patterns", data["include_patterns"]),
         validators.validate_patterns("exclude patterns", data["exclude_patterns"]),
-        validators.validate_extra_args(data["tool"], data["extra_args"]),
+        validators.validate_extra_args(tool, data["extra_args"]),
         validators.validate_bwlimit(data["bwlimit_kbps"]),
         validators.validate_retry_policy(data["retry_policy"]),
         validators.validate_export_fields(
@@ -206,44 +210,65 @@ def validate(data: dict[str, Any]) -> list[str]:
         if check:
             errors.append(check)
 
+    for field in ("include_regex", "exclude_regex"):
+        value = data[field]
+        if len(value) > 500:
+            errors.append(f"{field.replace('_', ' ')}: at most 500 characters")
+        if "\n" in value or "\r" in value:
+            errors.append(f"{field.replace('_', ' ')}: newlines are not allowed")
+
     if data["kind"] not in RepoKind:
         errors.append("type: must be apt, arch or generic")
-    if data["tool"] not in Tool or data["tool"] == Tool.EXPORT:
+    if tool not in Tool or tool == Tool.EXPORT:
         errors.append("tool: must be debmirror, rsync or wget")
-    if data["method"] not in Method:
+        return errors
+    if method not in Method:
         errors.append("method: http, https or rsync")
-    if data["diff_mode"] not in DiffMode:
-        errors.append("diff mode: use, mirror or none")
-    if data["cleanup_mode"] not in CleanupMode:
-        errors.append("cleanup mode: post, cleanup or none")
 
-    if data["kind"] == "apt":
-        if data["tool"] != "debmirror":
-            errors.append("apt mirrors must use the debmirror tool")
+    if tool == "debmirror":
+        if method not in ("http", "https"):
+            errors.append("method: debmirror supports http and https only")
         if not data["suites"]:
-            errors.append("suites: at least one suite or dist is required for APT mirrors")
+            errors.append("suites: at least one suite or dist is required")
         if not data["sections"]:
-            errors.append("sections/components: required for APT mirrors")
+            errors.append("sections/components: required")
         error = validators.validate_list_field("suites", data["suites"])
         if error:
             errors.append(error)
         error = validators.validate_list_field("sections", data["sections"])
         if error:
             errors.append(error)
+        error = validators.validate_architectures(data["architectures"])
+        if error:
+            errors.append(error)
         error = validators.validate_list_field("rsync extra directories", data["rsync_extra"])
         if error:
             errors.append(error)
-    if data["kind"] == "arch":
-        if data["tool"] != "rsync":
-            errors.append("Arch mirrors must use the rsync tool")
-        if not data["suites"]:
-            errors.append(
-                "repositories: at least one Arch repository (core, extra, ...) is required"
-            )
-    if data["kind"] == "generic" and data["tool"] == "wget" and not data["extra_files"]:
-        errors.append("extra files: wget mirrors need at least one URL -> path entry")
-    if data["tool"] == "wget" and data["method"] not in ("http", "https"):
-        errors.append("method: wget supports http and https only")
+        if data["diff_mode"] not in DiffMode:
+            errors.append("diff mode: use, mirror or none")
+        if data["cleanup_mode"] not in CleanupMode:
+            errors.append("cleanup mode: post, cleanup or none")
+
+    elif tool == "rsync":
+        if method != "rsync":
+            errors.append("method: the rsync tool requires method rsync")
+        if not data["upstream_root"].strip("/"):
+            errors.append("root path: must start with the rsync module, e.g. /packages")
+        if data["kind"] == "arch":
+            if not data["suites"]:
+                errors.append("Arch repositories: at least one repository is required (core, extra, ...)")
+            if not data["architectures"] or "none" in data["architectures"]:
+                errors.append("Architectures: Arch rsync mirrors require concrete architectures")
+            error = validators.validate_architectures(data["architectures"])
+            if error:
+                errors.append(error)
+            error = validators.validate_list_field("Arch repositories", data["suites"])
+            if error:
+                errors.append(error)
+
+    elif tool == "wget":
+        if method not in ("http", "https"):
+            errors.append("method: wget supports http and https only")
 
     return errors
 
@@ -329,9 +354,6 @@ def deletion_blockers(db: Session, repo_id: int) -> list[str]:
     ).all()
     if jobs:
         blockers.append(f"{len(jobs)} queued or running job(s) reference this repository")
-    exports = db.exec(select(Export).where(Export.repo_id == repo_id)).all()
-    if exports:
-        blockers.append(f"{len(exports)} export(s) reference this repository; keep the history")
     return blockers
 
 
@@ -339,12 +361,19 @@ def delete(db: Session, repo: Repository, *, actor: str, ip: str = "") -> list[s
     blockers = deletion_blockers(db, repo.id or 0)
     if blockers:
         return blockers
-    from mirrorhub.models import ManifestSnapshot, RepoLock, Schedule, StorageCache
+    from mirrorhub.models import ManifestSnapshot, NotificationRule, RepoLock, Schedule, StorageCache
 
-    for model in (Schedule, RepoLock, StorageCache, ManifestSnapshot, Job):
+    for model in (NotificationRule, Export, Schedule, RepoLock, StorageCache, ManifestSnapshot):
         rows = db.exec(select(model).where(model.repo_id == repo.id)).all()
         for row in rows:
             db.delete(row)
+
+    jobs = db.exec(
+        select(Job).where(Job.repo_id == repo.id).order_by(col(Job.id).desc())
+    ).all()
+    for job in jobs:
+        db.delete(job)
+
     audit.record(
         db,
         actor=actor,

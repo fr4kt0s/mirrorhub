@@ -148,8 +148,6 @@ def test_full_and_incremental_restore_round_trip(
     configured: Settings,
     tmp_path: Path,
 ) -> None:
-    import os
-    import shutil
     import tarfile
 
     from mirrorhub.export import manifest
@@ -161,9 +159,8 @@ def test_full_and_incremental_restore_round_trip(
     (root / "delete.txt").write_bytes(b"remove me")
     (root / "unchanged.txt").write_bytes(b"keep me")
 
-    baseline = manifest.snapshot(root)
+    manifest.snapshot(root)
     first = engine.execute(_job(repo, "full"), repo, configured, _pulse)
-    first_directory = configured.export_dir / repo.slug / first
 
     # Change the source before producing the incremental.
     (root / "first.txt").write_bytes(b"first: modified content")
@@ -171,7 +168,7 @@ def test_full_and_incremental_restore_round_trip(
     (root / "nested").mkdir()
     (root / "nested" / "added.txt").write_bytes(b"new file")
 
-    expected = manifest.snapshot(root)
+    manifest.snapshot(root)
 
     # Match the existing tests' spacing between export identifiers.
     time.sleep(1.05)
@@ -209,11 +206,10 @@ def test_full_and_incremental_restore_round_trip(
             assert not target.is_symlink()
             target.unlink()
 
-        seen = set()
         archive_path = directory / metadata["archive_parts"][0]
 
         with tarfile.open(archive_path, "r:") as archive:
             for member in archive:
                 manifest.validate_relative(member.name)
                 assert member.isfile()
-                assert member.name in metada
+                assert member.name in inventory
