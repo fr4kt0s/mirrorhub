@@ -1,169 +1,21 @@
 {% extends "base.html" %}
-{% block title %}{{ "Edit" if mode == "edit" else "New" }} repository{% endblock %}
+{% block title %}New repository{% endblock %}
 {% block content %}
-<h1>{{ "Edit repository" if mode == "edit" else "New repository" }}</h1>
-{% if values.preset_source %}<p class="muted">Prefilled from preset: {{ values.preset_source }}</p>{% endif %}
-{% if errors %}
-<ul class="alert alert-error">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
-{% endif %}
-<form method="post" action="{{ '/repos/' ~ repo.id if mode == 'edit' else '/repos' }}" class="form-grid">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<h1>New repository</h1>
+<p class="muted">Choose the download method. Each method has its own required settings.</p>
 
-  <fieldset>
-    <legend>Identity</legend>
-<label>Repository ID
-  <input name="slug" value="{{ values.slug }}" maxlength="253" required
-         {% if mode == "edit" %}readonly{% endif %}>
-  <small>Permanent. Also the directory name. Use the upstream hostname, for example archive.ubuntu.com.</small>
-</label>    <label>Name <input name="name" value="{{ values.name }}" maxlength="128" required></label>
-    <label>Type
-      <select name="kind">
-        {% for option in ["apt", "arch", "generic"] %}
-        <option value="{{ option }}" {% if values.kind == option %}selected{% endif %}>{{ option }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Download method
-      <select name="tool" id="tool-select">
-        {% for option in ["debmirror", "rsync", "wget"] %}
-        <option value="{{ option }}" {% if values.tool == option %}selected{% endif %}>{{ option }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label class="check"><input type="checkbox" name="enabled" {% if values.enabled %}checked{% endif %}> Enabled</label>
-  </fieldset>
-
-  <fieldset>
-    <legend>Upstream</legend>
-    <label>Host <input name="upstream_host" value="{{ values.upstream_host }}" maxlength="253" required></label>
-    <label>Root path / rsync module <input name="upstream_root" value="{{ values.upstream_root }}" maxlength="200" required>
-      <small>For rsync, enter the module name, for example /packages.</small>
-    </label>
-    <label id="method-field">Method
-      <select name="method" id="method-select">
-        {% for option in ["https", "http", "rsync"] %}
-        <option value="{{ option }}" {% if values.method == option %}selected{% endif %}>{{ option }}</option>
-        {% endfor %}
-      </select>
-      <small>rsync repositories always use the rsync method.</small>
-    </label>
-    <label>Bandwidth limit (KB/s, 0 = unlimited) <input name="bwlimit_kbps" value="{{ values.bwlimit_kbps }}" inputmode="numeric"></label>
-  </fieldset>
-
-  <fieldset data-tool-section="debmirror">
-    <legend>Suites, sections, architectures</legend>
-    <label>Suites / dists (comma separated)
-      <input name="suites" value="{{ values.suites }}" maxlength="400">
-    </label>
-    <label>Sections / components (comma separated)
-      <input name="sections" value="{{ values.sections }}" maxlength="400">
-    </label>
-    <label>Architectures (comma separated; use <code>none</code> alone to mirror no architecture)
-      <input name="architectures" value="{{ values.architectures }}" list="arch-list" maxlength="200" required>
-      <datalist id="arch-list">
-        {% for arch in ["amd64", "arm64", "armhf", "i386", "ppc64el", "riscv64", "s390x", "x86_64", "aarch64", "none"] %}
-        <option value="{{ arch }}"></option>
-        {% endfor %}
-      </datalist>
-    </label>
-    <label class="check"><input type="checkbox" name="include_source" {% if values.include_source %}checked{% endif %}> Include source packages</label>
-    <label>Extra rsync directories (comma separated)
-      <input name="rsync_extra" value="{{ values.rsync_extra }}" maxlength="200">
-    </label>
-  </fieldset>
-
-  <fieldset data-tool-section="debmirror">
-    <legend>debmirror behaviour</legend>
-    <label>Diff mode
-      <select name="diff_mode">
-        {% for option in ["use", "mirror", "none"] %}
-        <option value="{{ option }}" {% if values.diff_mode == option %}selected{% endif %}>{{ option }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Cleanup
-      <select name="cleanup_mode">
-        <option value="post" {% if values.cleanup_mode == "post" %}selected{% endif %}>post (default, only after success)</option>
-        <option value="cleanup" {% if values.cleanup_mode == "cleanup" %}selected{% endif %}>cleanup before (advanced)</option>
-        <option value="none" {% if values.cleanup_mode == "none" %}selected{% endif %}>no cleanup (advanced)</option>
-      </select>
-    </label>
-    <label>Extra tool arguments (comma separated, allow-listed)
-      <input name="extra_args" value="{{ values.extra_args }}" maxlength="300" placeholder="--progress, --verbose">
-    </label>
-    <label>Include patterns <input name="include_patterns" value="{{ values.include_patterns }}"></label>
-    <label>Exclude patterns <input name="exclude_patterns" value="{{ values.exclude_patterns }}"></label>
-  </fieldset>
-
-  <fieldset data-tool-section="debmirror">
-    <legend>Signature verification</legend>
-    <label class="check">
-      <input type="checkbox" name="verify_signatures" {% if values.verify_signatures %}checked{% endif %}>
-      Verify repository signatures (recommended)
-    </label>
-    <label>To disable verification, type <code>{{ values.sig_off_phrase or "I understand" }}</code>
-      <input name="sig_off_confirm" value="" autocomplete="off">
-    </label>
-  </fieldset>
-
-  <fieldset data-tool-section="rsync">
-    <legend>rsync options</legend>
-    <label>Extra tool arguments (comma separated, allow-listed)
-      <input name="extra_args" value="{{ values.extra_args }}" maxlength="300" placeholder="--compress, --partial">
-    </label>
-    <label>Include patterns <input name="include_patterns" value="{{ values.include_patterns }}"></label>
-    <label>Exclude patterns <input name="exclude_patterns" value="{{ values.exclude_patterns }}"></label>
-  </fieldset>
-
-  <fieldset data-tool-section="wget">
-    <legend>Single files</legend>
-    <label>One entry per line: <code>https://host/file.asc -&gt; relative/path</code>
-      <textarea name="extra_files" rows="4">{{ values.extra_files }}</textarea>
-    </label>
-  </fieldset>
-
-  <fieldset>
-    <legend>Retry policy</legend>
-    <label>Max attempts <input name="retry_max_attempts" value="{{ values.retry_max_attempts }}" inputmode="numeric"></label>
-    <label>Backoff
-      <select name="retry_backoff">
-        {% for option in ["exponential", "linear", "fixed"] %}
-        <option value="{{ option }}" {% if values.retry_backoff == option %}selected{% endif %}>{{ option }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Base delay (seconds) <input name="retry_base_seconds" value="{{ values.retry_base_seconds }}" inputmode="numeric"></label>
-    <label>Maximum delay (seconds) <input name="retry_max_seconds" value="{{ values.retry_max_seconds }}" inputmode="numeric"></label>
-    <label>Retryable exit codes (comma separated) <input name="retry_exit_codes" value="{{ values.retry_exit_codes }}"></label>
-  </fieldset>
-
-  <fieldset>
-    <legend>Export</legend>
-    <label>Mode
-      <select name="export_mode">
-        <option value="incr" {% if values.export_mode == "incr" %}selected{% endif %}>incremental (manifest diff)</option>
-        <option value="full" {% if values.export_mode == "full" %}selected{% endif %}>full</option>
-      </select>
-    </label>
-    <label>Format
-      <select name="export_format">
-        <option value="tar" {% if values.export_format == "tar" %}selected{% endif %}>data.tar</option>
-        <option value="tar.zst" {% if values.export_format == "tar.zst" %}selected{% endif %}>data.tar.zst</option>
-      </select>
-    </label>
-    <label>Split parts at (MB, 0 = no split) <input name="export_split_mb" value="{{ values.export_split_mb }}" inputmode="numeric"></label>
-    <label class="check"><input type="checkbox" name="chain_export" {% if values.chain_export %}checked{% endif %}> Queue an export after a successful sync</label>
-  </fieldset>
-
-  <fieldset>
-    <legend>Save as preset</legend>
-    <label class="check"><input type="checkbox" name="save_as_preset"> Also save these settings as a preset</label>
-    <label>Preset name <input name="preset_name" value="{{ values.preset_name }}" maxlength="128"></label>
-  </fieldset>
-
-  <div class="form-actions">
-    <button class="btn" type="submit">Save</button>
-    <a class="btn btn-secondary" href="/repos">Cancel</a>
-  </div>
-</form>
+<div class="grid">
+  <a class="card" href="/repos/new?tool=debmirror">
+    <h2>debmirror</h2>
+    <p>APT repositories with suites, components and architectures.</p>
+  </a>
+  <a class="card" href="/repos/new?tool=rsync">
+    <h2>rsync</h2>
+    <p>Mirror an rsync module from an upstream server.</p>
+  </a>
+  <a class="card" href="/repos/new?tool=wget">
+    <h2>wget</h2>
+    <p>Download individual files, such as keys or release metadata.</p>
+  </a>
+</div>
 {% endblock %}

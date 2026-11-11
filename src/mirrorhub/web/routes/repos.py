@@ -13,6 +13,16 @@ from mirrorhub.web.deps import CurrentUser, client_ip, get_db, render, require_u
 
 router = APIRouter()
 
+METHOD_TEMPLATES = {
+    "debmirror": "repos/form_debmirror.html",
+    "rsync": "repos/form_rsync.html",
+    "wget": "repos/form_wget.html",
+}
+
+
+def _template_for(tool: str) -> str:
+    return METHOD_TEMPLATES.get(tool, "repos/form.html")
+
 
 @router.get("/repos")
 def list_page(
@@ -49,16 +59,21 @@ def _blank_values() -> dict[str, str]:
 @router.get("/repos/new")
 def new_page(
     request: Request,
+    tool: str = "",
     preset: int = 0,
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    template = _template_for(tool)
+    if template == "repos/form.html":
+        return render(request, template, {"errors": []})
+
     values = _blank_values()
+    values["tool"] = tool
+    values["method"] = "rsync" if tool == "rsync" else "https"
     values.update(
         {
             "kind": "apt",
-            "tool": "debmirror",
-            "method": "https",
             "diff_mode": "use",
             "cleanup_mode": "post",
             "export_mode": "incr",
@@ -71,7 +86,9 @@ def new_page(
             values.update(repos.preset_values(row.config))
             values["preset_source"] = row.name
     return render(
-        request, "repos/form.html", {"values": values, "errors": [], "repo": None, "mode": "create"}
+        request,
+        template,
+        {"values": values, "errors": [], "repo": None, "mode": "create"},
     )
 
 
@@ -87,7 +104,9 @@ def edit_page(
         return render(request, "error.html", {"status": 404, "detail": "Repository not found"}, 404)
     values = _blank_repo_values(repo)
     return render(
-        request, "repos/form.html", {"values": values, "errors": [], "repo": repo, "mode": "edit"}
+        request,
+        _template_for(repo.tool),
+        {"values": values, "errors": [], "repo": repo, "mode": "edit"},
     )
 
 
@@ -98,6 +117,15 @@ def _blank_repo_values(repo: Repository) -> dict[str, str]:
     values["name"] = repo.name
     values["extra_args"] = ", ".join(repo.extra_args)
     return values
+
+
+def _form_template(data: dict[str, Any], repo: Repository | None) -> str:
+    tool = str(data.get("tool") or "")
+    if tool in METHOD_TEMPLATES:
+        return METHOD_TEMPLATES[tool]
+    if repo is not None:
+        return METHOD_TEMPLATES.get(repo.tool, "repos/form.html")
+    return "repos/form.html"
 
 
 async def _form_data(
@@ -118,9 +146,10 @@ async def _save(
         data, values = await _form_data(form)
     except repos.FormError as exc:
         values = {name: str(form.get(name) or "") for name in form}
+        template = _form_template(values, repo)
         return render(
             request,
-            "repos/form.html",
+            template,
             {
                 "values": {**_blank_values(), **values},
                 "errors": exc.messages,
@@ -146,10 +175,11 @@ async def _save(
             f"signature checking: type '{repos.SIG_OFF_PHRASE}' to disable it for this repository"
         )
 
+    template = _form_template(data, repo)
     if errors:
         return render(
             request,
-            "repos/form.html",
+            template,
             {
                 "values": values,
                 "errors": errors,
@@ -174,7 +204,7 @@ async def _save(
             errors.append(str(exc))
             return render(
                 request,
-                "repos/form.html",
+                template,
                 {"values": values, "errors": errors, "repo": saved, "mode": "edit"},
                 400,
             )

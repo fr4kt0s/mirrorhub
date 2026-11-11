@@ -1,0 +1,17 @@
+<fieldset>
+  <legend>Export</legend>
+  <label>Mode
+    <select name="export_mode">
+      <option value="incr" {% if values.export_mode == "incr" %}selected{% endif %}>incremental (manifest diff)</option>
+      <option value="full" {% if values.export_mode == "full" %}selected{% endif %}>full</option>
+    </select>
+  </label>
+  <label>Format
+    <select name="export_format">
+      <option value="tar" {% if values.export_format == "tar" %}selected{% endif %}>data.tar</option>
+      <option value="tar.zst" {% if values.export_format == "tar.zst" %}selected{% endif %}>data.tar.zst</option>
+    </select>
+  </label>
+  <label>Split parts at (MB, 0 = no split) <input name="export_split_mb" value="{{ values.export_split_mb }}" inputmode="numeric"></label>
+  <label class="check"><input type="checkbox" name="chain_export" {% if values.chain_export %}checked{% endif %}> Queue an export after a successful sync</label>
+</fieldset>

@@ -1,0 +1,14 @@
+<fieldset>
+  <legend>Retry policy</legend>
+  <label>Max attempts <input name="retry_max_attempts" value="{{ values.retry_max_attempts }}" inputmode="numeric"></label>
+  <label>Backoff
+    <select name="retry_backoff">
+      {% for option in ["exponential", "linear", "fixed"] %}
+      <option value="{{ option }}" {% if values.retry_backoff == option %}selected{% endif %}>{{ option }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Base delay (seconds) <input name="retry_base_seconds" value="{{ values.retry_base_seconds }}" inputmode="numeric"></label>
+  <label>Maximum delay (seconds) <input name="retry_max_seconds" value="{{ values.retry_max_seconds }}" inputmode="numeric"></label>
+  <label>Retryable exit codes (comma separated) <input name="retry_exit_codes" value="{{ values.retry_exit_codes }}"></label>
+</fieldset>

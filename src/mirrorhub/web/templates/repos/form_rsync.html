@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if mode == "edit" else "New" }} rsync repository{% endblock %}
+{% block content %}
+<h1>{{ "Edit rsync repository" if mode == "edit" else "New rsync repository" }}</h1>
+{% if values.preset_source %}<p class="muted">Prefilled from preset: {{ values.preset_source }}</p>{% endif %}
+{% if errors %}
+<ul class="alert alert-error">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+{% endif %}
+
+<form method="post" action="{{ '/repos/' ~ repo.id if mode == 'edit' else '/repos' }}" class="form-grid">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="tool" value="rsync">
+  <input type="hidden" name="method" value="rsync">
+
+  {% include "repos/_identity.html" %}
+  {% include "repos/_upstream.html" %}
+
+  <fieldset>
+    <legend>rsync options</legend>
+    <label>Extra tool arguments (comma separated, allow-listed)
+      <input name="extra_args" value="{{ values.extra_args }}" maxlength="300" placeholder="--compress, --partial">
+    </label>
+    <label>Include patterns <input name="include_patterns" value="{{ values.include_patterns }}"></label>
+    <label>Exclude patterns <input name="exclude_patterns" value="{{ values.exclude_patterns }}"></label>
+  </fieldset>
+
+  {% include "repos/_retry.html" %}
+  {% include "repos/_export.html" %}
+  {% include "repos/_preset.html" %}
+  {% include "repos/_actions.html" %}
+</form>
+{% endblock %}
