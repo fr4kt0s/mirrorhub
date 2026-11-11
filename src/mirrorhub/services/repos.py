@@ -195,7 +195,6 @@ def validate(data: dict[str, Any]) -> list[str]:
         validators.validate_name(data["name"]),
         validators.validate_host(data["upstream_host"]),
         validators.validate_root(data["upstream_root"]),
-        validators.validate_architectures(data["architectures"]),
         validators.validate_patterns("include patterns", data["include_patterns"]),
         validators.validate_patterns("exclude patterns", data["exclude_patterns"]),
         validators.validate_extra_args(tool, data["extra_args"]),
@@ -228,6 +227,9 @@ def validate(data: dict[str, Any]) -> list[str]:
         if error:
             errors.append(error)
         error = validators.validate_list_field("sections", data["sections"])
+        if error:
+            errors.append(error)
+        error = validators.validate_architectures(data["architectures"])
         if error:
             errors.append(error)
         error = validators.validate_list_field("rsync extra directories", data["rsync_extra"])

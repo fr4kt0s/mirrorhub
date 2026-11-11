@@ -162,13 +162,19 @@ async def _save(
     if repo is not None:
         data["slug"] = repo.slug
         values["slug"] = repo.slug
+    if data["tool"] != "debmirror":
+        data["verify_signatures"] = repo.verify_signatures if repo is not None else True
     errors = repos.validate(data)
 
     slug_error = repos._ensure_unique_slug(db, data["slug"], repo.id if repo else None)
     if slug_error:
         errors.append(slug_error)
 
-    disabling = not data["verify_signatures"] and (repo is None or repo.verify_signatures)
+    disabling = (
+        data["tool"] == "debmirror"
+        and not data["verify_signatures"]
+        and (repo is None or repo.verify_signatures)
+    )
     phrase = str(form.get("sig_off_confirm") or "").strip()
     if disabling and phrase != repos.SIG_OFF_PHRASE:
         errors.append(
