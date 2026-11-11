@@ -192,16 +192,11 @@ def validate(data: dict[str, Any]) -> list[str]:
     tool = data["tool"]
     method = data["method"]
 
-    root = data["upstream_root"]
-    if root or tool != "wget":
-        root_error = validators.validate_root(root)
-        if root_error:
-            errors.append(root_error)
-
     for check in (
         validators.validate_slug(data["slug"]),
         validators.validate_name(data["name"]),
         validators.validate_host(data["upstream_host"]),
+        validators.validate_root(data["upstream_root"]),
         validators.validate_patterns("include patterns", data["include_patterns"]),
         validators.validate_patterns("exclude patterns", data["exclude_patterns"]),
         validators.validate_extra_args(tool, data["extra_args"]),
