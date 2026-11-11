@@ -220,7 +220,7 @@ def validate(data: dict[str, Any]) -> list[str]:
     if data["kind"] not in RepoKind:
         errors.append("type: must be apt, arch or generic")
     if tool not in Tool or tool == Tool.EXPORT:
-        errors.append("tool: must be debmirror, rsync or wget")
+        errors.append("tool: must be debmirror, rsync, wget or ftpsync")
         return errors
     if method not in Method:
         errors.append("method: http, https or rsync")
@@ -269,6 +269,12 @@ def validate(data: dict[str, Any]) -> list[str]:
     elif tool == "wget":
         if method not in ("http", "https"):
             errors.append("method: wget supports http and https only")
+
+    elif tool == "ftpsync":
+        if method != "rsync":
+            errors.append("method: ftpsync requires method rsync")
+        if not data["architectures"] or "none" in data["architectures"]:
+            errors.append("architectures: ftpsync requires at least one architecture")
 
     return errors
 

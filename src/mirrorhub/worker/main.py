@@ -35,7 +35,7 @@ from mirrorhub.worker import builders
 from mirrorhub.worker.runner import Runner
 
 log = logging.getLogger("mirrorhub.worker")
-TOOLS = ("debmirror", "rsync", "wget", "export")
+TOOLS = ("debmirror", "rsync", "wget", "ftpsync", "export")
 POLL_SECONDS = 3.0
 
 
@@ -219,7 +219,7 @@ def finish(
         db.delete(lock)
 
         if status == "succeeded" and chain_snapshot is not None:
-            repo = db.get(Repository, job.repo_id)
+            repo = db.get(Job, job.repo_id)
             if repo is None:
                 raise ExportError("repository disappeared while chaining export")
             chained = Job(

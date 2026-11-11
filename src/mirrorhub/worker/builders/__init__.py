@@ -10,7 +10,7 @@ from mirrorhub.enums import Tool
 from mirrorhub.models import Job, Repository
 from mirrorhub.settings import Settings
 
-from . import debmirror, rsync, wget
+from . import debmirror, ftpsync, rsync, wget
 from .base import BuildError, BuildPlan, Step, resolve_paths
 
 __all__ = ["BuildError", "BuildPlan", "Step", "build", "resolve_paths"]
@@ -24,4 +24,6 @@ def build(repo: Repository, job: Job, settings: Settings) -> BuildPlan:
         return rsync.build(repo, job, target, target)
     if repo.tool == Tool.WGET.value:
         return wget.build(repo, job, target, target)
+    if repo.tool == Tool.FTPSYNC.value:
+        return ftpsync.build(repo, job, target, target, settings)
     raise BuildError(f"unsupported tool for sync jobs: {repo.tool}")

@@ -13,6 +13,7 @@ class Tool(StrEnum):
     DEBMIRROR = "debmirror"
     RSYNC = "rsync"
     WGET = "wget"
+    FTPSYNC = "ftpsync"
     EXPORT = "export"
 
 
