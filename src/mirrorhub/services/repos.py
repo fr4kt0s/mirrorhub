@@ -336,9 +336,6 @@ def deletion_blockers(db: Session, repo_id: int) -> list[str]:
     ).all()
     if jobs:
         blockers.append(f"{len(jobs)} queued or running job(s) reference this repository")
-    exports = db.exec(select(Export).where(Export.repo_id == repo_id)).all()
-    if exports:
-        blockers.append(f"{len(exports)} export(s) reference this repository; keep the history")
     return blockers
 
 
@@ -348,7 +345,7 @@ def delete(db: Session, repo: Repository, *, actor: str, ip: str = "") -> list[s
         return blockers
     from mirrorhub.models import ManifestSnapshot, RepoLock, Schedule, StorageCache
 
-    for model in (Schedule, RepoLock, StorageCache, ManifestSnapshot, Job):
+    for model in (Export, Schedule, RepoLock, StorageCache, ManifestSnapshot, Job):
         rows = db.exec(select(model).where(model.repo_id == repo.id)).all()
         for row in rows:
             db.delete(row)
