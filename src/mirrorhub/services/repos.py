@@ -245,12 +245,21 @@ def validate(data: dict[str, Any]) -> list[str]:
             errors.append("method: the rsync tool requires method rsync")
         if not data["upstream_root"].strip("/"):
             errors.append("root path: must start with the rsync module, e.g. /packages")
+        if data["kind"] == "arch":
+            if not data["suites"]:
+                errors.append("Arch repositories: at least one repository is required (core, extra, ...)")
+            if not data["architectures"] or "none" in data["architectures"]:
+                errors.append("Architectures: Arch rsync mirrors require concrete architectures")
+            error = validators.validate_architectures(data["architectures"])
+            if error:
+                errors.append(error)
+            error = validators.validate_list_field("Arch repositories", data["suites"])
+            if error:
+                errors.append(error)
 
     elif tool == "wget":
         if method not in ("http", "https"):
             errors.append("method: wget supports http and https only")
-        if not data["extra_files"]:
-            errors.append("extra files: wget mirrors need at least one URL -> path entry")
 
     return errors
 

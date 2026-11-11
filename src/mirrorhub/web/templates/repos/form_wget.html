@@ -26,10 +26,8 @@
   </fieldset>
 
   <fieldset>
-    <legend>Single files</legend>
-    <label>One entry per line: <code>https://host/file.asc -&gt; relative/path</code>
-      <textarea name="extra_files" rows="4">{{ values.extra_files }}</textarea>
-    </label>
+    <legend>Complete directory tree</legend>
+    <p class="muted">MirrorHub downloads the complete directory tree below the configured upstream root.</p>
   </fieldset>
 
   {% include "repos/_retry.html" %}
