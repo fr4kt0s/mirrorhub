@@ -71,9 +71,9 @@ def new_page(
     values = _blank_values()
     values["tool"] = tool
     values["method"] = "rsync" if tool == "rsync" else "https"
+    values["kind"] = "apt" if tool == "debmirror" else "generic"
     values.update(
         {
-            "kind": "apt",
             "diff_mode": "use",
             "cleanup_mode": "post",
             "export_mode": "incr",
@@ -162,6 +162,10 @@ async def _save(
     if repo is not None:
         data["slug"] = repo.slug
         values["slug"] = repo.slug
+    if data["tool"] == "debmirror":
+        data["kind"] = "apt"
+    elif data["tool"] == "wget":
+        data["kind"] = "generic"
     if data["tool"] != "debmirror":
         data["verify_signatures"] = repo.verify_signatures if repo is not None else True
     errors = repos.validate(data)

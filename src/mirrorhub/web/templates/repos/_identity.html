@@ -6,12 +6,5 @@
     <small>Permanent. Also the directory name.</small>
   </label>
   <label>Name <input name="name" value="{{ values.name }}" maxlength="128" required></label>
-  <label>Type
-    <select name="kind">
-      {% for option in ["apt", "arch", "generic"] %}
-      <option value="{{ option }}" {% if values.kind == option %}selected{% endif %}>{{ option }}</option>
-      {% endfor %}
-    </select>
-  </label>
   <label class="check"><input type="checkbox" name="enabled" {% if values.enabled %}checked{% endif %}> Enabled</label>
 </fieldset>

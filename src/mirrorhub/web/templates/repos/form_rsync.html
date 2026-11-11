@@ -16,6 +16,27 @@
   {% include "repos/_upstream.html" %}
 
   <fieldset>
+    <legend>Repository type</legend>
+    <label>Type
+      <select name="kind">
+        <option value="generic" {% if values.kind == "generic" %}selected{% endif %}>Generic file tree</option>
+        <option value="arch" {% if values.kind == "arch" %}selected{% endif %}>Arch Linux repository</option>
+      </select>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Arch repository settings</legend>
+    <p class="muted">Only used when the repository type is “Arch Linux repository”.</p>
+    <label>Repositories (comma separated)
+      <input name="suites" value="{{ values.suites }}" placeholder="core, extra">
+    </label>
+    <label>Architectures (comma separated)
+      <input name="architectures" value="{{ values.architectures }}" placeholder="x86_64">
+    </label>
+  </fieldset>
+
+  <fieldset>
     <legend>rsync options</legend>
     <label>Extra tool arguments (comma separated, allow-listed)
       <input name="extra_args" value="{{ values.extra_args }}" maxlength="300" placeholder="--compress, --partial">
