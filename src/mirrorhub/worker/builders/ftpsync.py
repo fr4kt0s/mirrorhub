@@ -47,9 +47,19 @@ def build(
     if executable is None:
         raise BuildError("ftpsync is not installed in this image")
 
-    installed_base = Path(executable).resolve().parent.parent
-    installed_common = installed_base / "etc" / "common"
-    if not installed_common.is_file():
+    candidates = [
+        Path("/usr/share/ftpsync/etc/common"),
+        Path("/usr/lib/ftpsync/etc/common"),
+        Path("/usr/local/share/ftpsync/etc/common"),
+        Path(executable).resolve().parent.parent / "etc" / "common",
+    ]
+
+    installed_common = next(
+        (path for path in candidates if path.is_file()),
+        None,
+    )
+
+    if installed_common is None:
         raise BuildError("ftpsync installation is missing etc/common")
 
     runtime = settings.tmp_dir / "ftpsync" / repo.slug
