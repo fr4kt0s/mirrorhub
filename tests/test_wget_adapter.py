@@ -35,6 +35,7 @@ def _context(plan: WgetPlan) -> SimpleNamespace:
         method=plan.source_protocol,
         include_regex=plan.include_regex,
         exclude_regex=plan.exclude_regex,
+        extra_files=(),
         bwlimit_kbps=plan.bwlimit_kbps,
         extra_args=plan.extra_args,
     )

@@ -270,7 +270,7 @@ def validate(data: dict[str, Any]) -> list[str]:
         if method not in ("http", "https"):
             errors.append("method: wget supports http and https only")
         if not data["extra_files"]:
-            errors.append("wget mirrors need at least one URL -> path entry")
+            errors.append("wget mirrors need at least one URL and relative path entry")
 
     elif tool == "ftpsync":
         if method != "rsync":
