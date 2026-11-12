@@ -25,9 +25,7 @@ def build_ftpsync_plan(
         )
 
     if repository.method != Method.RSYNC:
-        raise SyncConfigurationError(
-            f"ftpsync requires the rsync method, got {repository.method}"
-        )
+        raise SyncConfigurationError(f"ftpsync requires the rsync method, got {repository.method}")
 
     target = resolve_paths(repository, job, settings)
     work_dir = settings.tmp_dir / "ftpsync" / repository.slug
@@ -66,6 +64,4 @@ def build_sync_plan(
         case Tool.FTPSYNC:
             return build_ftpsync_plan(job, repository, settings)
         case _:
-            raise SyncConfigurationError(
-                f"no sync plan factory registered for {repository.tool}"
-            )
+            raise SyncConfigurationError(f"no sync plan factory registered for {repository.tool}")
