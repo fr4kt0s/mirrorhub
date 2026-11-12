@@ -198,6 +198,9 @@ def build_wget_plan(
             attempt=job.attempt,
             include_regex=repository.include_regex,
             exclude_regex=repository.exclude_regex,
+            extra_files=tuple(
+                (entry["url"], entry["path"]) for entry in repository.extra_files
+            ),
             bwlimit_kbps=repository.bwlimit_kbps,
             extra_args=tuple(repository.extra_args),
         )

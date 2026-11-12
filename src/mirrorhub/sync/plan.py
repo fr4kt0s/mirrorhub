@@ -81,5 +81,6 @@ class WgetPlan(SyncPlan):
     source_protocol: Literal["http", "https"]
     include_regex: str = ""
     exclude_regex: str = ""
+    extra_files: tuple[tuple[str, str], ...] = ()
     bwlimit_kbps: int = Field(default=0, ge=0)
     extra_args: tuple[str, ...] = ()
