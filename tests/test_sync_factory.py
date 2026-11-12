@@ -87,7 +87,7 @@ def test_build_sync_plan_dispatches_ftpsync(tmp_path: Path) -> None:
 
 def test_build_sync_plan_rejects_unsupported_tool(tmp_path: Path) -> None:
     settings = _Settings(tmp_path)
-    repository = _repository(tool=Tool.RSYNC)
+    repository = _repository(tool=Tool.EXPORT)
     job = _job()
 
     with pytest.raises(SyncConfigurationError):
