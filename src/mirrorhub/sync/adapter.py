@@ -8,7 +8,8 @@ from mirrorhub.enums import Tool
 from mirrorhub.sync.context import SyncExecutionContext
 from mirrorhub.sync.plan import SyncPlan
 from mirrorhub.sync.result import SyncResult
-from mirrorhub.worker.builders import BuildPlan, RunResult
+from mirrorhub.worker.builders import BuildPlan
+from mirrorhub.worker.runner import RunResult
 
 
 @runtime_checkable
