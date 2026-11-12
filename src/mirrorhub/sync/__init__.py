@@ -4,6 +4,7 @@ from mirrorhub.sync.adapter import SyncAdapter, SyncAdapterRegistry
 from mirrorhub.sync.adapters import FtpsyncAdapter
 from mirrorhub.sync.context import SyncExecutionContext
 from mirrorhub.sync.errors import SyncConfigurationError, SyncExecutionError
+from mirrorhub.sync.factory import build_ftpsync_plan, build_sync_plan
 from mirrorhub.sync.plan import FtpsyncPlan, RsyncPlan, SyncPlan
 from mirrorhub.sync.result import SyncResult, SyncStatus
 
@@ -19,4 +20,6 @@ __all__ = [
     "SyncPlan",
     "SyncResult",
     "SyncStatus",
+    "build_ftpsync_plan",
+    "build_sync_plan",
 ]
