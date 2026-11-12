@@ -19,7 +19,7 @@ Review docs/release-checklist.md before deployment.
 - Jinja2 and vendored HTMX.
 - Docker Compose.
 - Caddy internal TLS.
-- debmirror, rsync and wget workers.
+- A universal worker for debmirror, rsync, wget and ftpsync.
 - A separate export worker.
 - No Redis, Node build process or Docker socket.
 
@@ -159,7 +159,7 @@ Changing the Caddy CA volume changes the CA identity. Back up that volume.
 
 The runtime images create the mirror user with the build-time PUID/PGID.
 
-Rebuild images after changing PUID or PGID.
+Rebuild images after changing PUID/PGID.
 
 Pre-provision NFS directories so those numeric IDs can write. NFS root_squash
 does not grant the application permission to fix server-side ownership.
@@ -195,6 +195,26 @@ Do not apply it to the SQLite state or GPG volumes.
 Test NFS permissions, rename behavior and fsync support against the actual
 server before relying on export publication.
 
+## Sync architecture
+
+A sync job is first converted into a typed `SyncPlan`. The plan records the job,
+repository, upstream, target paths and tool-specific configuration.
+
+Each supported tool has an adapter:
+
+- `FtpsyncAdapter` for Debian-style FTPsync mirrors.
+- `RsyncAdapter` for generic and Arch rsync mirrors.
+- `DebmirrorAdapter` for APT repositories synchronized with debmirror.
+- `WgetAdapter` for HTTP directory trees and extra-file downloads.
+
+The adapter validates its plan, delegates to the tool-specific builder and
+interprets the runner result. The shared `SyncAdapter` base class handles common
+success, failure and cancellation interpretation.
+
+The worker executes sync jobs only through these adapters. Tool-specific builders
+remain responsible for command construction, validation and tool-specific safety
+rules.
+
 ## Repository setup
 
 Create a repository directly or clone an editable preset.
@@ -215,19 +235,42 @@ starting large or production mirrors.
 
 ## Worker scaling
 
-Scale workers by tool:
+The `worker` service is a universal sync worker. It handles FTPsync, rsync,
+debmirror and wget jobs.
+
+Set the number of worker containers in `.env`:
 
 ```sh
-docker compose up -d --scale worker-debmirror=2
-docker compose up -d --scale worker-rsync=2
-docker compose up -d --scale worker-wget=2
-docker compose up -d --scale worker-export=2
+MIRRORHUB_WORKER_REPLICAS=3
 ```
+
+Apply the change with:
+
+```sh
+docker compose up -d
+```
+
+Alternatively, override the replica count for one deployment:
+
+```sh
+docker compose up -d --scale worker=3
+```
+
+Each worker can run multiple jobs concurrently:
+
+```sh
+MIRRORHUB_WORKER_CONCURRENCY=2
+```
+
+For example, three workers with a concurrency of two can run up to six sync
+jobs in parallel, subject to the configured global concurrency limit and
+per-repository locks.
 
 The SQLite queue enforces the configured global concurrency limit.
 
 Repository guards on the local state volume protect execution against overlap
-with a stale process.
+with a stale process. A repository is never synchronized concurrently by two
+jobs.
 
 Do not scale web or distribute these services across multiple Docker hosts.
 
@@ -249,7 +292,7 @@ Job history is retained independently of log-file retention.
 
 1. Create an SMTP or webhook channel.
 2. Send a channel test.
-3. Create event rules for the events that should use that channel.
+3. Create event rules for the events that should use the channel.
 
 A channel without rules does not receive job events.
 

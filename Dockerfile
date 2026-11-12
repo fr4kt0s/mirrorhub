@@ -39,7 +39,7 @@ RUN printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https:
         > /etc/apt/apt.conf.d/80mirrorhub \
  && if [ -n "${APT_PROXY}" ]; then \
         printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' \
-            "${APT_PROXY}" "${APT_PROXY}" >> /etc/apt/apt.conf.d/80mirrorhub; \
+        "${APT_PROXY}" >> /etc/apt/apt.conf.d/80mirrorhub; \
     fi
 
 # ---------- web: UI/API/SSE/scheduler; gnupg + keyring packages for key import ----------
@@ -55,6 +55,16 @@ ENV MIRRORHUB_ROLE=web
 EXPOSE 8000
 CMD ["uvicorn", "mirrorhub.web.app:app", "--host", "0.0.0.0", "--port", "8000", \
      "--proxy-headers", "--forwarded-allow-ips", "*"]
+
+# ---------- worker: universal sync worker with all sync tools ----------
+FROM apt-base AS worker
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends debmirror rsync gpgv gnupg ca-certificates \
+        xz-utils bzip2 wget ftpsync \
+ && rm -rf /var/lib/apt/lists/*
+USER mirror
+ENV MIRRORHUB_ROLE=worker
+CMD ["python", "-m", "mirrorhub.worker.main", "--tools", "ftpsync,rsync,debmirror,wget"]
 
 # ---------- worker-debmirror ----------
 FROM apt-base AS worker-debmirror

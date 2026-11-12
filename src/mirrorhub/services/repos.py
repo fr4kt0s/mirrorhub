@@ -269,6 +269,8 @@ def validate(data: dict[str, Any]) -> list[str]:
     elif tool == "wget":
         if method not in ("http", "https"):
             errors.append("method: wget supports http and https only")
+        if not data["extra_files"]:
+            errors.append("wget mirrors need at least one URL and relative path entry")
 
     elif tool == "ftpsync":
         if method != "rsync":
@@ -324,7 +326,6 @@ def update(
         if field == "slug":
             continue
         setattr(repo, field, data[field])
-        setattr(repo, field, data[field])
     audit.record(
         db,
         actor=actor,
@@ -377,8 +378,8 @@ def delete(db: Session, repo: Repository, *, actor: str, ip: str = "") -> list[s
     jobs = db.exec(
         select(Job).where(Job.repo_id == repo.id).order_by(col(Job.id).desc())
     ).all()
-    for job in jobs:
-        db.delete(job)
+    for row in jobs:
+        db.delete(row)
 
     audit.record(
         db,

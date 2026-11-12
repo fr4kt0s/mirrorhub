@@ -65,10 +65,6 @@ def new_page(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
-    template = _template_for(tool)
-    if template == "repos/form.html":
-        return render(request, template, {"errors": []})
-
     values = _blank_values()
     values["tool"] = tool
     values["method"] = "rsync" if tool in {"rsync", "ftpsync"} else "https"
@@ -86,6 +82,10 @@ def new_page(
         if row is not None:
             values.update(repos.preset_values(row.config))
             values["preset_source"] = row.name
+    template = _template_for(str(values.get("tool") or tool))
+    if template == "repos/form.html":
+        return render(request, template, {"values": values, "errors": []})
+
     return render(
         request,
         template,

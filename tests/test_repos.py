@@ -242,7 +242,7 @@ def test_wget_requires_entries(admin: TestClient, csrf_token: str) -> None:
     )
     response = _post(admin, csrf_token, "/repos", form)
     assert response.status_code == 400
-    assert "wget mirrors need at least one URL -> path entry" in response.text
+    assert "wget mirrors need at least one URL and relative path entry" in response.text
 
 
 def test_debmirror_requires_suites_and_sections(admin: TestClient, csrf_token: str) -> None:
