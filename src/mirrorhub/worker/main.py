@@ -46,7 +46,7 @@ from mirrorhub.sync.plan import (
     RsyncPlan,
     WgetPlan,
 )
-from mirrorhub.sync.result import SyncResult, SyncStatus
+from mirrorhub.sync.result import SyncStatus
 from mirrorhub.worker import builders
 from mirrorhub.worker.runner import Runner
 
