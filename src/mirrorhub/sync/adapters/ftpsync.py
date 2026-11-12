@@ -9,7 +9,8 @@ from mirrorhub.sync.context import SyncExecutionContext
 from mirrorhub.sync.errors import SyncConfigurationError
 from mirrorhub.sync.plan import FtpsyncPlan, SyncPlan
 from mirrorhub.sync.result import SyncErrorCode, SyncResult, SyncStatus
-from mirrorhub.worker.builders import BuildPlan, RunResult
+from mirrorhub.worker.builders import BuildPlan
+from mirrorhub.worker.runner import RunResult
 from mirrorhub.worker.builders.ftpsync import build as build_ftpsync
 
 
