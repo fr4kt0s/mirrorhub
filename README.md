@@ -19,7 +19,7 @@ Review docs/release-checklist.md before deployment.
 - Jinja2 and vendored HTMX.
 - Docker Compose.
 - Caddy internal TLS.
-- debmirror, rsync and wget workers.
+- A universal worker for debmirror, rsync, wget and ftpsync.
 - A separate export worker.
 - No Redis, Node build process or Docker socket.
 
@@ -235,19 +235,42 @@ starting large or production mirrors.
 
 ## Worker scaling
 
-Scale workers by tool:
+The `worker` service is a universal sync worker. It handles FTPsync, rsync,
+debmirror and wget jobs.
+
+Set the number of worker containers in `.env`:
 
 ```sh
-docker compose up -d --scale worker-debmirror=2
-docker compose up -d --scale worker-rsync=2
-docker compose up -d --scale worker-wget=2
-docker compose up -d --scale worker-export=2
+MIRRORHUB_WORKER_REPLICAS=3
 ```
+
+Apply the change with:
+
+```sh
+docker compose up -d
+```
+
+Alternatively, override the replica count for one deployment:
+
+```sh
+docker compose up -d --scale worker=3
+```
+
+Each worker can run multiple jobs concurrently:
+
+```sh
+MIRRORHUB_WORKER_CONCURRENCY=2
+```
+
+For example, three workers with a concurrency of two can run up to six sync
+jobs in parallel, subject to the configured global concurrency limit and
+per-repository locks.
 
 The SQLite queue enforces the configured global concurrency limit.
 
 Repository guards on the local state volume protect execution against overlap
-with a stale process.
+with a stale process. A repository is never synchronized concurrently by two
+jobs.
 
 Do not scale web or distribute these services across multiple Docker hosts.
 
@@ -267,7 +290,7 @@ Job history is retained independently of log-file retention.
 
 ## Notifications
 
-1. Create a SMTP or webhook channel.
+1. Create an SMTP or webhook channel.
 2. Send a channel test.
 3. Create event rules for the events that should use the channel.
 
