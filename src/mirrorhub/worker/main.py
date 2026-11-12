@@ -32,10 +32,10 @@ from mirrorhub.queue.claim import ClaimedJob
 from mirrorhub.security.validators import validate_slug
 from mirrorhub.services import audit, export_jobs, logs
 from mirrorhub.settings import Settings, get_settings
-from mirrorhub.sync.adapters import FtpsyncAdapter
+from mirrorhub.sync.adapters import FtpsyncAdapter, RsyncAdapter
 from mirrorhub.sync.context import SyncExecutionContext
 from mirrorhub.sync.factory import build_sync_plan
-from mirrorhub.sync.plan import FtpsyncPlan
+from mirrorhub.sync.plan import FtpsyncPlan, RsyncPlan
 from mirrorhub.sync.result import SyncResult, SyncStatus
 from mirrorhub.worker import builders
 from mirrorhub.worker.runner import Runner
@@ -296,16 +296,22 @@ def _build_sync_plan(
     job: Job,
     repo: Repository,
     settings: Settings,
-) -> tuple[builders.BuildPlan, FtpsyncAdapter, FtpsyncPlan, datetime] | None:
+) -> (
+    tuple[builders.BuildPlan, FtpsyncAdapter | RsyncAdapter, FtpsyncPlan | RsyncPlan, datetime]
+    | None
+):
     """Build an adapter-based plan for supported sync methods."""
-    if job.type != "sync" or repo.tool != Tool.FTPSYNC:
+    if job.type != "sync" or repo.tool not in (Tool.FTPSYNC, Tool.RSYNC):
         return None
 
     sync_plan = build_sync_plan(job, repo, settings)
-    if not isinstance(sync_plan, FtpsyncPlan):
-        raise ExportError("ftpsync plan factory returned an unexpected plan type")
+    if isinstance(sync_plan, FtpsyncPlan):
+        adapter: FtpsyncAdapter | RsyncAdapter = FtpsyncAdapter()
+    elif isinstance(sync_plan, RsyncPlan):
+        adapter = RsyncAdapter()
+    else:
+        raise ExportError("sync plan factory returned an unexpected plan type")
 
-    adapter = FtpsyncAdapter()
     adapter.validate_plan(sync_plan)
 
     context = SyncExecutionContext(

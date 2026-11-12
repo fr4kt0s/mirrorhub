@@ -45,6 +45,10 @@ class RsyncPlan(SyncPlan):
     """Plan for an rsync-based repository mirror."""
 
     adapter: Literal[Tool.RSYNC]
+    source_protocol: Literal["rsync"]
+    repository_kind: str
+    suites: tuple[str, ...] = ()
+    architectures: tuple[str, ...] = ()
     include_patterns: tuple[str, ...] = ()
     exclude_patterns: tuple[str, ...] = ()
     bwlimit_kbps: int = Field(default=0, ge=0)
