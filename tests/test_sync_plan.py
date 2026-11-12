@@ -14,6 +14,7 @@ def _ftpsync_plan_kwargs() -> dict:
         "repository_id": 2,
         "slug": "debian",
         "adapter": Tool.FTPSYNC,
+        "source_protocol": "rsync",
         "upstream_host": "deb.debian.org",
         "upstream_root": "debian",
         "target": Path("/data/debian"),
@@ -27,6 +28,7 @@ def test_ftpsync_plan_accepts_valid_configuration() -> None:
     plan = FtpsyncPlan(**_ftpsync_plan_kwargs())
 
     assert plan.adapter == Tool.FTPSYNC
+    assert plan.source_protocol == "rsync"
     assert plan.architectures == ("amd64", "arm64")
     assert plan.bwlimit_kbps == 0
 
@@ -39,6 +41,14 @@ def test_ftpsync_plan_requires_at_least_one_architecture() -> None:
         FtpsyncPlan(**kwargs)
 
 
+def test_ftpsync_plan_rejects_unsupported_source_protocol() -> None:
+    kwargs = _ftpsync_plan_kwargs()
+    kwargs["source_protocol"] = "https"
+
+    with pytest.raises(ValidationError):
+        FtpsyncPlan(**kwargs)
+
+
 def test_rsync_plan_rejects_negative_bandwidth_limit() -> None:
     with pytest.raises(ValidationError):
         RsyncPlan(
@@ -46,6 +56,7 @@ def test_rsync_plan_rejects_negative_bandwidth_limit() -> None:
             repository_id=2,
             slug="example",
             adapter=Tool.RSYNC,
+            source_protocol="rsync",
             upstream_host="rsync.example.org",
             upstream_root="module",
             target=Path("/data/example"),
