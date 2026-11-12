@@ -72,3 +72,14 @@ class DebmirrorPlan(SyncPlan):
     exclude_patterns: tuple[str, ...] = ()
     bwlimit_kbps: int = Field(default=0, ge=0)
     extra_args: tuple[str, ...] = ()
+
+
+class WgetPlan(SyncPlan):
+    """Plan for a complete HTTP directory-tree mirror retrieved with wget."""
+
+    adapter: Literal[Tool.WGET]
+    source_protocol: Literal["http", "https"]
+    include_regex: str = ""
+    exclude_regex: str = ""
+    bwlimit_kbps: int = Field(default=0, ge=0)
+    extra_args: tuple[str, ...] = ()

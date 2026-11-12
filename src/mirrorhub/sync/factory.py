@@ -6,7 +6,13 @@ from mirrorhub.enums import Method, Tool
 from mirrorhub.models import Job, Repository
 from mirrorhub.settings import Settings
 from mirrorhub.sync.errors import SyncConfigurationError
-from mirrorhub.sync.plan import DebmirrorPlan, FtpsyncPlan, RsyncPlan, SyncPlan
+from mirrorhub.sync.plan import (
+    DebmirrorPlan,
+    FtpsyncPlan,
+    RsyncPlan,
+    SyncPlan,
+    WgetPlan,
+)
 from mirrorhub.worker.builders.base import resolve_paths
 
 
@@ -155,6 +161,50 @@ def build_debmirror_plan(
         raise SyncConfigurationError(str(exc)) from exc
 
 
+def build_wget_plan(
+    job: Job,
+    repository: Repository,
+    settings: Settings,
+) -> WgetPlan:
+    """Create a wget plan from a sync job and its repository."""
+    if job.type != "sync":
+        raise SyncConfigurationError("wget plans can only be built for sync jobs")
+
+    if repository.tool != Tool.WGET:
+        raise SyncConfigurationError(
+            f"repository tool {repository.tool} cannot use the wget adapter"
+        )
+
+    if repository.method not in (Method.HTTP, Method.HTTPS):
+        raise SyncConfigurationError(f"wget requires http or https, got {repository.method}")
+
+    target = resolve_paths(repository, job, settings)
+    work_dir = settings.tmp_dir / "wget" / repository.slug
+    log_dir = work_dir / "log"
+
+    try:
+        return WgetPlan(
+            job_id=job.id or 0,
+            repository_id=repository.id or 0,
+            slug=repository.slug,
+            adapter=Tool.WGET,
+            source_protocol=repository.method,
+            upstream_host=repository.upstream_host,
+            upstream_root=repository.upstream_root,
+            target=target,
+            work_dir=work_dir,
+            log_dir=log_dir,
+            dry_run=job.dry_run,
+            attempt=job.attempt,
+            include_regex=repository.include_regex,
+            exclude_regex=repository.exclude_regex,
+            bwlimit_kbps=repository.bwlimit_kbps,
+            extra_args=tuple(repository.extra_args),
+        )
+    except ValueError as exc:
+        raise SyncConfigurationError(str(exc)) from exc
+
+
 def build_sync_plan(
     job: Job,
     repository: Repository,
@@ -168,5 +218,7 @@ def build_sync_plan(
             return build_rsync_plan(job, repository, settings)
         case Tool.DEBMIRROR:
             return build_debmirror_plan(job, repository, settings)
+        case Tool.WGET:
+            return build_wget_plan(job, repository, settings)
         case _:
             raise SyncConfigurationError(f"no sync plan factory registered for {repository.tool}")

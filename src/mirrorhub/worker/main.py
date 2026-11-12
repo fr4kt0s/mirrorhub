@@ -32,10 +32,20 @@ from mirrorhub.queue.claim import ClaimedJob
 from mirrorhub.security.validators import validate_slug
 from mirrorhub.services import audit, export_jobs, logs
 from mirrorhub.settings import Settings, get_settings
-from mirrorhub.sync.adapters import DebmirrorAdapter, FtpsyncAdapter, RsyncAdapter
+from mirrorhub.sync.adapters import (
+    DebmirrorAdapter,
+    FtpsyncAdapter,
+    RsyncAdapter,
+    WgetAdapter,
+)
 from mirrorhub.sync.context import SyncExecutionContext
 from mirrorhub.sync.factory import build_sync_plan
-from mirrorhub.sync.plan import DebmirrorPlan, FtpsyncPlan, RsyncPlan
+from mirrorhub.sync.plan import (
+    DebmirrorPlan,
+    FtpsyncPlan,
+    RsyncPlan,
+    WgetPlan,
+)
 from mirrorhub.sync.result import SyncResult, SyncStatus
 from mirrorhub.worker import builders
 from mirrorhub.worker.runner import Runner
@@ -299,23 +309,30 @@ def _build_sync_plan(
 ) -> (
     tuple[
         builders.BuildPlan,
-        DebmirrorAdapter | FtpsyncAdapter | RsyncAdapter,
-        DebmirrorPlan | FtpsyncPlan | RsyncPlan,
+        DebmirrorAdapter | FtpsyncAdapter | RsyncAdapter | WgetAdapter,
+        DebmirrorPlan | FtpsyncPlan | RsyncPlan | WgetPlan,
         datetime,
     ]
     | None
 ):
     """Build an adapter-based plan for supported sync methods."""
-    if job.type != "sync" or repo.tool not in (Tool.FTPSYNC, Tool.RSYNC, Tool.DEBMIRROR):
+    if job.type != "sync" or repo.tool not in (
+        Tool.FTPSYNC,
+        Tool.RSYNC,
+        Tool.DEBMIRROR,
+        Tool.WGET,
+    ):
         return None
 
     sync_plan = build_sync_plan(job, repo, settings)
     if isinstance(sync_plan, FtpsyncPlan):
-        adapter: DebmirrorAdapter | FtpsyncAdapter | RsyncAdapter = FtpsyncAdapter()
+        adapter: DebmirrorAdapter | FtpsyncAdapter | RsyncAdapter | WgetAdapter = FtpsyncAdapter()
     elif isinstance(sync_plan, RsyncPlan):
         adapter = RsyncAdapter()
     elif isinstance(sync_plan, DebmirrorPlan):
         adapter = DebmirrorAdapter()
+    elif isinstance(sync_plan, WgetPlan):
+        adapter = WgetAdapter()
     else:
         raise ExportError("sync plan factory returned an unexpected plan type")
 

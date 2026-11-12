@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from mirrorhub.enums import Tool
 from mirrorhub.sync.errors import SyncConfigurationError
-from mirrorhub.sync.plan import DebmirrorPlan, FtpsyncPlan, RsyncPlan
+from mirrorhub.sync.plan import DebmirrorPlan, FtpsyncPlan, RsyncPlan, WgetPlan
 
 
 def _ftpsync_plan_kwargs() -> dict:
@@ -57,6 +57,21 @@ def _debmirror_plan_kwargs() -> dict:
         "sections": ("main",),
         "diff_mode": "rsync",
         "cleanup_mode": "post",
+    }
+
+
+def _wget_plan_kwargs() -> dict:
+    return {
+        "job_id": 1,
+        "repository_id": 2,
+        "slug": "example-tree",
+        "adapter": Tool.WGET,
+        "source_protocol": "https",
+        "upstream_host": "example.org",
+        "upstream_root": "/linux/dists",
+        "target": Path("/data/example-tree"),
+        "work_dir": Path("/tmp/example-tree"),
+        "log_dir": Path("/tmp/example-tree/log"),
     }
 
 
@@ -171,6 +186,52 @@ def test_debmirror_plan_rejects_unsupported_source_protocol() -> None:
 
     with pytest.raises(ValidationError):
         DebmirrorPlan(**kwargs)
+
+
+def test_wget_plan_accepts_valid_configuration() -> None:
+    plan = WgetPlan(**_wget_plan_kwargs())
+
+    assert plan.adapter == Tool.WGET
+    assert plan.source_protocol == "https"
+    assert plan.include_regex == ""
+    assert plan.exclude_regex == ""
+    assert plan.bwlimit_kbps == 0
+    assert plan.extra_args == ()
+
+
+def test_wget_plan_accepts_filters_and_bandwidth_limit() -> None:
+    kwargs = _wget_plan_kwargs()
+    kwargs.update(
+        {
+            "include_regex": r"\\.iso$",
+            "exclude_regex": r"/archive/",
+            "bwlimit_kbps": 2048,
+            "extra_args": ("--no-check-certificate",),
+        }
+    )
+
+    plan = WgetPlan(**kwargs)
+
+    assert plan.include_regex == r"\\.iso$"
+    assert plan.exclude_regex == r"/archive/"
+    assert plan.bwlimit_kbps == 2048
+    assert plan.extra_args == ("--no-check-certificate",)
+
+
+def test_wget_plan_rejects_unsupported_source_protocol() -> None:
+    kwargs = _wget_plan_kwargs()
+    kwargs["source_protocol"] = "rsync"
+
+    with pytest.raises(ValidationError):
+        WgetPlan(**kwargs)
+
+
+def test_wget_plan_rejects_negative_bandwidth_limit() -> None:
+    kwargs = _wget_plan_kwargs()
+    kwargs["bwlimit_kbps"] = -1
+
+    with pytest.raises(ValidationError):
+        WgetPlan(**kwargs)
 
 
 def test_sync_configuration_error_has_config_code() -> None:
