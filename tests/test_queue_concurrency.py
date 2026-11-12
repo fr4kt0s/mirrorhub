@@ -29,7 +29,7 @@ def _enqueue(slug: str, count: int) -> None:
         db.commit()
 
 
-def _race(workers: int, limit: int) -> list[int]:
+def _race(workers: int, limit: int, global_limit: int) -> list[int]:
     barrier = threading.Barrier(workers)
 
     def attempt(index: int) -> int | None:
@@ -38,6 +38,7 @@ def _race(workers: int, limit: int) -> list[int]:
             worker_id=f"concurrent-{index}",
             tool="debmirror",
             limit=limit,
+            global_limit=global_limit,
         )
         return claimed.id if claimed else None
 
@@ -51,7 +52,7 @@ def test_concurrent_claims_allow_only_one_job_per_repo(
     configured: Settings,
 ) -> None:
     _enqueue("same-repository", 8)
-    winners = _race(workers=8, limit=8)
+    winners = _race(workers=8, limit=8, global_limit=8)
     assert len(winners) == 1
 
     with Session(get_engine()) as db:
@@ -64,9 +65,23 @@ def test_concurrent_claims_respect_global_limit(
     for index in range(8):
         _enqueue(f"repository-{index}", 1)
 
-    winners = _race(workers=8, limit=2)
+    winners = _race(workers=8, limit=2, global_limit=2)
     assert len(winners) == 2
     assert len(set(winners)) == 2
 
     with Session(get_engine()) as db:
         assert len(db.exec(select(RepoLock)).all()) == 2
+
+
+def test_worker_limit_does_not_reduce_global_parallelism(
+    configured: Settings,
+) -> None:
+    for index in range(4):
+        _enqueue(f"repository-{index}", 1)
+
+    winners = _race(workers=4, limit=1, global_limit=4)
+    assert len(winners) == 4
+    assert len(set(winners)) == 4
+
+    with Session(get_engine()) as db:
+        assert len(db.exec(select(RepoLock)).all()) == 4

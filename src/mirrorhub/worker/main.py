@@ -586,6 +586,7 @@ def main() -> int:
                 worker_id=worker_id,
                 tools=tools,
                 limit=worker_concurrency,
+                global_limit=settings.global_concurrency,
             )
             if claimed is None:
                 stopping.wait(POLL_SECONDS)

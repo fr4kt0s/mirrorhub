@@ -48,6 +48,7 @@ def claim_next(
     tool: str | None = None,
     tools: Iterable[Tool] | None = None,
     limit: int,
+    global_limit: int | None = None,
     now: datetime | None = None,
 ) -> ClaimedJob | None:
     """Claim the oldest eligible job for the supported tools.
@@ -55,6 +56,9 @@ def claim_next(
     ``tool`` remains supported for single-tool workers. ``tools`` is the
     capability-based interface used by a generic worker that can execute
     several sync methods.
+
+    ``limit`` is the maximum number of jobs this individual worker may run.
+    ``global_limit`` is the maximum number of jobs all workers may run.
     """
     now = now or utcnow()
     tool_set = frozenset(tools) if tools is not None else None
@@ -70,7 +74,14 @@ def claim_next(
             running_filter.append(col(Job.tool) == tool)
 
         running = db.exec(select(func.count()).select_from(Job).where(*running_filter)).one()
-        if int(running) >= max(limit, 1):
+        if global_limit is not None and int(running) >= max(global_limit, 1):
+            return None
+
+        worker_running_filter = [*running_filter, col(Job.claimed_by) == worker_id]
+        worker_running = db.exec(
+            select(func.count()).select_from(Job).where(*worker_running_filter)
+        ).one()
+        if int(worker_running) >= max(limit, 1):
             return None
 
         candidate_filter = [
@@ -139,8 +150,7 @@ def heartbeat(
         job.heartbeat_at = now
         if progress_pct is not None:
             job.progress_pct = max(0.0, min(float(progress_pct), 100.0))
-        if progress_text is not None:
-            job.progress_text = progress_text[:500]
+        job.progress_text = (job.progress_text or "")[:500]
         db.add(job)
         lock = db.get(RepoLock, job.repo_id)
         if lock is not None and lock.job_id == job_id:
