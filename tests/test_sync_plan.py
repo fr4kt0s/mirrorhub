@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from mirrorhub.enums import Tool
 from mirrorhub.sync.errors import SyncConfigurationError
-from mirrorhub.sync.plan import FtpsyncPlan, RsyncPlan
+from mirrorhub.sync.plan import DebmirrorPlan, FtpsyncPlan, RsyncPlan
 
 
 def _ftpsync_plan_kwargs() -> dict:
@@ -32,11 +32,31 @@ def _rsync_plan_kwargs() -> dict:
         "adapter": Tool.RSYNC,
         "source_protocol": "rsync",
         "upstream_host": "rsync.example.org",
-        "upstream_root": "module",
+        "upstream_root": "/module",
         "target": Path("/data/example"),
         "work_dir": Path("/tmp/example"),
         "log_dir": Path("/tmp/example/log"),
         "repository_kind": "generic",
+    }
+
+
+def _debmirror_plan_kwargs() -> dict:
+    return {
+        "job_id": 1,
+        "repository_id": 2,
+        "slug": "ubuntu",
+        "adapter": Tool.DEBMIRROR,
+        "source_protocol": "https",
+        "upstream_host": "archive.ubuntu.com",
+        "upstream_root": "/ubuntu",
+        "target": Path("/data/ubuntu"),
+        "work_dir": Path("/tmp/ubuntu"),
+        "log_dir": Path("/tmp/ubuntu/log"),
+        "architectures": ("amd64",),
+        "suites": ("noble",),
+        "sections": ("main",),
+        "diff_mode": "rsync",
+        "cleanup_mode": "post",
     }
 
 
@@ -107,6 +127,50 @@ def test_rsync_plan_rejects_negative_bandwidth_limit() -> None:
 
     with pytest.raises(ValidationError):
         RsyncPlan(**kwargs)
+
+
+def test_debmirror_plan_accepts_valid_configuration() -> None:
+    plan = DebmirrorPlan(**_debmirror_plan_kwargs())
+
+    assert plan.adapter == Tool.DEBMIRROR
+    assert plan.source_protocol == "https"
+    assert plan.architectures == ("amd64",)
+    assert plan.suites == ("noble",)
+    assert plan.sections == ("main",)
+    assert plan.include_source is False
+    assert plan.verify_signatures is False
+
+
+def test_debmirror_plan_requires_architecture() -> None:
+    kwargs = _debmirror_plan_kwargs()
+    kwargs["architectures"] = ()
+
+    with pytest.raises(ValidationError):
+        DebmirrorPlan(**kwargs)
+
+
+def test_debmirror_plan_requires_suite() -> None:
+    kwargs = _debmirror_plan_kwargs()
+    kwargs["suites"] = ()
+
+    with pytest.raises(ValidationError):
+        DebmirrorPlan(**kwargs)
+
+
+def test_debmirror_plan_requires_section() -> None:
+    kwargs = _debmirror_plan_kwargs()
+    kwargs["sections"] = ()
+
+    with pytest.raises(ValidationError):
+        DebmirrorPlan(**kwargs)
+
+
+def test_debmirror_plan_rejects_unsupported_source_protocol() -> None:
+    kwargs = _debmirror_plan_kwargs()
+    kwargs["source_protocol"] = "ftp"
+
+    with pytest.raises(ValidationError):
+        DebmirrorPlan(**kwargs)
 
 
 def test_sync_configuration_error_has_config_code() -> None:

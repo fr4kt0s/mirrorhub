@@ -53,3 +53,22 @@ class RsyncPlan(SyncPlan):
     exclude_patterns: tuple[str, ...] = ()
     bwlimit_kbps: int = Field(default=0, ge=0)
     extra_args: tuple[str, ...] = ()
+
+
+class DebmirrorPlan(SyncPlan):
+    """Plan for a Debian or Ubuntu repository mirrored with debmirror."""
+
+    adapter: Literal[Tool.DEBMIRROR]
+    source_protocol: Literal["http", "https", "rsync"]
+    architectures: tuple[str, ...] = Field(min_length=1)
+    suites: tuple[str, ...] = Field(min_length=1)
+    sections: tuple[str, ...] = Field(min_length=1)
+    include_source: bool = False
+    diff_mode: str
+    verify_signatures: bool = False
+    cleanup_mode: str
+    rsync_extra: tuple[str, ...] = ()
+    include_patterns: tuple[str, ...] = ()
+    exclude_patterns: tuple[str, ...] = ()
+    bwlimit_kbps: int = Field(default=0, ge=0)
+    extra_args: tuple[str, ...] = ()
