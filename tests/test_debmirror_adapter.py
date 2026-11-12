@@ -104,8 +104,11 @@ def test_debmirror_adapter_builds_signature_verification() -> None:
     built = DebmirrorAdapter().build_plan(plan, _context(plan))
 
     argv = list(built.steps[0].argv)
+    keyring_options = [arg for arg in argv if arg.startswith("--keyring=")]
+
     assert "--check-gpg" in argv
-    assert "--keyring=/tmp/gnupg/trustedkeys.gpg" in argv
+    assert len(keyring_options) == 1
+    assert keyring_options[0].endswith("/trustedkeys.gpg")
     assert "--no-check-gpg" not in argv
 
 
