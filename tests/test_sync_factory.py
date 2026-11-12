@@ -6,6 +6,7 @@ from mirrorhub.enums import Method, Tool
 from mirrorhub.models import Job, Repository
 from mirrorhub.sync.errors import SyncConfigurationError
 from mirrorhub.sync.factory import build_ftpsync_plan, build_sync_plan
+from mirrorhub.sync.plan import FtpsyncPlan
 
 
 class _Settings:
@@ -55,7 +56,7 @@ def test_build_ftpsync_plan_maps_repository_configuration(tmp_path: Path) -> Non
     assert plan.log_dir == settings.tmp_dir / "ftpsync" / "debian" / "log"
 
 
-def test_build_ftpsync_plan_rejects_wrong_tool() -> None:
+def test_build_ftpsync_plan_rejects_wrong_tool(tmp_path: Path) -> None:
     settings = _Settings(tmp_path)
     repository = _repository(tool=Tool.RSYNC)
     job = _job()
@@ -64,7 +65,7 @@ def test_build_ftpsync_plan_rejects_wrong_tool() -> None:
         build_ftpsync_plan(job, repository, settings)
 
 
-def test_build_ftpsync_plan_rejects_wrong_method() -> None:
+def test_build_ftpsync_plan_rejects_wrong_method(tmp_path: Path) -> None:
     settings = _Settings(tmp_path)
     repository = _repository(method=Method.HTTPS)
     job = _job()
