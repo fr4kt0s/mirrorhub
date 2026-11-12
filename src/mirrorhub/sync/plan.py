@@ -19,6 +19,7 @@ class SyncPlan(BaseModel):
     repository_id: int
     slug: str
     adapter: Tool
+    source_protocol: str
     upstream_host: str
     upstream_root: str
     target: Path
@@ -33,6 +34,7 @@ class FtpsyncPlan(SyncPlan):
     """Plan for an FTPsync-based Debian archive mirror."""
 
     adapter: Literal[Tool.FTPSYNC]
+    source_protocol: Literal["rsync"]
     architectures: tuple[str, ...] = ()
     exclude_patterns: tuple[str, ...] = ()
     bwlimit_kbps: int = Field(default=0, ge=0)

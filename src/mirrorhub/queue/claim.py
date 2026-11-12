@@ -8,6 +8,7 @@ and a concurrent worker either sees the lock or blocks until the transaction end
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -16,7 +17,7 @@ from sqlalchemy import func
 from sqlmodel import col, select
 
 from mirrorhub.db import immediate_session
-from mirrorhub.enums import JobStatus, Trigger
+from mirrorhub.enums import JobStatus, Tool, Trigger
 from mirrorhub.models import Job, RepoLock, Repository, utcnow
 from mirrorhub.queue import retry as retry_mod
 
@@ -42,26 +43,54 @@ def _release_lock(db: Any, job_id: int) -> None:
 
 
 def claim_next(
-    *, worker_id: str, tool: str, limit: int, now: datetime | None = None
+    *,
+    worker_id: str,
+    tool: str | None = None,
+    tools: Iterable[Tool] | None = None,
+    limit: int,
+    now: datetime | None = None,
 ) -> ClaimedJob | None:
-    """Claim the oldest eligible job for this tool, respecting the global concurrency limit."""
+    """Claim the oldest eligible job for the supported tools.
+
+    ``tool`` remains supported for single-tool workers. ``tools`` is the
+    capability-based interface used by a generic worker that can execute
+    several sync methods.
+    """
     now = now or utcnow()
+    tool_set = frozenset(tools) if tools is not None else None
+
+    if tool_set is not None and not tool_set:
+        return None
+
     with immediate_session() as db:
+        running_filter = [col(Job.status) == JobStatus.RUNNING.value]
+        if tool_set is not None:
+            running_filter.append(col(Job.tool).in_([item.value for item in tool_set]))
+        elif tool is not None:
+            running_filter.append(col(Job.tool) == tool)
+
         running = db.exec(
-            select(func.count()).select_from(Job).where(col(Job.status) == JobStatus.RUNNING.value)
+            select(func.count()).select_from(Job).where(*running_filter)
         ).one()
         if int(running) >= max(limit, 1):
             return None
+
+        candidate_filter = [
+            col(Job.status) == JobStatus.QUEUED.value,
+            col(Job.next_run_at) <= now,
+        ]
+        if tool_set is not None:
+            candidate_filter.append(col(Job.tool).in_([item.value for item in tool_set]))
+        elif tool is not None:
+            candidate_filter.append(col(Job.tool) == tool)
+
         candidates = db.exec(
             select(Job)
-            .where(
-                col(Job.status) == JobStatus.QUEUED.value,
-                col(Job.tool) == tool,
-                col(Job.next_run_at) <= now,
-            )
+            .where(*candidate_filter)
             .order_by(col(Job.next_run_at), col(Job.id))
             .limit(50)
         ).all()
+
         for job in candidates:
             if job.id is None:
                 continue
