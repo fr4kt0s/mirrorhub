@@ -18,7 +18,7 @@ def _plan(**overrides: object) -> RsyncPlan:
         "adapter": Tool.RSYNC,
         "source_protocol": "rsync",
         "upstream_host": "rsync.example.org",
-        "upstream_root": "module",
+        "upstream_root": "/module",
         "target": Path("/data/example"),
         "work_dir": Path("/tmp/example"),
         "log_dir": Path("/tmp/example/log"),
