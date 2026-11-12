@@ -22,6 +22,9 @@ def test_capability_worker_claims_multiple_tools(configured) -> None:
         ftpsync_repo = _repo(db, "debian", Tool.FTPSYNC)
         rsync_repo = _repo(db, "ubuntu", Tool.RSYNC)
 
+        ftpsync_repo_id = ftpsync_repo.id or 0
+        rsync_repo_id = rsync_repo.id or 0
+
         ftpsync_job_id = jobsvc.enqueue(db, ftpsync_repo, requested_by="test").id
         rsync_job_id = jobsvc.enqueue(db, rsync_repo, requested_by="test").id
 
@@ -46,8 +49,8 @@ def test_capability_worker_claims_multiple_tools(configured) -> None:
         locks = db.exec(select(RepoLock)).all()
         assert len(locks) == 2
         assert {lock.repo_id for lock in locks} == {
-            ftpsync_repo.id,
-            rsync_repo.id,
+            ftpsync_repo_id,
+            rsync_repo_id,
         }
 
 
