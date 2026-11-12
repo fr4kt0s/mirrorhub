@@ -58,6 +58,26 @@ class Runner:
 
     def run(self) -> RunResult:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.plan.cwd.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            log.exception(
+                "could not create sync work directory",
+                extra={"cwd": str(self.plan.cwd)},
+            )
+            with self.log_path.open("a", encoding="utf-8") as log_file:
+                log_file.write(
+                    f"error: could not create work directory "
+                    f"{self.plan.cwd}: {exc}\n"
+                )
+                log_file.write("# finished with exit code 127\n")
+            return RunResult(
+                exit_code=127,
+                cancelled=self._cancelled,
+                line_count=self._lines,
+                last_line=f"could not create work directory {self.plan.cwd}: {exc}",
+            )
+
         exit_code = 0
 
         with self.log_path.open("a", encoding="utf-8") as log_file:
@@ -112,8 +132,16 @@ class Runner:
                 start_new_session=True,
                 shell=False,
             )
-        except OSError:
-            log_file.write(f"error: could not start {step.argv[0]}\n")
+        except OSError as exc:
+            log.exception(
+                "could not start tool",
+                extra={
+                    "tool": step.argv[0],
+                    "cwd": str(self.plan.cwd),
+                    "argv": step.argv,
+                },
+            )
+            log_file.write(f"error: could not start {step.argv[0]}: {exc}\n")
             log_file.flush()
             return 127
 
