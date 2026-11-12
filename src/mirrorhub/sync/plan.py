@@ -35,7 +35,7 @@ class FtpsyncPlan(SyncPlan):
 
     adapter: Literal[Tool.FTPSYNC]
     source_protocol: Literal["rsync"]
-    architectures: tuple[str, ...] = ()
+    architectures: tuple[str, ...] = Field(min_length=1)
     exclude_patterns: tuple[str, ...] = ()
     bwlimit_kbps: int = Field(default=0, ge=0)
     extra_args: tuple[str, ...] = ()
