@@ -2,6 +2,7 @@
 
 from sqlmodel import Session, select
 
+from mirrorhub.db import get_engine
 from mirrorhub.enums import JobStatus, Tool
 from mirrorhub.models import Job, RepoLock, Repository
 from mirrorhub.queue import claim
