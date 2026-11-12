@@ -1,0 +1,225 @@
+
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.2.0, pluggy-1.7.0
+rootdir: /home/fido/Documents/projects/mirrorhub
+configfile: pyproject.toml
+plugins: anyio-4.16.0, cov-7.1.0
+collected 62 items
+
+tests/test_builders.py ...............                                   [ 24%]
+tests/test_repos.py ............F...F.....                               [ 59%]
+tests/test_wget_adapter.py .FFFF...                                      [ 72%]
+tests/test_sync_plan.py .................                                [100%]
+
+=================================== FAILURES ===================================
+______________________ test_preset_page_and_clone_prefill ______________________
+
+admin = <starlette.testclient.TestClient object at 0x7d920bf692e0>
+
+    def test_preset_page_and_clone_prefill(admin: TestClient) -> None:
+        page = admin.get("/presets")
+        assert page.status_code == 200
+        assert "Debian 12 (bookworm)" in page.text
+        with Session(get_engine()) as db:
+            preset = db.exec(select(Preset).where(Preset.name == "Ubuntu 24.04 LTS (noble)")).first()
+        assert preset is not None
+        form = admin.get(f"/repos/new?preset={preset.id}")
+        assert form.status_code == 200
+>       assert "archive.ubuntu.com" in form.text
+E       assert 'archive.ubuntu.com' in '<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-wi...c toolset.</p>\n  </a>\n</div>\n\n  </main>\n  <footer class="footer muted">MirrorHub 0.1.0</footer>\n</body>\n</html>'
+E        +  where '<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-wi...c toolset.</p>\n  </a>\n</div>\n\n  </main>\n  <footer class="footer muted">MirrorHub 0.1.0</footer>\n</body>\n</html>' = <Response [200 OK]>.text
+
+tests/test_repos.py:174: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-11-12 23:37:19,392 INFO    mirrorhub.web: web started
+2026-11-12 23:37:19,393 INFO    mirrorhub.scheduler: scheduler loop started
+2026-11-12 23:37:19,404 INFO    httpx2: HTTP Request: GET https://testserver/login "HTTP/1.1 200 OK"
+2026-11-12 23:37:19,474 INFO    httpx2: HTTP Request: POST https://testserver/login "HTTP/1.1 303 See Other"
+----------------------------- Captured stderr call -----------------------------
+2026-11-12 23:37:19,503 INFO    httpx2: HTTP Request: GET https://testserver/presets "HTTP/1.1 200 OK"
+2026-11-12 23:37:19,509 INFO    httpx2: HTTP Request: GET https://testserver/repos/new?preset=2 "HTTP/1.1 200 OK"
+------------------------------ Captured log call -------------------------------
+INFO     httpx2:_client.py:1084 HTTP Request: GET https://testserver/presets "HTTP/1.1 200 OK"
+INFO     httpx2:_client.py:1084 HTTP Request: GET https://testserver/repos/new?preset=2 "HTTP/1.1 200 OK"
+__________________________ test_wget_requires_entries __________________________
+
+admin = <starlette.testclient.TestClient object at 0x7d920bc4f2c0>
+csrf_token = '46ceef0371aff2506aa3f2f511f39e0b3a701f22592cac4f0c91c241bd27b453'
+
+    def test_wget_requires_entries(admin: TestClient, csrf_token: str) -> None:
+        form = _form(
+            slug="files",
+            name="Files",
+            kind="generic",
+            tool="wget",
+            method="https",
+            upstream_root="/",
+            suites="",
+            sections="",
+            architectures="none",
+            extra_files="",
+        )
+        response = _post(admin, csrf_token, "/repos", form)
+        assert response.status_code == 400
+>       assert "wget mirrors need at least one URL -> path entry" in response.text
+E       assert 'wget mirrors need at least one URL -> path entry' in '<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-wi...s">Cancel</a>\n</div>\n</form>\n\n  </main>\n  <footer class="footer muted">MirrorHub 0.1.0</footer>\n</body>\n</html>'
+E        +  where '<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-wi...s">Cancel</a>\n</div>\n</form>\n\n  </main>\n  <footer class="footer muted">MirrorHub 0.1.0</footer>\n</body>\n</html>' = <Response [400 Bad Request]>.text
+
+tests/test_repos.py:245: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-11-12 23:37:20,466 INFO    mirrorhub.web: web started
+2026-11-12 23:37:20,467 INFO    mirrorhub.scheduler: scheduler loop started
+2026-11-12 23:37:20,483 INFO    httpx2: HTTP Request: GET https://testserver/login "HTTP/1.1 200 OK"
+2026-11-12 23:37:20,552 INFO    httpx2: HTTP Request: POST https://testserver/login "HTTP/1.1 303 See Other"
+2026-11-12 23:37:20,562 INFO    httpx2: HTTP Request: GET https://testserver/ "HTTP/1.1 200 OK"
+----------------------------- Captured stderr call -----------------------------
+2026-11-12 23:37:20,573 INFO    httpx2: HTTP Request: POST https://testserver/repos "HTTP/1.1 400 Bad Request"
+------------------------------ Captured log call -------------------------------
+INFO     httpx2:_client.py:1084 HTTP Request: POST https://testserver/repos "HTTP/1.1 400 Bad Request"
+___________________ test_wget_adapter_builds_https_tree_plan ___________________
+
+    def test_wget_adapter_builds_https_tree_plan() -> None:
+        plan = _plan()
+>       built = WgetAdapter().build_plan(plan, _context(plan))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_wget_adapter.py:72: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/mirrorhub/sync/adapters/wget.py:36: in build_plan
+    return build_wget(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+repo = namespace(upstream_host='example.org', upstream_root='/linux/dists', method='https', include_regex='', exclude_regex='', bwlimit_kbps=0, extra_args=())
+job = namespace(dry_run=False), target = PosixPath('/data/example-tree')
+cwd = PosixPath('/tmp/example-tree')
+
+    def build(repo: Repository, job: Job, target: Path, cwd: Path) -> BuildPlan:
+        error = validators.validate_host(repo.upstream_host) or validators.validate_root(
+            repo.upstream_root
+        )
+        if error:
+            raise BuildError(error)
+        if repo.method not in ("http", "https"):
+            raise BuildError("wget supports http and https only")
+        error = validators.validate_extra_args("wget", repo.extra_args)
+        if error:
+            raise BuildError(error)
+    
+>       if repo.extra_files:
+           ^^^^^^^^^^^^^^^^
+E       AttributeError: 'types.SimpleNamespace' object has no attribute 'extra_files'. Did you mean: 'extra_args'?
+
+src/mirrorhub/worker/builders/wget.py:37: AttributeError
+____________________ test_wget_adapter_builds_regex_filters ____________________
+
+    def test_wget_adapter_builds_regex_filters() -> None:
+        plan = _plan(
+            include_regex=r"\\.iso$",
+            exclude_regex=r"/archive/",
+        )
+>       built = WgetAdapter().build_plan(plan, _context(plan))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_wget_adapter.py:91: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/mirrorhub/sync/adapters/wget.py:36: in build_plan
+    return build_wget(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+repo = namespace(upstream_host='example.org', upstream_root='/linux/dists', method='https', include_regex='\\\\.iso$', exclude_regex='/archive/', bwlimit_kbps=0, extra_args=())
+job = namespace(dry_run=False), target = PosixPath('/data/example-tree')
+cwd = PosixPath('/tmp/example-tree')
+
+    def build(repo: Repository, job: Job, target: Path, cwd: Path) -> BuildPlan:
+        error = validators.validate_host(repo.upstream_host) or validators.validate_root(
+            repo.upstream_root
+        )
+        if error:
+            raise BuildError(error)
+        if repo.method not in ("http", "https"):
+            raise BuildError("wget supports http and https only")
+        error = validators.validate_extra_args("wget", repo.extra_args)
+        if error:
+            raise BuildError(error)
+    
+>       if repo.extra_files:
+           ^^^^^^^^^^^^^^^^
+E       AttributeError: 'types.SimpleNamespace' object has no attribute 'extra_files'. Did you mean: 'extra_args'?
+
+src/mirrorhub/worker/builders/wget.py:37: AttributeError
+___________________ test_wget_adapter_builds_bandwidth_limit ___________________
+
+    def test_wget_adapter_builds_bandwidth_limit() -> None:
+        plan = _plan(bwlimit_kbps=2048)
+>       built = WgetAdapter().build_plan(plan, _context(plan))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_wget_adapter.py:103: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/mirrorhub/sync/adapters/wget.py:36: in build_plan
+    return build_wget(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+repo = namespace(upstream_host='example.org', upstream_root='/linux/dists', method='https', include_regex='', exclude_regex='', bwlimit_kbps=2048, extra_args=())
+job = namespace(dry_run=False), target = PosixPath('/data/example-tree')
+cwd = PosixPath('/tmp/example-tree')
+
+    def build(repo: Repository, job: Job, target: Path, cwd: Path) -> BuildPlan:
+        error = validators.validate_host(repo.upstream_host) or validators.validate_root(
+            repo.upstream_root
+        )
+        if error:
+            raise BuildError(error)
+        if repo.method not in ("http", "https"):
+            raise BuildError("wget supports http and https only")
+        error = validators.validate_extra_args("wget", repo.extra_args)
+        if error:
+            raise BuildError(error)
+    
+>       if repo.extra_files:
+           ^^^^^^^^^^^^^^^^
+E       AttributeError: 'types.SimpleNamespace' object has no attribute 'extra_files'. Did you mean: 'extra_args'?
+
+src/mirrorhub/worker/builders/wget.py:37: AttributeError
+_______________________ test_wget_adapter_builds_dry_run _______________________
+
+    def test_wget_adapter_builds_dry_run() -> None:
+        plan = _plan(dry_run=True)
+>       built = WgetAdapter().build_plan(plan, _context(plan))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_wget_adapter.py:110: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/mirrorhub/sync/adapters/wget.py:36: in build_plan
+    return build_wget(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+repo = namespace(upstream_host='example.org', upstream_root='/linux/dists', method='https', include_regex='', exclude_regex='', bwlimit_kbps=0, extra_args=())
+job = namespace(dry_run=True), target = PosixPath('/data/example-tree')
+cwd = PosixPath('/tmp/example-tree')
+
+    def build(repo: Repository, job: Job, target: Path, cwd: Path) -> BuildPlan:
+        error = validators.validate_host(repo.upstream_host) or validators.validate_root(
+            repo.upstream_root
+        )
+        if error:
+            raise BuildError(error)
+        if repo.method not in ("http", "https"):
+            raise BuildError("wget supports http and https only")
+        error = validators.validate_extra_args("wget", repo.extra_args)
+        if error:
+            raise BuildError(error)
+    
+>       if repo.extra_files:
+           ^^^^^^^^^^^^^^^^
+E       AttributeError: 'types.SimpleNamespace' object has no attribute 'extra_files'. Did you mean: 'extra_args'?
+
+src/mirrorhub/worker/builders/wget.py:37: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_repos.py::test_preset_page_and_clone_prefill - assert 'arch...
+FAILED tests/test_repos.py::test_wget_requires_entries - assert 'wget mirrors...
+FAILED tests/test_wget_adapter.py::test_wget_adapter_builds_https_tree_plan
+FAILED tests/test_wget_adapter.py::test_wget_adapter_builds_regex_filters - A...
+FAILED tests/test_wget_adapter.py::test_wget_adapter_builds_bandwidth_limit
+FAILED tests/test_wget_adapter.py::test_wget_adapter_builds_dry_run - Attribu...
+========================= 6 failed, 56 passed in 6.41s =========================
