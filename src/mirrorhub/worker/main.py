@@ -41,6 +41,7 @@ from mirrorhub.worker import builders
 from mirrorhub.worker.runner import Runner
 
 log = logging.getLogger("mirrorhub.worker")
+SYNC_TOOLS = (Tool.FTPSYNC, Tool.RSYNC, Tool.DEBMIRROR, Tool.WGET)
 TOOLS = ("debmirror", "rsync", "wget", "ftpsync", "export")
 POLL_SECONDS = 3.0
 
@@ -511,10 +512,34 @@ def _health_loop(stop: threading.Event) -> None:
         stop.wait(5)
 
 
+def _parse_tools(value: str) -> tuple[Tool, ...]:
+    try:
+        tools = tuple(Tool(name.strip()) for name in value.split(",") if name.strip())
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"unsupported tool: {exc}") from exc
+
+    if not tools:
+        raise argparse.ArgumentTypeError("at least one tool is required")
+    return tools
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="mirrorhub-worker")
-    parser.add_argument("--tool", required=True, choices=TOOLS)
+    parser.add_argument(
+        "--tool",
+        choices=TOOLS,
+        help="Run a single-tool worker (deprecated; use --tools instead).",
+    )
+    parser.add_argument(
+        "--tools",
+        type=_parse_tools,
+        default="ftpsync,rsync,debmirror,wget",
+        help="Comma-separated sync tools handled by this worker.",
+    )
     arguments = parser.parse_args()
+
+    tools = (Tool(arguments.tool),) if arguments.tool else arguments.tools
+    worker_concurrency = int(os.getenv("MIRRORHUB_WORKER_CONCURRENCY", "1"))
 
     settings = get_settings()
     settings.ensure_dirs()
@@ -535,15 +560,16 @@ def main() -> int:
         daemon=True,
     )
     health.start()
-    worker_id = f"{socket.gethostname()}:{os.getpid()}:{arguments.tool}:{secrets.token_hex(3)}"
+    capabilities = "-".join(sorted(tool.value for tool in tools))
+    worker_id = f"{socket.gethostname()}:{os.getpid()}:{capabilities}:{secrets.token_hex(3)}"
 
     try:
         while not stopping.is_set():
             claim.recover_stale(stale_after_s=settings.heartbeat_stale_s)
             claimed = claim.claim_next(
                 worker_id=worker_id,
-                tool=arguments.tool,
-                limit=settings.global_concurrency,
+                tools=tools,
+                limit=worker_concurrency,
             )
             if claimed is None:
                 stopping.wait(POLL_SECONDS)

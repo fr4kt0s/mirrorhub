@@ -75,71 +75,26 @@ services:
       retries: 3
       start_period: 30s
 
-  worker-debmirror:
+  # Universal sync worker: handles ftpsync, rsync, debmirror and wget.
+  # Scale horizontally with MIRRORHUB_WORKER_REPLICAS; repository-level
+  # database locks prevent concurrent syncs of the same repository.
+  worker:
     <<: *hardened
-    image: mirrorhub/worker-debmirror:${MIRRORHUB_TAG:-dev}
+    image: mirrorhub/worker:${MIRRORHUB_TAG:-dev}
     build:
       context: .
-      target: worker-debmirror
+      target: worker
       args: *build-args
     environment:
       MIRRORHUB_ROLE: worker
-      MIRRORHUB_TOOL: debmirror
-      GNUPGHOME: /gnupg
-      HOME: /tmp
-    volumes:
-      - state:/var/lib/mirrorhub
-      - gnupg:/gnupg:ro                    # gpgv only reads trustedkeys.gpg
-      - mirror_data:/data
-    healthcheck: *worker-healthcheck
-
-  worker-rsync:
-    <<: *hardened
-    image: mirrorhub/worker-rsync:${MIRRORHUB_TAG:-dev}
-    build:
-      context: .
-      target: worker-rsync
-      args: *build-args
-    environment:
-      MIRRORHUB_ROLE: worker
-      MIRRORHUB_TOOL: rsync
+      MIRRORHUB_WORKER_CONCURRENCY: ${MIRRORHUB_WORKER_CONCURRENCY:-1}
       HOME: /tmp
     volumes:
       - state:/var/lib/mirrorhub
       - mirror_data:/data
     healthcheck: *worker-healthcheck
-
-  worker-wget:
-    <<: *hardened
-    image: mirrorhub/worker-wget:${MIRRORHUB_TAG:-dev}
-    build:
-      context: .
-      target: worker-wget
-      args: *build-args
-    environment:
-      MIRRORHUB_ROLE: worker
-      MIRRORHUB_TOOL: wget
-      HOME: /tmp
-    volumes:
-      - state:/var/lib/mirrorhub
-      - mirror_data:/data
-    healthcheck: *worker-healthcheck
-
-  worker-ftpsync:
-    <<: *hardened
-    image: mirrorhub/worker-ftpsync:${MIRRORHUB_TAG:-dev}
-    build:
-      context: .
-      target: worker-ftpsync
-      args: *build-args
-    environment:
-      MIRRORHUB_ROLE: worker
-      MIRRORHUB_TOOL: ftpsync
-      HOME: /tmp
-    volumes:
-      - state:/var/lib/mirrorhub
-      - mirror_data:/data
-    healthcheck: *worker-healthcheck
+    deploy:
+      replicas: ${MIRRORHUB_WORKER_REPLICAS:-1}
 
   worker-export:
     <<: *hardened
