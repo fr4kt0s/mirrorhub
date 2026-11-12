@@ -69,9 +69,7 @@ def claim_next(
         elif tool is not None:
             running_filter.append(col(Job.tool) == tool)
 
-        running = db.exec(
-            select(func.count()).select_from(Job).where(*running_filter)
-        ).one()
+        running = db.exec(select(func.count()).select_from(Job).where(*running_filter)).one()
         if int(running) >= max(limit, 1):
             return None
 

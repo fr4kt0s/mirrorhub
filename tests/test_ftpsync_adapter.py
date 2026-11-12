@@ -5,7 +5,6 @@ import pytest
 
 from mirrorhub.enums import Tool
 from mirrorhub.sync.adapters import FtpsyncAdapter
-from mirrorhub.sync.context import SyncExecutionContext
 from mirrorhub.sync.errors import SyncConfigurationError
 from mirrorhub.sync.plan import FtpsyncPlan
 from mirrorhub.sync.result import SyncErrorCode, SyncStatus

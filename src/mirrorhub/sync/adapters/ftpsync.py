@@ -10,8 +10,8 @@ from mirrorhub.sync.errors import SyncConfigurationError
 from mirrorhub.sync.plan import FtpsyncPlan, SyncPlan
 from mirrorhub.sync.result import SyncErrorCode, SyncResult, SyncStatus
 from mirrorhub.worker.builders import BuildPlan
-from mirrorhub.worker.runner import RunResult
 from mirrorhub.worker.builders.ftpsync import build as build_ftpsync
+from mirrorhub.worker.runner import RunResult
 
 
 class FtpsyncAdapter:
@@ -27,9 +27,7 @@ class FtpsyncAdapter:
             raise SyncConfigurationError("ftpsync does not support dry runs")
 
         if not plan.architectures or "none" in plan.architectures:
-            raise SyncConfigurationError(
-                "ftpsync requires at least one architecture"
-            )
+            raise SyncConfigurationError("ftpsync requires at least one architecture")
 
     def build_plan(
         self,
