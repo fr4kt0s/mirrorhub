@@ -159,7 +159,7 @@ Changing the Caddy CA volume changes the CA identity. Back up that volume.
 
 The runtime images create the mirror user with the build-time PUID/PGID.
 
-Rebuild images after changing PUID or PGID.
+Rebuild images after changing PUID/PGID.
 
 Pre-provision NFS directories so those numeric IDs can write. NFS root_squash
 does not grant the application permission to fix server-side ownership.
@@ -194,6 +194,26 @@ Do not apply it to the SQLite state or GPG volumes.
 
 Test NFS permissions, rename behavior and fsync support against the actual
 server before relying on export publication.
+
+## Sync architecture
+
+A sync job is first converted into a typed `SyncPlan`. The plan records the job,
+repository, upstream, target paths and tool-specific configuration.
+
+Each supported tool has an adapter:
+
+- `FtpsyncAdapter` for Debian-style FTPsync mirrors.
+- `RsyncAdapter` for generic and Arch rsync mirrors.
+- `DebmirrorAdapter` for APT repositories synchronized with debmirror.
+- `WgetAdapter` for HTTP directory trees and extra-file downloads.
+
+The adapter validates its plan, delegates to the tool-specific builder and
+interprets the runner result. The shared `SyncAdapter` base class handles common
+success, failure and cancellation interpretation.
+
+The worker executes sync jobs only through these adapters. Tool-specific builders
+remain responsible for command construction, validation and tool-specific safety
+rules.
 
 ## Repository setup
 
@@ -247,9 +267,9 @@ Job history is retained independently of log-file retention.
 
 ## Notifications
 
-1. Create an SMTP or webhook channel.
+1. Create a SMTP or webhook channel.
 2. Send a channel test.
-3. Create event rules for the events that should use that channel.
+3. Create event rules for the events that should use the channel.
 
 A channel without rules does not receive job events.
 
