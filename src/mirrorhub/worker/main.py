@@ -306,23 +306,18 @@ def _build_sync_plan(
     job: Job,
     repo: Repository,
     settings: Settings,
-) -> (
-    tuple[
-        builders.BuildPlan,
-        DebmirrorAdapter | FtpsyncAdapter | RsyncAdapter | WgetAdapter,
-        DebmirrorPlan | FtpsyncPlan | RsyncPlan | WgetPlan,
-        datetime,
-    ]
-    | None
-):
-    """Build an adapter-based plan for supported sync methods."""
-    if job.type != "sync" or repo.tool not in (
-        Tool.FTPSYNC,
-        Tool.RSYNC,
-        Tool.DEBMIRROR,
-        Tool.WGET,
-    ):
-        return None
+) -> tuple[
+    builders.BuildPlan,
+    DebmirrorAdapter | FtpsyncAdapter | RsyncAdapter | WgetAdapter,
+    DebmirrorPlan | FtpsyncPlan | RsyncPlan | WgetPlan,
+    datetime,
+]:
+    """Build an adapter-based plan for a supported sync method."""
+    if job.type != "sync":
+        raise ExportError("only sync jobs use a sync adapter")
+
+    if repo.tool not in (Tool.FTPSYNC, Tool.RSYNC, Tool.DEBMIRROR, Tool.WGET):
+        raise ExportError(f"no sync adapter registered for {repo.tool}")
 
     sync_plan = build_sync_plan(job, repo, settings)
     if isinstance(sync_plan, FtpsyncPlan):
@@ -421,14 +416,7 @@ def _execute(
                     )
                     return
 
-                adapter_plan = _build_sync_plan(job, repo, settings)
-                if adapter_plan is None:
-                    plan = builders.build(repo, job, settings)
-                    adapter = None
-                    sync_plan = None
-                    started_at = job.started_at or utcnow()
-                else:
-                    plan, adapter, sync_plan, started_at = adapter_plan
+                plan, adapter, sync_plan, started_at = _build_sync_plan(job, repo, settings)
 
                 environment = dict(os.environ)
                 environment["GNUPGHOME"] = str(settings.gnupg_dir)
@@ -445,14 +433,12 @@ def _execute(
                 if lease.lost.is_set():
                     raise LeaseLost("job ownership was lost")
 
-                sync_result: SyncResult | None = None
-                if adapter is not None and sync_plan is not None:
-                    sync_result = adapter.interpret_result(
-                        sync_plan,
-                        result,
-                        started_at,
-                        utcnow(),
-                    )
+                sync_result = adapter.interpret_result(
+                    sync_plan,
+                    result,
+                    started_at,
+                    utcnow(),
+                )
 
                 if result.cancelled:
                     finish(
