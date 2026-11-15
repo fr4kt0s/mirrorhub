@@ -26,15 +26,42 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def verify(directory: Path | str) -> dict[str, Any]:
-    """Verify a published export without modifying it.
+def _resolve_export(directory: Path) -> Path:
+    """Return the newest published export below a repository root.
 
-    Returns the export metadata on success. Raises VerificationError when the
-    export is incomplete, inconsistent, or contains a checksum mismatch.
+    If *directory* itself contains .done, it is already an export directory.
+    Otherwise, search recursively for published exports and select the newest
+    candidate by modification time of its .done marker.
     """
-    export = Path(directory)
-    if not export.is_dir():
-        raise VerificationError(f"export directory does not exist: {export}")
+    if (directory / ".done").is_file():
+        return directory
+
+    candidates = [
+        marker.parent
+        for marker in directory.rglob(".done")
+        if marker.is_file()
+    ]
+
+    if not candidates:
+        raise VerificationError(
+            f"no published export with .done found below: {directory}"
+        )
+
+    return max(candidates, key=lambda path: (path / ".done").stat().st_mtime)
+
+
+def verify(directory: Path | str) -> dict[str, Any]:
+    """Verify the newest published export below a path without modifying it.
+
+    *directory* may be either a single export directory or a repository export
+    root. Returns the export metadata on success. Raises VerificationError when
+    the export is incomplete, inconsistent, or contains a checksum mismatch.
+    """
+    root = Path(directory)
+    if not root.is_dir():
+        raise VerificationError(f"export directory does not exist: {root}")
+
+    export = _resolve_export(root)
 
     done = export / ".done"
     if not done.is_file():
@@ -147,12 +174,13 @@ def verify(directory: Path | str) -> dict[str, Any]:
     if not deleted_path.is_file():
         raise VerificationError("deleted.txt is missing")
 
+    metadata["verified_path"] = str(export)
     return metadata
 
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("usage: python -m mirrorhub.verify <export-directory>", file=sys.stderr)
+        print("usage: python -m mirrorhub.verify <export-or-repository-directory>", file=sys.stderr)
         return 2
 
     try:
@@ -167,7 +195,8 @@ def main() -> int:
     print(
         "OK: export verified "
         f"({metadata['repo']} {metadata['export_id']} "
-        f"mode={metadata['mode']})"
+        f"mode={metadata['mode']})\n"
+        f"verified: {metadata['verified_path']}"
     )
     return 0
 
