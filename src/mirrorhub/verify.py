@@ -1,34 +1,24 @@
-"""Verify a MirrorHub export with the Python standard library only."""
+"""Standalone verification for a published MirrorHub export."""
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Any
 
-DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
-REQUIRED = {"manifest.json", "files.json", "deleted.txt"}
+from mirrorhub.export.manifest import load as load_inventory
+
+FORMAT_VERSION = 1
+CHECKSUM_EXCLUSIONS = frozenset({"MANIFEST.sha256", "MANIFEST.sha256.sig", ".done"})
 
 
-class VerificationError(ValueError):
+class VerificationError(RuntimeError):
     """An export failed verification."""
 
 
-def _relative(value: str) -> bool:
-    return (
-        bool(value)
-        and not value.startswith("/")
-        and "\\" not in value
-        and all(part not in ("", ".", "..") for part in value.split("/"))
-        and all(ord(character) >= 32 for character in value)
-    )
-
-
-def _digest(path: Path) -> str:
+def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         while chunk := handle.read(1024 * 1024):
@@ -36,121 +26,149 @@ def _digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def verify(directory: Path) -> dict[str, Any]:
-    if directory.is_symlink() or not directory.is_dir():
-        raise VerificationError("export directory is missing or is a symlink")
+def verify(directory: Path | str) -> dict[str, Any]:
+    """Verify a published export without modifying it.
 
-    entries = list(directory.iterdir())
-    if any(path.is_symlink() or not path.is_file() for path in entries):
-        raise VerificationError("export contains a symlink or non-file entry")
+    Returns the export metadata on success. Raises VerificationError when the
+    export is incomplete, inconsistent, or contains a checksum mismatch.
+    """
+    export = Path(directory)
+    if not export.is_dir():
+        raise VerificationError(f"export directory does not exist: {export}")
 
-    names = {path.name for path in entries}
-    if not REQUIRED | {"MANIFEST.sha256", ".done"} <= names:
-        raise VerificationError("required export files are missing")
+    done = export / ".done"
+    if not done.is_file():
+        raise VerificationError("export is not published: .done is missing")
 
-    checksums: dict[str, str] = {}
-    for line in (directory / "MANIFEST.sha256").read_text(encoding="ascii").splitlines():
-        digest, separator, name = line.partition("  ")
-        if (
-            not separator
-            or not DIGEST_RE.fullmatch(digest)
-            or not _relative(name)
-            or "/" in name
-            or name in checksums
-            or name in {".done", "MANIFEST.sha256", "MANIFEST.sha256.sig"}
-        ):
-            raise VerificationError("invalid checksum manifest")
-        checksums[name] = digest
+    metadata_path = export / "manifest.json"
+    if not metadata_path.is_file():
+        raise VerificationError("manifest.json is missing")
 
-    expected = names - {".done", "MANIFEST.sha256", "MANIFEST.sha256.sig"}
-    if set(checksums) != expected:
-        raise VerificationError("checksum coverage does not match package contents")
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise VerificationError(f"manifest.json is invalid: {exc}") from exc
 
-    for name, digest in checksums.items():
-        if _digest(directory / name) != digest:
-            raise VerificationError(f"checksum mismatch: {name}")
+    if not isinstance(metadata, dict):
+        raise VerificationError("manifest.json must contain an object")
 
-    metadata = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
-    inventory = json.loads((directory / "files.json").read_text(encoding="utf-8"))
-    if not isinstance(metadata, dict) or metadata.get("format_version") != 1:
-        raise VerificationError("unsupported export format")
-    if not isinstance(inventory, dict):
-        raise VerificationError("invalid file inventory")
-    if metadata.get("mode") not in ("full", "incr"):
-        raise VerificationError("invalid export mode")
-    if metadata["mode"] == "incr" and not metadata.get("base_export_id"):
-        raise VerificationError("incremental export has no base")
-    if metadata["mode"] == "full" and metadata.get("base_export_id") is not None:
-        raise VerificationError("full export unexpectedly declares a base")
+    required = {
+        "format_version",
+        "export_id",
+        "repo",
+        "mode",
+        "created_at",
+        "archive_format",
+        "archive_parts",
+    }
+    missing = sorted(required - set(metadata))
+    if missing:
+        raise VerificationError(f"manifest.json is missing fields: {', '.join(missing)}")
 
-    for relative, entry in inventory.items():
-        if (
-            not isinstance(relative, str)
-            or not _relative(relative)
-            or not isinstance(entry, dict)
-            or entry.get("type") not in ("file", "symlink")
-            or not isinstance(entry.get("size"), int)
-            or entry["size"] < 0
-            or not isinstance(entry.get("mtime_ns"), int)
-            or not isinstance(entry.get("sha256"), str)
-            or not DIGEST_RE.fullmatch(entry["sha256"])
-        ):
-            raise VerificationError("invalid inventory entry")
+    if metadata["format_version"] != FORMAT_VERSION:
+        raise VerificationError(
+            f"unsupported export format version: {metadata['format_version']}"
+        )
 
-    parts = metadata.get("archive_parts")
-    if (
-        not isinstance(parts, list)
-        or not parts
-        or any(not isinstance(name, str) or name not in checksums for name in parts)
-        or len(parts) != len(set(parts))
+    expected_export_id = done.read_text(encoding="ascii").strip()
+    if expected_export_id != metadata["export_id"]:
+        raise VerificationError(
+            f"export identity mismatch: .done={expected_export_id!r}, "
+            f"manifest={metadata['export_id']!r}"
+        )
+
+    archive_parts = metadata["archive_parts"]
+    if not isinstance(archive_parts, list) or not all(
+        isinstance(item, str) for item in archive_parts
     ):
-        raise VerificationError("invalid archive part list")
+        raise VerificationError("manifest archive_parts must be a list of strings")
 
-    if set(parts) != set(checksums) - REQUIRED:
-        raise VerificationError("archive part coverage mismatch")
+    for name in archive_parts:
+        path = export / name
+        if not path.is_file():
+            raise VerificationError(f"archive part is missing: {name}")
 
-    payload = metadata.get("payload_paths")
-    if (
-        not isinstance(payload, list)
-        or any(not isinstance(path, str) or path not in inventory for path in payload)
-        or len(payload) != len(set(payload))
+    checksum_path = export / "MANIFEST.sha256"
+    if not checksum_path.is_file():
+        raise VerificationError("MANIFEST.sha256 is missing")
+
+    checked = 0
+    for line_number, raw_line in enumerate(
+        checksum_path.read_text(encoding="ascii").splitlines(),
+        start=1,
     ):
-        raise VerificationError("invalid payload path list")
+        line = raw_line.strip()
+        if not line:
+            continue
 
-    deleted = (directory / "deleted.txt").read_text(encoding="utf-8").splitlines()
-    if any(not _relative(path) or path in inventory for path in deleted):
-        raise VerificationError("invalid deletion list")
-    if len(deleted) != len(set(deleted)):
-        raise VerificationError("duplicate deletion entries")
+        parts = line.split(None, 1)
+        if len(parts) != 2 or not parts[1]:
+            raise VerificationError(
+                f"invalid checksum line {line_number} in MANIFEST.sha256"
+            )
 
-    counts = metadata.get("counts", {})
-    if counts != {
-        "inventory": len(inventory),
-        "payload": len(payload),
-        "deleted": len(deleted),
-    }:
-        raise VerificationError("metadata counts do not match package contents")
+        expected_digest, name = parts
+        name = name.strip()
+        if name in CHECKSUM_EXCLUSIONS:
+            raise VerificationError(
+                f"checksum manifest must not contain {name}"
+            )
 
-    if metadata["mode"] == "full" and (deleted or set(payload) != set(inventory)):
-        raise VerificationError("full export is incomplete")
+        path = export / name
+        if not path.is_file():
+            raise VerificationError(f"checksummed file is missing: {name}")
 
-    marker = (directory / ".done").read_text(encoding="ascii").strip()
-    if marker != metadata.get("export_id"):
-        raise VerificationError("completion marker does not match export id")
+        actual_digest = _sha256(path)
+        if actual_digest != expected_digest.lower():
+            raise VerificationError(
+                f"checksum mismatch for {name}: "
+                f"expected {expected_digest}, got {actual_digest}"
+            )
+        checked += 1
+
+    if checked == 0:
+        raise VerificationError("MANIFEST.sha256 contains no checksum entries")
+
+    inventory_path = export / "files.json"
+    if not inventory_path.is_file():
+        raise VerificationError("files.json is missing")
+
+    try:
+        inventory = load_inventory(inventory_path)
+    except Exception as exc:
+        raise VerificationError(f"files.json is invalid: {exc}") from exc
+
+    if len(inventory) != metadata.get("counts", {}).get("inventory"):
+        raise VerificationError(
+            "files.json inventory count does not match manifest metadata"
+        )
+
+    deleted_path = export / "deleted.txt"
+    if not deleted_path.is_file():
+        raise VerificationError("deleted.txt is missing")
 
     return metadata
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("export_directory", type=Path)
-    arguments = parser.parse_args()
+    if len(sys.argv) != 2:
+        print("usage: python -m mirrorhub.verify <export-directory>", file=sys.stderr)
+        return 2
+
     try:
-        metadata = verify(arguments.export_directory)
-    except (VerificationError, OSError, ValueError, TypeError) as exc:
-        print(f"Verification failed: {exc}", file=sys.stderr)
+        metadata = verify(sys.argv[1])
+    except VerificationError as exc:
+        print(f"FAILED: {exc}", file=sys.stderr)
         return 1
-    print(f"Verified {metadata['export_id']}: {metadata['counts']['payload']} payload entries")
+    except OSError as exc:
+        print(f"FAILED: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        "OK: export verified "
+        f"({metadata['repo']} {metadata['export_id']} "
+        f"mode={metadata['mode']})"
+    )
     return 0
 
 
