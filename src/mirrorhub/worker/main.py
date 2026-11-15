@@ -236,7 +236,7 @@ def finish(
         db.delete(lock)
 
         if status == "succeeded" and chain_snapshot is not None:
-            repo = db.get(Job, job.repo_id)
+            repo = db.get(Repository, job.repo_id)
             if repo is None:
                 raise ExportError("repository disappeared while chaining export")
             chained = Job(
