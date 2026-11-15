@@ -254,9 +254,7 @@ def test_debmirror_requires_suites_and_sections(admin: TestClient, csrf_token: s
     assert "sections/components" in response.text
 
 
-def test_ftpsync_rejects_include_and_exclude(
-    admin: TestClient, csrf_token: str
-) -> None:
+def test_ftpsync_rejects_include_and_exclude(admin: TestClient, csrf_token: str) -> None:
     form = _form(
         slug="debian-ftpsync",
         name="Debian FTPsync",
@@ -275,9 +273,7 @@ def test_ftpsync_rejects_include_and_exclude(
     assert "use either ARCH_INCLUDE or ARCH_EXCLUDE" in response.text
 
 
-def test_ftpsync_accepts_arch_exclude(
-    admin: TestClient, csrf_token: str
-) -> None:
+def test_ftpsync_accepts_arch_exclude(admin: TestClient, csrf_token: str) -> None:
     form = _form(
         slug="debian-ftpsync",
         name="Debian FTPsync",
@@ -298,9 +294,7 @@ def test_ftpsync_accepts_arch_exclude(
     assert repos[-1].arch_exclude == ["armel", "armhf"]
 
 
-def test_ftpsync_allows_empty_architecture_selection(
-    admin: TestClient, csrf_token: str
-) -> None:
+def test_ftpsync_allows_empty_architecture_selection(admin: TestClient, csrf_token: str) -> None:
     form = _form(
         slug="debian-ftpsync",
         name="Debian FTPsync",

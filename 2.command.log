@@ -1,0 +1,178 @@
+unformatted: File would be reformatted
+   --> src/mirrorhub/services/repos.py:73:13
+    |
+72  | def _split_architectures(raw: str) -> list[str]:
+    -     return [
+    -         part
+    -         for part in re.split(r"[,\s]+", raw)
+    -         if part.strip()
+    -     ]
+73  +     return [part for part in re.split(r"[,\s]+", raw) if part.strip()]
+74  |
+--------------------------------------------------------------------------------
+266 |                 errors.append(
+    -                     "Arch repositories: at least one repository is required "
+    -                     "(core, extra, ...)"
+267 +                     "Arch repositories: at least one repository is required (core, extra, ...)"
+268 |                 )
+--------------------------------------------------------------------------------
+296 |         if exclude:
+    -             error = validators.validate_list_field(
+    -                 "architectures to exclude", exclude
+    -             )
+297 +             error = validators.validate_list_field("architectures to exclude", exclude)
+298 |             if error:
+--------------------------------------------------------------------------------
+390 |         return blockers
+    -     from mirrorhub.models import ManifestSnapshot, NotificationRule, RepoLock, Schedule, StorageCache
+391 +     from mirrorhub.models import (
+392 +         ManifestSnapshot,
+393 +         NotificationRule,
+394 +         RepoLock,
+395 +         Schedule,
+396 +         StorageCache,
+397 +     )
+398 |
+--------------------------------------------------------------------------------
+403 |
+    -     jobs = db.exec(
+    -         select(Job).where(Job.repo_id == repo.id).order_by(col(Job.id).desc())
+    -     ).all()
+404 +     jobs = db.exec(select(Job).where(Job.repo_id == repo.id).order_by(col(Job.id).desc())).all()
+405 |     for row in jobs:
+    |
+
+unformatted: File would be reformatted
+   --> src/mirrorhub/sync/factory.py:201:31
+    |
+200 |             exclude_regex=repository.exclude_regex,
+    -             extra_files=tuple(
+    -                 (entry["url"], entry["path"]) for entry in repository.extra_files
+    -             ),
+201 +             extra_files=tuple((entry["url"], entry["path"]) for entry in repository.extra_files),
+202 |             bwlimit_kbps=repository.bwlimit_kbps,
+    |
+
+unformatted: File would be reformatted
+   --> src/mirrorhub/verify.py:39:19
+    |
+38  |
+    -     candidates = [
+    -         marker.parent
+    -         for marker in directory.rglob(".done")
+    -         if marker.is_file()
+    -     ]
+39  +     candidates = [marker.parent for marker in directory.rglob(".done") if marker.is_file()]
+40  |
+41  |     if not candidates:
+    -         raise VerificationError(
+    -             f"no published export with .done found below: {directory}"
+    -         )
+42  +         raise VerificationError(f"no published export with .done found below: {directory}")
+43  |
+--------------------------------------------------------------------------------
+89  |     if metadata["format_version"] != FORMAT_VERSION:
+    -         raise VerificationError(
+    -             f"unsupported export format version: {metadata['format_version']}"
+    -         )
+90  +         raise VerificationError(f"unsupported export format version: {metadata['format_version']}")
+91  |
+--------------------------------------------------------------------------------
+124 |         if len(parts) != 2 or not parts[1]:
+    -             raise VerificationError(
+    -                 f"invalid checksum line {line_number} in MANIFEST.sha256"
+    -             )
+125 +             raise VerificationError(f"invalid checksum line {line_number} in MANIFEST.sha256")
+126 |
+127 |         expected_digest, name = parts
+128 |         name = name.strip()
+129 |         if name in CHECKSUM_EXCLUSIONS:
+    -             raise VerificationError(
+    -                 f"checksum manifest must not contain {name}"
+    -             )
+130 +             raise VerificationError(f"checksum manifest must not contain {name}")
+131 |
+--------------------------------------------------------------------------------
+138 |             raise VerificationError(
+    -                 f"checksum mismatch for {name}: "
+    -                 f"expected {expected_digest}, got {actual_digest}"
+139 +                 f"checksum mismatch for {name}: expected {expected_digest}, got {actual_digest}"
+140 |             )
+--------------------------------------------------------------------------------
+155 |     if len(inventory) != metadata.get("counts", {}).get("inventory"):
+    -         raise VerificationError(
+    -             "files.json inventory count does not match manifest metadata"
+    -         )
+156 +         raise VerificationError("files.json inventory count does not match manifest metadata")
+157 |
+    |
+
+unformatted: File would be reformatted
+  --> src/mirrorhub/worker/builders/ftpsync.py:39:26
+   |
+38 |     if repo.architectures and repo.arch_exclude:
+   -         raise BuildError(
+   -             "ftpsync supports either ARCH_INCLUDE or ARCH_EXCLUDE, not both"
+   -         )
+39 +         raise BuildError("ftpsync supports either ARCH_INCLUDE or ARCH_EXCLUDE, not both")
+40 |
+--------------------------------------------------------------------------------
+72 |                     "EXCLUDE",
+   -                     " ".join(
+   -                         f"--exclude={pattern}" for pattern in repo.exclude_patterns
+   -                     ),
+73 +                     " ".join(f"--exclude={pattern}" for pattern in repo.exclude_patterns),
+74 |                 ),
+   |
+
+unformatted: File would be reformatted
+  --> src/mirrorhub/worker/builders/wget.py:71:11
+   |
+70 |     depth = 0 if not root else len(root.split("/"))
+   -     url = f"{repo.method}://{repo.upstream_host}/{root}/" if root else f"{repo.method}://{repo.upstream_host}/"
+71 +     url = (
+72 +         f"{repo.method}://{repo.upstream_host}/{root}/"
+73 +         if root
+74 +         else f"{repo.method}://{repo.upstream_host}/"
+75 +     )
+76 |
+   |
+
+unformatted: File would be reformatted
+  --> src/mirrorhub/worker/runner.py:69:32
+   |
+68 |             with self.log_path.open("a", encoding="utf-8") as log_file:
+   -                 log_file.write(
+   -                     f"error: could not create work directory "
+   -                     f"{self.plan.cwd}: {exc}\n"
+   -                 )
+69 +                 log_file.write(f"error: could not create work directory {self.plan.cwd}: {exc}\n")
+70 |                 log_file.write("# finished with exit code 127\n")
+   |
+
+unformatted: File would be reformatted
+   --> tests/test_repos.py:257:46
+    |
+256 |
+    - def test_ftpsync_rejects_include_and_exclude(
+    -     admin: TestClient, csrf_token: str
+    - ) -> None:
+257 + def test_ftpsync_rejects_include_and_exclude(admin: TestClient, csrf_token: str) -> None:
+258 |     form = _form(
+--------------------------------------------------------------------------------
+275 |
+    - def test_ftpsync_accepts_arch_exclude(
+    -     admin: TestClient, csrf_token: str
+    - ) -> None:
+276 + def test_ftpsync_accepts_arch_exclude(admin: TestClient, csrf_token: str) -> None:
+277 |     form = _form(
+--------------------------------------------------------------------------------
+296 |
+    - def test_ftpsync_allows_empty_architecture_selection(
+    -     admin: TestClient, csrf_token: str
+    - ) -> None:
+297 + def test_ftpsync_allows_empty_architecture_selection(admin: TestClient, csrf_token: str) -> None:
+298 |     form = _form(
+    |
+
+7 files would be reformatted, 129 files already formatted

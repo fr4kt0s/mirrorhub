@@ -36,9 +36,7 @@ def build(
         raise BuildError(error)
 
     if repo.architectures and repo.arch_exclude:
-        raise BuildError(
-            "ftpsync supports either ARCH_INCLUDE or ARCH_EXCLUDE, not both"
-        )
+        raise BuildError("ftpsync supports either ARCH_INCLUDE or ARCH_EXCLUDE, not both")
 
     error = validators.validate_extra_args("ftpsync", repo.extra_args)
     if error:
@@ -72,9 +70,7 @@ def build(
                 architecture_config,
                 _config(
                     "EXCLUDE",
-                    " ".join(
-                        f"--exclude={pattern}" for pattern in repo.exclude_patterns
-                    ),
+                    " ".join(f"--exclude={pattern}" for pattern in repo.exclude_patterns),
                 ),
                 _config("RSYNC_EXTRA", " ".join(repo.rsync_extra)),
                 _config("RSYNC_BW", str(repo.bwlimit_kbps)),

@@ -66,10 +66,7 @@ class Runner:
                 extra={"cwd": str(self.plan.cwd)},
             )
             with self.log_path.open("a", encoding="utf-8") as log_file:
-                log_file.write(
-                    f"error: could not create work directory "
-                    f"{self.plan.cwd}: {exc}\n"
-                )
+                log_file.write(f"error: could not create work directory {self.plan.cwd}: {exc}\n")
                 log_file.write("# finished with exit code 127\n")
             return RunResult(
                 exit_code=127,
