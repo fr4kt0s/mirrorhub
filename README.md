@@ -389,7 +389,7 @@ do not disable strict mode to hide it.
 Start the deployment first, then run:
 
 ```sh
-MIRRORHUB_URL=[https://mirrorhub.lan:8443](https://mirrorhub.lan:8443) \
+MIRRORHUB_URL=https://mirrorhub.lan:8443 \
   sh scripts/smoke_test.sh
 ```
 
@@ -459,6 +459,41 @@ Confirm SQLite is local, web is single-instance, and no long-running transaction
 is held across network or filesystem work.
 
 Do not increase concurrency or busy_timeout without investigating the cause.
+
+### Inspect FTPsync job logs
+
+MirrorHub runs FTPsync jobs in the universal `worker` service. The job-specific
+working directory and rsync log are created under the worker state volume.
+
+For a repository with the slug `packages.linuxmint.com`, inspect the generated
+FTPsync log with:
+
+```sh
+docker compose exec worker cat \
+  /var/lib/mirrorhub/tmp/ftpsync/packages.linuxmint.com/log/rsync-ftpsync-packages.linuxmint.com.log
+```
+
+To follow the log while a job is running:
+
+```sh
+docker compose exec worker tail -f \
+  /var/lib/mirrorhub/tmp/ftpsync/packages.linuxmint.com/log/rsync-ftpsync-packages.linuxmint.com.log
+```
+
+To find the newest job log when the repository slug is unknown:
+
+```sh
+docker compose exec worker sh -c \
+  'find /var/lib/mirrorhub/tmp/ftpsync -type f -name "*.log" -printf "%T@ %p\n" | sort -nr | head'
+```
+
+The universal worker also writes aggregate logs to stdout:
+
+```sh
+docker compose logs -f worker
+```
+
+Use the UI job history to identify the job ID before inspecting a specific log.
 
 ## Security boundary
 
