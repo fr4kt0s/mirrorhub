@@ -25,6 +25,7 @@ LIST_FIELDS = (
     "suites",
     "sections",
     "architectures",
+    "arch_exclude",
     "rsync_extra",
     "include_patterns",
     "exclude_patterns",
@@ -275,8 +276,21 @@ def validate(data: dict[str, Any]) -> list[str]:
     elif tool == "ftpsync":
         if method != "rsync":
             errors.append("method: ftpsync requires method rsync")
-        if not data["architectures"] or "none" in data["architectures"]:
-            errors.append("architectures: ftpsync requires at least one architecture")
+
+        include = data["architectures"]
+        exclude = data["arch_exclude"]
+
+        if include and exclude:
+            errors.append(
+                "architecture selection: use either ARCH_INCLUDE or ARCH_EXCLUDE, not both"
+            )
+
+        if exclude:
+            error = validators.validate_list_field(
+                "architectures to exclude", exclude
+            )
+            if error:
+                errors.append(error)
 
     return errors
 

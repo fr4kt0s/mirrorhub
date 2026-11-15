@@ -35,8 +35,10 @@ def build(
     if error:
         raise BuildError(error)
 
-    if not repo.architectures or "none" in repo.architectures:
-        raise BuildError("ftpsync requires at least one architecture")
+    if repo.architectures and repo.arch_exclude:
+        raise BuildError(
+            "ftpsync supports either ARCH_INCLUDE or ARCH_EXCLUDE, not both"
+        )
 
     error = validators.validate_extra_args("ftpsync", repo.extra_args)
     if error:
@@ -50,6 +52,13 @@ def build(
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / f"ftpsync-{repo.slug}.conf"
 
+    if repo.arch_exclude:
+        architecture_config = _config("ARCH_EXCLUDE", " ".join(repo.arch_exclude))
+    elif repo.architectures:
+        architecture_config = _config("ARCH_INCLUDE", " ".join(repo.architectures))
+    else:
+        architecture_config = ""
+
     config_path.write_text(
         "".join(
             [
@@ -60,13 +69,14 @@ def build(
                 _config("HUB", "false"),
                 _config("RSYNC_HOST", repo.upstream_host),
                 _config("RSYNC_PATH", repo.upstream_root.strip("/")),
-                _config("ARCH_INCLUDE", " ".join(repo.architectures)),
+                architecture_config,
                 _config(
                     "EXCLUDE",
                     " ".join(
                         f"--exclude={pattern}" for pattern in repo.exclude_patterns
                     ),
                 ),
+                _config("RSYNC_EXTRA", " ".join(repo.rsync_extra)),
                 _config("RSYNC_BW", str(repo.bwlimit_kbps)),
             ]
         ),

@@ -18,6 +18,7 @@ BASE_FORM: dict[str, str] = {
     "suites": "bookworm, bookworm-updates",
     "sections": "main, contrib",
     "architectures": "amd64",
+    "arch_exclude": "",
     "include_source": "",
     "rsync_extra": "",
     "bwlimit_kbps": "0",
@@ -251,6 +252,74 @@ def test_debmirror_requires_suites_and_sections(admin: TestClient, csrf_token: s
     assert response.status_code == 400
     assert "at least one suite" in response.text
     assert "sections/components" in response.text
+
+
+def test_ftpsync_rejects_include_and_exclude(
+    admin: TestClient, csrf_token: str
+) -> None:
+    form = _form(
+        slug="debian-ftpsync",
+        name="Debian FTPsync",
+        kind="apt",
+        tool="ftpsync",
+        method="rsync",
+        upstream_host="deb.debian.org",
+        upstream_root="/debian",
+        suites="",
+        sections="",
+        architectures="amd64",
+        arch_exclude="armel",
+    )
+    response = _post(admin, csrf_token, "/repos", form)
+    assert response.status_code == 400
+    assert "use either ARCH_INCLUDE or ARCH_EXCLUDE" in response.text
+
+
+def test_ftpsync_accepts_arch_exclude(
+    admin: TestClient, csrf_token: str
+) -> None:
+    form = _form(
+        slug="debian-ftpsync",
+        name="Debian FTPsync",
+        kind="apt",
+        tool="ftpsync",
+        method="rsync",
+        upstream_host="deb.debian.org",
+        upstream_root="/debian",
+        suites="",
+        sections="",
+        architectures="",
+        arch_exclude="armel armhf",
+    )
+    response = _post(admin, csrf_token, "/repos", form)
+    assert response.status_code == 303
+
+    repos = _repos()
+    assert repos[-1].arch_exclude == ["armel", "armhf"]
+
+
+def test_ftpsync_allows_empty_architecture_selection(
+    admin: TestClient, csrf_token: str
+) -> None:
+    form = _form(
+        slug="debian-ftpsync",
+        name="Debian FTPsync",
+        kind="apt",
+        tool="ftpsync",
+        method="rsync",
+        upstream_host="deb.debian.org",
+        upstream_root="/debian",
+        suites="",
+        sections="",
+        architectures="",
+        arch_exclude="",
+    )
+    response = _post(admin, csrf_token, "/repos", form)
+    assert response.status_code == 303
+
+    repos = _repos()
+    assert repos[-1].architectures == []
+    assert repos[-1].arch_exclude == []
 
 
 @pytest.mark.parametrize("path", ["/repos", "/presets", "/keys", "/config"])
