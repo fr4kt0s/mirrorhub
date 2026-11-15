@@ -242,7 +242,7 @@ class ManifestSnapshot(SQLModel, table=True):
 
 class GpgKey(SQLModel, table=True):
     __tablename__ = "gpg_key"
-    fingerprint: str = Field(unique=True, index=True)
+    fingerprint: str = Field(primary_key=True, unique=True, index=True)
     uid: str = ""
     source: str = "upload"  # upload | package
     keyring_name: str = "trustedkeys.gpg"
