@@ -69,6 +69,14 @@ def _split(raw: str) -> list[str]:
     return [part.strip() for part in re.split(r"[,\n]+", raw) if part.strip()]
 
 
+def _split_architectures(raw: str) -> list[str]:
+    return [
+        part
+        for part in re.split(r"[,\s]+", raw)
+        if part.strip()
+    ]
+
+
 def parse_extra_files(raw: str) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     for line in raw.splitlines():
@@ -98,6 +106,8 @@ def parse_form(form: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, str]]
     for name in LIST_FIELDS:
         raw[name] = get(name)
         data[name] = _split(get(name))
+    for name in ("architectures", "arch_exclude"):
+        data[name] = _split_architectures(get(name))
     for name in BOOL_FIELDS:
         data[name] = bool(form.get(name))
         raw[name] = "on" if data[name] else ""
