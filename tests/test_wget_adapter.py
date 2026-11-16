@@ -1,13 +1,20 @@
+from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from mirrorhub.enums import Tool
+from mirrorhub.models import Job, Repository
+from mirrorhub.settings import Settings
 from mirrorhub.sync.adapters import WgetAdapter
+from mirrorhub.sync.context import SyncExecutionContext
 from mirrorhub.sync.errors import SyncConfigurationError
 from mirrorhub.sync.plan import FtpsyncPlan, WgetPlan
 from mirrorhub.sync.result import SyncErrorCode, SyncStatus
+from mirrorhub.worker.runner import RunResult
+
+_STARTED_AT = datetime(2024, 1, 1, tzinfo=UTC)
+_FINISHED_AT = datetime(2024, 1, 1, 0, 0, 1, tzinfo=UTC)
 
 
 def _plan(**overrides: object) -> WgetPlan:
@@ -27,25 +34,36 @@ def _plan(**overrides: object) -> WgetPlan:
     return WgetPlan(**values)
 
 
-def _context(plan: WgetPlan) -> SimpleNamespace:
-    job = SimpleNamespace(dry_run=plan.dry_run)
-    repository = SimpleNamespace(
+def _context(plan: WgetPlan) -> SyncExecutionContext:
+    settings = Settings(state_dir=Path("/tmp"))
+    job = Job(
+        id=1,
+        repo_id=2,
+        tool=Tool.WGET.value,
+        dry_run=plan.dry_run,
+    )
+    repository = Repository(
+        id=2,
+        slug=plan.slug,
+        name=plan.slug,
+        kind="generic",
+        tool=Tool.WGET.value,
         upstream_host=plan.upstream_host,
         upstream_root=plan.upstream_root,
         method=plan.source_protocol,
         include_regex=plan.include_regex,
         exclude_regex=plan.exclude_regex,
-        extra_files=(),
+        extra_files=[],
         bwlimit_kbps=plan.bwlimit_kbps,
-        extra_args=plan.extra_args,
+        extra_args=list(plan.extra_args),
     )
-    return SimpleNamespace(
+    return SyncExecutionContext(
+        settings=settings,
         job=job,
         repository=repository,
         target=plan.target,
         work_dir=plan.work_dir,
         log_dir=plan.log_dir,
-        settings=SimpleNamespace(tmp_dir=Path("/tmp")),
     )
 
 
@@ -117,9 +135,9 @@ def test_wget_adapter_interprets_success() -> None:
     plan = _plan()
     result = WgetAdapter().interpret_result(
         plan,
-        SimpleNamespace(cancelled=False, exit_code=0),
-        started_at=1,
-        finished_at=2,
+        RunResult(exit_code=0, cancelled=False),
+        started_at=_STARTED_AT,
+        finished_at=_FINISHED_AT,
     )
 
     assert result.status == SyncStatus.SUCCEEDED
@@ -131,9 +149,9 @@ def test_wget_adapter_interprets_failure() -> None:
     plan = _plan()
     result = WgetAdapter().interpret_result(
         plan,
-        SimpleNamespace(cancelled=False, exit_code=8),
-        started_at=1,
-        finished_at=2,
+        RunResult(exit_code=8, cancelled=False),
+        started_at=_STARTED_AT,
+        finished_at=_FINISHED_AT,
     )
 
     assert result.status == SyncStatus.FAILED
@@ -147,9 +165,9 @@ def test_wget_adapter_interprets_cancellation() -> None:
     plan = _plan()
     result = WgetAdapter().interpret_result(
         plan,
-        SimpleNamespace(cancelled=True, exit_code=130),
-        started_at=1,
-        finished_at=2,
+        RunResult(exit_code=130, cancelled=True),
+        started_at=_STARTED_AT,
+        finished_at=_FINISHED_AT,
     )
 
     assert result.status == SyncStatus.CANCELLED
