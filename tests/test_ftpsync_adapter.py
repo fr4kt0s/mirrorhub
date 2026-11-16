@@ -4,7 +4,10 @@ from pathlib import Path
 import pytest
 
 from mirrorhub.enums import Tool
+from mirrorhub.models import Job, Repository
+from mirrorhub.settings import Settings
 from mirrorhub.sync.adapters import FtpsyncAdapter
+from mirrorhub.sync.context import SyncExecutionContext
 from mirrorhub.sync.errors import SyncConfigurationError
 from mirrorhub.sync.plan import FtpsyncPlan
 from mirrorhub.sync.result import SyncErrorCode, SyncStatus
@@ -24,6 +27,35 @@ def _plan() -> FtpsyncPlan:
         work_dir=Path("/tmp/debian"),
         log_dir=Path("/tmp/debian/log"),
         architectures=("amd64",),
+    )
+
+
+def _context(plan: FtpsyncPlan) -> SyncExecutionContext:
+    settings = Settings(state_dir=Path("/tmp"))
+    job = Job(
+        id=1,
+        repo_id=2,
+        tool=Tool.FTPSYNC.value,
+        dry_run=plan.dry_run,
+    )
+    repository = Repository(
+        id=2,
+        slug=plan.slug,
+        name=plan.slug,
+        kind="apt",
+        tool=Tool.FTPSYNC.value,
+        upstream_host=plan.upstream_host,
+        upstream_root=plan.upstream_root,
+        method=plan.source_protocol,
+        architectures=list(plan.architectures),
+    )
+    return SyncExecutionContext(
+        settings=settings,
+        job=job,
+        repository=repository,
+        target=plan.target,
+        work_dir=plan.work_dir,
+        log_dir=plan.log_dir,
     )
 
 
