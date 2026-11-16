@@ -101,7 +101,9 @@ def differs(path: Path, entry: Mapping[str, Any]) -> bool:
         return not (path.is_symlink() and os.readlink(path) == entry["target"])
     if path.is_symlink() or not path.is_file():
         return True
-    return path.stat().st_size != entry["size"] or digest(path) != entry["sha256"]
+    return bool(
+        path.stat().st_size != entry["size"] or digest(path) != entry["sha256"]
+    )
 
 
 def walk_error(error: OSError) -> None:
