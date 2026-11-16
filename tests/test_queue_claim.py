@@ -11,6 +11,7 @@ from mirrorhub.enums import JobStatus
 from mirrorhub.models import Job, RepoLock, Repository
 from mirrorhub.queue import claim
 from mirrorhub.services import jobs as jobsvc
+from mirrorhub.settings import Settings
 
 
 def _repo(db: Session, slug: str) -> Repository:
@@ -21,7 +22,7 @@ def _repo(db: Session, slug: str) -> Repository:
     return repo
 
 
-def test_claim_locks_the_repository(configured) -> None:
+def test_claim_locks_the_repository(configured: Settings) -> None:
     with Session(get_engine()) as db:
         repo = _repo(db, "debian")
         repo_id = repo.id or 0
@@ -43,7 +44,7 @@ def test_claim_locks_the_repository(configured) -> None:
         assert lock.job_id == first_id
 
 
-def test_different_repositories_run_in_parallel(configured) -> None:
+def test_different_repositories_run_in_parallel(configured: Settings) -> None:
     with Session(get_engine()) as db:
         for slug in ("debian", "ubuntu", "kali"):
             jobsvc.enqueue(db, _repo(db, slug), requested_by="test")
@@ -56,7 +57,7 @@ def test_different_repositories_run_in_parallel(configured) -> None:
         assert len(db.exec(select(RepoLock)).all()) == 2
 
 
-def test_global_concurrency_limit(configured) -> None:
+def test_global_concurrency_limit(configured: Settings) -> None:
     with Session(get_engine()) as db:
         for slug in ("debian", "ubuntu"):
             jobsvc.enqueue(db, _repo(db, slug), requested_by="test")

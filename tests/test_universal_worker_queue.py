@@ -7,6 +7,7 @@ from mirrorhub.enums import JobStatus, Tool
 from mirrorhub.models import Job, RepoLock, Repository
 from mirrorhub.queue import claim
 from mirrorhub.services import jobs as jobsvc
+from mirrorhub.settings import Settings
 
 
 def _repo(db: Session, slug: str, tool: Tool) -> Repository:
@@ -17,7 +18,7 @@ def _repo(db: Session, slug: str, tool: Tool) -> Repository:
     return repository
 
 
-def test_capability_worker_claims_multiple_tools(configured) -> None:
+def test_capability_worker_claims_multiple_tools(configured: Settings) -> None:
     with Session(get_engine()) as db:
         ftpsync_repo = _repo(db, "debian", Tool.FTPSYNC)
         rsync_repo = _repo(db, "ubuntu", Tool.RSYNC)
@@ -54,7 +55,7 @@ def test_capability_worker_claims_multiple_tools(configured) -> None:
         }
 
 
-def test_worker_without_capability_does_not_claim_job(configured) -> None:
+def test_worker_without_capability_does_not_claim_job(configured: Settings) -> None:
     with Session(get_engine()) as db:
         repository = _repo(db, "example", Tool.RSYNC)
         jobsvc.enqueue(db, repository, requested_by="test")
@@ -74,7 +75,7 @@ def test_worker_without_capability_does_not_claim_job(configured) -> None:
         assert job.claimed_by is None
 
 
-def test_worker_concurrency_limits_claims(configured) -> None:
+def test_worker_concurrency_limits_claims(configured: Settings) -> None:
     with Session(get_engine()) as db:
         first_repo = _repo(db, "debian", Tool.FTPSYNC)
         second_repo = _repo(db, "ubuntu", Tool.RSYNC)
@@ -102,7 +103,7 @@ def test_worker_concurrency_limits_claims(configured) -> None:
         assert len(locks) == 1
 
 
-def test_different_repositories_run_in_parallel(configured) -> None:
+def test_different_repositories_run_in_parallel(configured: Settings) -> None:
     with Session(get_engine()) as db:
         for slug in ("debian", "ubuntu", "kali"):
             repository = _repo(db, slug, Tool.FTPSYNC)
@@ -122,7 +123,7 @@ def test_different_repositories_run_in_parallel(configured) -> None:
         assert len(db.exec(select(RepoLock)).all()) == 3
 
 
-def test_locked_repository_is_not_claimed_again(configured) -> None:
+def test_locked_repository_is_not_claimed_again(configured: Settings) -> None:
     with Session(get_engine()) as db:
         repository = _repo(db, "debian", Tool.FTPSYNC)
         jobsvc.enqueue(db, repository, requested_by="test")

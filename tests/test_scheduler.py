@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 from mirrorhub.db import get_engine
 from mirrorhub.models import Job, Repository, Schedule, utcnow
 from mirrorhub.services import scheduler
+from mirrorhub.settings import Settings
 
 
 def _repo(db: Session, slug: str) -> int:
@@ -31,7 +32,7 @@ def test_presets_are_valid_cron_expressions() -> None:
         assert validators.validate_cron(expr) is None, key
 
 
-def test_ensure_next_fire_fills_missing_values(configured) -> None:
+def test_ensure_next_fire_fills_missing_values(configured: Settings) -> None:
     with Session(get_engine()) as db:
         repo_id = _repo(db, "debian")
         db.add(Schedule(repo_id=repo_id, cron_expr="0 3 * * *", enabled=True))
@@ -42,7 +43,7 @@ def test_ensure_next_fire_fills_missing_values(configured) -> None:
         assert row.next_fire_at is not None
 
 
-def test_fire_due_creates_one_job_and_advances(configured) -> None:
+def test_fire_due_creates_one_job_and_advances(configured: Settings) -> None:
     with Session(get_engine()) as db:
         repo_id = _repo(db, "debian")
         schedule = Schedule(repo_id=repo_id, cron_expr="0 3 * * *", enabled=True)
@@ -66,10 +67,11 @@ def test_fire_due_creates_one_job_and_advances(configured) -> None:
         row = db.get(Schedule, schedule_id)
         assert row is not None
         assert row.last_fire_at is not None
+        assert row.next_fire_at is not None
         assert row.next_fire_at > utcnow()
 
 
-def test_fire_due_skips_when_a_job_is_active(configured) -> None:
+def test_fire_due_skips_when_a_job_is_active(configured: Settings) -> None:
     with Session(get_engine()) as db:
         repo_id = _repo(db, "debian")
         schedule = Schedule(
@@ -89,7 +91,7 @@ def test_fire_due_skips_when_a_job_is_active(configured) -> None:
         assert len(db.exec(select(Job)).all()) == 1
 
 
-def test_disabled_schedule_never_fires(configured) -> None:
+def test_disabled_schedule_never_fires(configured: Settings) -> None:
     with Session(get_engine()) as db:
         repo_id = _repo(db, "debian")
         db.add(

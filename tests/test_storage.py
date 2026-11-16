@@ -7,16 +7,17 @@ from sqlmodel import Session
 from mirrorhub.db import get_engine
 from mirrorhub.models import Repository, StorageCache
 from mirrorhub.services import storage
+from mirrorhub.settings import Settings
 
 
-def test_mount_usage_reads_statvfs(configured) -> None:
+def test_mount_usage_reads_statvfs(configured: Settings) -> None:
     usage = storage.mount_usage(configured.data_dir)
     assert usage.total_bytes > 0
     assert 0.0 <= usage.percent_used <= 100.0
     assert usage.path == str(configured.data_dir)
 
 
-def test_scan_repo_buckets_by_architecture(configured, tmp_path: Path) -> None:
+def test_scan_repo_buckets_by_architecture(configured: Settings, tmp_path: Path) -> None:
     root = tmp_path / "mirror"
     files = {
         "dists/bookworm/main/binary-amd64/Packages": 1000,
@@ -39,7 +40,7 @@ def test_scan_repo_buckets_by_architecture(configured, tmp_path: Path) -> None:
     assert per_arch["all"] == 100
 
 
-def test_refresh_all_writes_cache(configured) -> None:
+def test_refresh_all_writes_cache(configured: Settings) -> None:
     repo_dir = configured.data_dir / "debian"
     (repo_dir / "pool").mkdir(parents=True, exist_ok=True)
     (repo_dir / "pool" / "pkg_amd64.deb").write_bytes(b"y" * 2048)
