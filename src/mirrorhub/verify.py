@@ -8,8 +8,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from mirrorhub.export.manifest import load as load_inventory
-
 FORMAT_VERSION = 1
 CHECKSUM_EXCLUSIONS = frozenset({"MANIFEST.sha256", "MANIFEST.sha256.sig", ".done"})
 
@@ -24,6 +22,30 @@ def _sha256(path: Path) -> str:
         while chunk := handle.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _load_inventory(path: Path) -> dict[str, dict[str, Any]]:
+    with path.open(encoding="utf-8") as handle:
+        value = json.load(handle)
+
+    if not isinstance(value, dict):
+        raise VerificationError("inventory must be a mapping")
+
+    for relative, entry in value.items():
+        if not isinstance(relative, str):
+            raise VerificationError("inventory paths must be strings")
+        if (
+            not relative
+            or relative.startswith("/")
+            or any(part in ("", ".", "..") for part in relative.split("/"))
+            or any(ord(character) < 32 for character in relative)
+            or "\\" in relative
+        ):
+            raise VerificationError(f"unsafe relative path: {relative!r}")
+        if not isinstance(entry, dict):
+            raise VerificationError("invalid inventory entry")
+
+    return value
 
 
 def _resolve_export(directory: Path) -> Path:
@@ -148,7 +170,7 @@ def verify(directory: Path | str) -> dict[str, Any]:
         raise VerificationError("files.json is missing")
 
     try:
-        inventory = load_inventory(inventory_path)
+        inventory = _load_inventory(inventory_path)
     except Exception as exc:
         raise VerificationError(f"files.json is invalid: {exc}") from exc
 
