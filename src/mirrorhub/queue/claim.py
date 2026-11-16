@@ -66,6 +66,9 @@ def claim_next(
     if tool_set is not None and not tool_set:
         return None
 
+    if global_limit is None:
+        global_limit = limit
+
     with immediate_session() as db:
         running_filter = [col(Job.status) == JobStatus.RUNNING.value]
         if tool_set is not None:
@@ -74,7 +77,7 @@ def claim_next(
             running_filter.append(col(Job.tool) == tool)
 
         running = db.exec(select(func.count()).select_from(Job).where(*running_filter)).one()
-        if global_limit is not None and int(running) >= max(global_limit, 1):
+        if int(running) >= max(global_limit, 1):
             return None
 
         worker_running_filter = [*running_filter, col(Job.claimed_by) == worker_id]
