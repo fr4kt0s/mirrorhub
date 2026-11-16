@@ -1,5 +1,7 @@
 """Validation rules: slugs, hosts, paths, architectures, arguments, cron, retry."""
 
+from typing import Any
+
 import pytest
 
 from mirrorhub.security import validators as v
@@ -90,7 +92,7 @@ def test_cron() -> None:
         },
     ],
 )
-def test_retry_policy_rejects(policy: dict) -> None:
+def test_retry_policy_rejects(policy: dict[str, Any]) -> None:
     assert v.validate_retry_policy(policy) is not None
 
 

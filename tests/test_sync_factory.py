@@ -1,9 +1,11 @@
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 from mirrorhub.enums import Method, Tool
 from mirrorhub.models import Job, Repository
+from mirrorhub.settings import Settings
 from mirrorhub.sync.errors import SyncConfigurationError
 from mirrorhub.sync.factory import build_ftpsync_plan, build_sync_plan
 from mirrorhub.sync.plan import FtpsyncPlan
@@ -15,8 +17,8 @@ class _Settings:
         self.tmp_dir = root / "tmp"
 
 
-def _repository(**overrides) -> Repository:
-    values = {
+def _repository(**overrides: Any) -> Repository:
+    values: dict[str, Any] = {
         "slug": "debian",
         "name": "Debian",
         "tool": Tool.FTPSYNC,
@@ -37,7 +39,7 @@ def _job() -> Job:
 
 
 def test_build_ftpsync_plan_maps_repository_configuration(tmp_path: Path) -> None:
-    settings = _Settings(tmp_path)
+    settings = cast(Settings, _Settings(tmp_path))
     repository = _repository()
     job = _job()
 
@@ -57,7 +59,7 @@ def test_build_ftpsync_plan_maps_repository_configuration(tmp_path: Path) -> Non
 
 
 def test_build_ftpsync_plan_rejects_wrong_tool(tmp_path: Path) -> None:
-    settings = _Settings(tmp_path)
+    settings = cast(Settings, _Settings(tmp_path))
     repository = _repository(tool=Tool.RSYNC)
     job = _job()
 
@@ -66,7 +68,7 @@ def test_build_ftpsync_plan_rejects_wrong_tool(tmp_path: Path) -> None:
 
 
 def test_build_ftpsync_plan_rejects_wrong_method(tmp_path: Path) -> None:
-    settings = _Settings(tmp_path)
+    settings = cast(Settings, _Settings(tmp_path))
     repository = _repository(method=Method.HTTPS)
     job = _job()
 
@@ -75,7 +77,7 @@ def test_build_ftpsync_plan_rejects_wrong_method(tmp_path: Path) -> None:
 
 
 def test_build_sync_plan_dispatches_ftpsync(tmp_path: Path) -> None:
-    settings = _Settings(tmp_path)
+    settings = cast(Settings, _Settings(tmp_path))
     repository = _repository()
     job = _job()
 
@@ -86,7 +88,7 @@ def test_build_sync_plan_dispatches_ftpsync(tmp_path: Path) -> None:
 
 
 def test_build_sync_plan_rejects_unsupported_tool(tmp_path: Path) -> None:
-    settings = _Settings(tmp_path)
+    settings = cast(Settings, _Settings(tmp_path))
     repository = _repository(tool=Tool.EXPORT)
     job = _job()
 

@@ -9,6 +9,7 @@ from mirrorhub.enums import JobStatus, Trigger
 from mirrorhub.models import Job, RepoLock, Repository, utcnow
 from mirrorhub.queue import claim
 from mirrorhub.services import jobs as jobsvc
+from mirrorhub.settings import Settings
 
 
 def _claim_one(slug: str = "debian", max_attempts: int = 3) -> tuple[int, int]:
@@ -37,7 +38,7 @@ def _age_heartbeat(job_id: int, minutes: int = 10) -> None:
         db.commit()
 
 
-def test_stale_job_is_requeued(configured) -> None:
+def test_stale_job_is_requeued(configured: Settings) -> None:
     repo_id, job_id = _claim_one(max_attempts=3)
     _age_heartbeat(job_id)
 
@@ -55,7 +56,7 @@ def test_stale_job_is_requeued(configured) -> None:
         assert db.get(RepoLock, repo_id) is None
 
 
-def test_stale_job_fails_when_attempts_are_exhausted(configured) -> None:
+def test_stale_job_fails_when_attempts_are_exhausted(configured: Settings) -> None:
     repo_id, job_id = _claim_one(max_attempts=1)
     _age_heartbeat(job_id)
 
@@ -71,7 +72,7 @@ def test_stale_job_fails_when_attempts_are_exhausted(configured) -> None:
         assert db.get(RepoLock, repo_id) is None
 
 
-def test_fresh_heartbeat_is_left_alone(configured) -> None:
+def test_fresh_heartbeat_is_left_alone(configured: Settings) -> None:
     _repo_id, job_id = _claim_one()
     assert claim.recover_stale(stale_after_s=600) == []
     with Session(get_engine()) as db:

@@ -5,12 +5,13 @@ and job are plain instances with no session behind them.
 """
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from mirrorhub.enums import Tool
 from mirrorhub.models import Job, Repository
-from mirrorhub.settings import get_settings
+from mirrorhub.settings import Settings, get_settings
 from mirrorhub.sync.adapters import DebmirrorAdapter, FtpsyncAdapter, RsyncAdapter, WgetAdapter
 from mirrorhub.sync.context import SyncExecutionContext
 from mirrorhub.sync.errors import SyncConfigurationError
@@ -21,8 +22,8 @@ from mirrorhub.worker.builders import BuildError
 from mirrorhub.worker.progress import ProgressParser
 
 
-def _repo(**overrides: object) -> Repository:
-    values: dict[str, object] = {
+def _repo(**overrides: Any) -> Repository:
+    values: dict[str, Any] = {
         "slug": "debian",
         "name": "Debian",
         "kind": "apt",
@@ -42,7 +43,7 @@ def _job(repo: Repository, *, dry_run: bool = False, job_id: int = 1) -> Job:
     return Job(id=job_id, repo_id=1, tool=repo.tool, dry_run=dry_run)
 
 
-def _build(repo: Repository, job: Job, settings) -> builders.BuildPlan:
+def _build(repo: Repository, job: Job, settings: Settings) -> builders.BuildPlan:
     sync_plan = build_sync_plan(job, repo, settings)
     context = SyncExecutionContext(
         settings=settings,
@@ -62,7 +63,7 @@ def _build(repo: Repository, job: Job, settings) -> builders.BuildPlan:
     return adapter.build_plan(sync_plan, context)
 
 
-def test_debmirror_passes_arch_suites_and_sections(configured) -> None:
+def test_debmirror_passes_arch_suites_and_sections(configured: Settings) -> None:
     repo = _repo(architectures=["amd64", "arm64"], suites=["bookworm", "bookworm-updates"])
     plan = _build(repo, _job(repo), get_settings())
     argv = list(plan.steps[0].argv)
@@ -79,7 +80,7 @@ def test_debmirror_passes_arch_suites_and_sections(configured) -> None:
     assert argv[-1] == str(plan.target)
 
 
-def test_debmirror_source_and_cleanup_modes(configured) -> None:
+def test_debmirror_source_and_cleanup_modes(configured: Settings) -> None:
     repo = _repo(include_source=True, cleanup_mode="none")
     argv = list(_build(repo, _job(repo), get_settings()).steps[0].argv)
     assert "--source" in argv
@@ -87,19 +88,19 @@ def test_debmirror_source_and_cleanup_modes(configured) -> None:
     assert "--nocleanup" in argv
 
 
-def test_debmirror_architecture_none_is_explicit(configured) -> None:
+def test_debmirror_architecture_none_is_explicit(configured: Settings) -> None:
     repo = _repo(architectures=["none"])
     argv = list(_build(repo, _job(repo), get_settings()).steps[0].argv)
     assert "--arch=none" in argv
 
 
-def test_debmirror_requires_architectures(configured) -> None:
+def test_debmirror_requires_architectures(configured: Settings) -> None:
     repo = _repo(architectures=[])
     with pytest.raises(SyncConfigurationError):
         _build(repo, _job(repo), get_settings())
 
 
-def test_debmirror_dry_run_uses_state_volume(configured) -> None:
+def test_debmirror_dry_run_uses_state_volume(configured: Settings) -> None:
     repo = _repo()
     job = _job(repo, dry_run=True)
     plan = _build(repo, job, get_settings())
@@ -109,13 +110,13 @@ def test_debmirror_dry_run_uses_state_volume(configured) -> None:
     assert settings.data_dir not in plan.target.parents
 
 
-def test_signature_disable_adds_ignore_flag(configured) -> None:
+def test_signature_disable_adds_ignore_flag(configured: Settings) -> None:
     repo = _repo(verify_signatures=False)
     argv = list(_build(repo, _job(repo), get_settings()).steps[0].argv)
     assert "--ignore-release-gpg" in argv
 
 
-def test_arch_rsync_two_passes_with_database_last(configured) -> None:
+def test_arch_rsync_two_passes_with_database_last(configured: Settings) -> None:
     repo = _repo(
         slug="archlinux",
         kind="arch",
@@ -151,7 +152,7 @@ def test_arch_rsync_two_passes_with_database_last(configured) -> None:
     assert "--delete" not in databases.argv
 
 
-def test_rsync_requires_module(configured) -> None:
+def test_rsync_requires_module(configured: Settings) -> None:
     repo = _repo(
         slug="archlinux",
         kind="arch",
@@ -166,7 +167,7 @@ def test_rsync_requires_module(configured) -> None:
         _build(repo, _job(repo), get_settings())
 
 
-def test_rsync_rejects_wrong_method(configured) -> None:
+def test_rsync_rejects_wrong_method(configured: Settings) -> None:
     repo = _repo(
         slug="archlinux",
         kind="arch",
@@ -181,7 +182,7 @@ def test_rsync_rejects_wrong_method(configured) -> None:
         _build(repo, _job(repo), get_settings())
 
 
-def test_rsync_rejects_custom_filters_for_arch(configured) -> None:
+def test_rsync_rejects_custom_filters_for_arch(configured: Settings) -> None:
     repo = _repo(
         slug="archlinux",
         kind="arch",
@@ -197,13 +198,13 @@ def test_rsync_rejects_custom_filters_for_arch(configured) -> None:
         _build(repo, _job(repo), get_settings())
 
 
-def test_rsync_dry_run_flag(configured) -> None:
+def test_rsync_dry_run_flag(configured: Settings) -> None:
     repo = _repo(slug="generic", kind="generic", tool="rsync", method="rsync")
     plan = _build(repo, _job(repo, dry_run=True), get_settings())
     assert "--dry-run" in plan.steps[0].argv
 
 
-def test_wget_limit_rate_and_destination(configured) -> None:
+def test_wget_limit_rate_and_destination(configured: Settings) -> None:
     repo = _repo(
         slug="files",
         kind="generic",
@@ -223,7 +224,7 @@ def test_wget_limit_rate_and_destination(configured) -> None:
     assert (plan.target / "keys").is_dir()
 
 
-def test_wget_rejects_path_traversal(configured) -> None:
+def test_wget_rejects_path_traversal(configured: Settings) -> None:
     repo = _repo(
         slug="files",
         kind="generic",
@@ -245,7 +246,7 @@ def test_progress_parser_reads_percentages() -> None:
     assert pct == 99.0
 
 
-def test_no_step_uses_a_shell(configured) -> None:
+def test_no_step_uses_a_shell(configured: Settings) -> None:
     repo = _repo()
     plan = _build(repo, _job(repo), get_settings())
     for step in plan.steps:

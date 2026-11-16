@@ -5,6 +5,7 @@ reference an existing repository (foreign key enforced by SQLite).
 """
 
 import json
+from typing import Any
 
 import pytest
 from sqlmodel import Session
@@ -13,11 +14,12 @@ from mirrorhub.db import get_engine
 from mirrorhub.enums import JobStatus
 from mirrorhub.models import Job, NotificationChannel, Repository
 from mirrorhub.services import notify
+from mirrorhub.settings import Settings
 
 
 @pytest.fixture
-def captured(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
-    calls: list[dict] = []
+def captured(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
 
     def fake_post(url: str, payload: bytes, headers: dict[str, str], timeout: int = 10) -> int:
         calls.append({"url": url, "payload": payload, "headers": headers})
@@ -54,7 +56,7 @@ def _channel(
     return channel.id or 0
 
 
-def test_config_secrets_are_encrypted_at_rest(configured) -> None:
+def test_config_secrets_are_encrypted_at_rest(configured: Settings) -> None:
     config = {"url": "https://ntfy.example/topic", "token": "s3cret", "format": "ntfy"}
     stored = notify.encrypt_config(config)
     assert stored["token"].startswith("enc:")
@@ -63,14 +65,14 @@ def test_config_secrets_are_encrypted_at_rest(configured) -> None:
     assert notify.decrypt_config(stored) == config
 
 
-def test_channel_without_rules_sends_nothing(configured, captured: list[dict]) -> None:
+def test_channel_without_rules_sends_nothing(configured: Settings, captured: list[dict[str, Any]]) -> None:
     with Session(get_engine()) as db:
         _channel(db, "hook")
         assert notify.dispatch(db, "job_failed", title="t", message="m") == []
     assert captured == []
 
 
-def test_generic_webhook_payload(configured, captured: list[dict]) -> None:
+def test_generic_webhook_payload(configured: Settings, captured: list[dict[str, Any]]) -> None:
     with Session(get_engine()) as db:
         channel_id = _channel(db, "hook", url="https://hooks.example/x")
         notify.create_rule(
@@ -87,7 +89,7 @@ def test_generic_webhook_payload(configured, captured: list[dict]) -> None:
     assert payload["job_id"] == 1
 
 
-def test_ntfy_payload_uses_headers(configured, captured: list[dict]) -> None:
+def test_ntfy_payload_uses_headers(configured: Settings, captured: list[dict[str, Any]]) -> None:
     with Session(get_engine()) as db:
         channel_id = _channel(
             db, "phone", url="https://ntfy.example/topic", fmt="ntfy", token="abc"
@@ -100,7 +102,7 @@ def test_ntfy_payload_uses_headers(configured, captured: list[dict]) -> None:
     assert captured[0]["payload"].startswith(b"Disk")
 
 
-def test_gotify_url_gets_message_endpoint(configured, captured: list[dict]) -> None:
+def test_gotify_url_gets_message_endpoint(configured: Settings, captured: list[dict[str, Any]]) -> None:
     with Session(get_engine()) as db:
         channel_id = _channel(db, "gotify", url="https://gotify.example", fmt="gotify", token="tok")
         notify.create_rule(
@@ -112,7 +114,7 @@ def test_gotify_url_gets_message_endpoint(configured, captured: list[dict]) -> N
     assert payload["title"] == "ok"
 
 
-def test_only_matching_rules_fire(configured, captured: list[dict]) -> None:
+def test_only_matching_rules_fire(configured: Settings, captured: list[dict[str, Any]]) -> None:
     with Session(get_engine()) as db:
         repo_a = _repo(db, "debian")
         repo_b = _repo(db, "ubuntu")
@@ -133,9 +135,9 @@ def test_only_matching_rules_fire(configured, captured: list[dict]) -> None:
 
 
 def test_failed_delivery_is_reported_not_raised(
-    configured, monkeypatch: pytest.MonkeyPatch
+    configured: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def broken(*_args, **_kwargs):
+    def broken(*_args: Any, **_kwargs: Any) -> None:
         raise OSError("connection refused")
 
     monkeypatch.setattr(notify, "_http_post", broken)
@@ -150,7 +152,7 @@ def test_failed_delivery_is_reported_not_raised(
     assert "connection refused" in deliveries[0].detail
 
 
-def test_sweep_finished_is_idempotent(configured, captured: list[dict]) -> None:
+def test_sweep_finished_is_idempotent(configured: Settings, captured: list[dict[str, Any]]) -> None:
     with Session(get_engine()) as db:
         repo_id = _repo(db, "debian")
         channel_id = _channel(db, "hook")
@@ -183,7 +185,7 @@ def test_sweep_finished_is_idempotent(configured, captured: list[dict]) -> None:
     assert len(captured) == 2
 
 
-def test_successful_job_notifies_once(configured, captured: list[dict]) -> None:
+def test_successful_job_notifies_once(configured: Settings, captured: list[dict[str, Any]]) -> None:
     with Session(get_engine()) as db:
         repo_id = _repo(db, "debian")
         channel_id = _channel(db, "hook")
