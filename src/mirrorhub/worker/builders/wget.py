@@ -68,7 +68,11 @@ def build(repo: Repository, job: Job, target: Path, cwd: Path) -> BuildPlan:
 
     root = repo.upstream_root.strip("/")
     depth = 0 if not root else len(root.split("/"))
-    url = f"{repo.method}://{repo.upstream_host}/{root}/" if root else f"{repo.method}://{repo.upstream_host}/"
+    url = (
+        f"{repo.method}://{repo.upstream_host}/{root}/"
+        if root
+        else f"{repo.method}://{repo.upstream_host}/"
+    )
 
     argv = [
         "wget",

@@ -2,6 +2,7 @@
 {% block title %}{{ "Edit" if mode == "edit" else "New" }} ftpsync repository{% endblock %}
 {% block content %}
 <h1>{{ "Edit ftpsync repository" if mode == "edit" else "New ftpsync repository" }}</h1>
+<p class="muted">Sync method: <strong>FTPSync</strong></p>
 {% if values.preset_source %}<p class="muted">Prefilled from preset: {{ values.preset_source }}</p>{% endif %}
 {% if errors %}
 <ul class="alert alert-error">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
@@ -15,19 +16,25 @@
   {% include "repos/_upstream.html" %}
 
   <fieldset>
-    <legend>Transfer</legend>
-    <label>Method
+    <legend>Transport</legend>
+    <label>Transport
       <select name="method">
         <option value="rsync" {% if values.method == "rsync" %}selected{% endif %}>rsync</option>
       </select>
     </label>
-    <p class="muted">ftpsync performs a two-stage rsync-based archive sync.</p>
+    <p class="muted">FTPSync uses the rsync transport for its two-stage archive sync.</p>
   </fieldset>
 
   <fieldset>
-    <legend>Architectures</legend>
-    <label>Architectures (comma separated)
-      <input name="architectures" value="{{ values.architectures }}" required>
+    <legend>Architecture selection</legend>
+    <p class="muted">
+      Use either ARCH_INCLUDE or ARCH_EXCLUDE. Leave both empty to synchronize all architectures.
+    </p>
+    <label>Architectures to include (ARCH_INCLUDE)
+      <input name="architectures" value="{{ values.architectures }}" placeholder="amd64 i386 source">
+    </label>
+    <label>Architectures to exclude (ARCH_EXCLUDE)
+      <input name="arch_exclude" value="{{ values.arch_exclude }}" placeholder="armel armhf mipsel">
     </label>
   </fieldset>
 
@@ -35,6 +42,9 @@
     <legend>Filters</legend>
     <label>Exclude patterns (rsync --exclude)
       <input name="exclude_patterns" value="{{ values.exclude_patterns }}">
+    </label>
+    <label>Extra rsync arguments (RSYNC_EXTRA)
+      <input name="rsync_extra" value="{{ values.rsync_extra }}" placeholder="--compress, --partial">
     </label>
     <label>Bandwidth limit (KB/s, 0 = unlimited)
       <input name="bwlimit_kbps" value="{{ values.bwlimit_kbps }}">

@@ -109,6 +109,7 @@ class Repository(SQLModel, table=True):
     suites: list[str] = Field(default_factory=list, sa_column=_json())
     sections: list[str] = Field(default_factory=list, sa_column=_json())
     architectures: list[str] = Field(default_factory=list, sa_column=_json())
+    arch_exclude: list[str] = Field(default_factory=list, sa_column=_json())
     include_source: bool = False
     rsync_extra: list[str] = Field(default_factory=list, sa_column=_json())
     extra_files: list[dict[str, str]] = Field(default_factory=list, sa_column=_json())
@@ -241,8 +242,7 @@ class ManifestSnapshot(SQLModel, table=True):
 
 class GpgKey(SQLModel, table=True):
     __tablename__ = "gpg_key"
-    id: int | None = Field(default=None, primary_key=True)
-    fingerprint: str = Field(unique=True, index=True)
+    fingerprint: str = Field(primary_key=True, unique=True, index=True)
     uid: str = ""
     source: str = "upload"  # upload | package
     keyring_name: str = "trustedkeys.gpg"

@@ -36,16 +36,10 @@ def _resolve_export(directory: Path) -> Path:
     if (directory / ".done").is_file():
         return directory
 
-    candidates = [
-        marker.parent
-        for marker in directory.rglob(".done")
-        if marker.is_file()
-    ]
+    candidates = [marker.parent for marker in directory.rglob(".done") if marker.is_file()]
 
     if not candidates:
-        raise VerificationError(
-            f"no published export with .done found below: {directory}"
-        )
+        raise VerificationError(f"no published export with .done found below: {directory}")
 
     return max(candidates, key=lambda path: (path / ".done").stat().st_mtime)
 
@@ -93,9 +87,7 @@ def verify(directory: Path | str) -> dict[str, Any]:
         raise VerificationError(f"manifest.json is missing fields: {', '.join(missing)}")
 
     if metadata["format_version"] != FORMAT_VERSION:
-        raise VerificationError(
-            f"unsupported export format version: {metadata['format_version']}"
-        )
+        raise VerificationError(f"unsupported export format version: {metadata['format_version']}")
 
     expected_export_id = done.read_text(encoding="ascii").strip()
     if expected_export_id != metadata["export_id"]:
@@ -130,16 +122,12 @@ def verify(directory: Path | str) -> dict[str, Any]:
 
         parts = line.split(None, 1)
         if len(parts) != 2 or not parts[1]:
-            raise VerificationError(
-                f"invalid checksum line {line_number} in MANIFEST.sha256"
-            )
+            raise VerificationError(f"invalid checksum line {line_number} in MANIFEST.sha256")
 
         expected_digest, name = parts
         name = name.strip()
         if name in CHECKSUM_EXCLUSIONS:
-            raise VerificationError(
-                f"checksum manifest must not contain {name}"
-            )
+            raise VerificationError(f"checksum manifest must not contain {name}")
 
         path = export / name
         if not path.is_file():
@@ -148,8 +136,7 @@ def verify(directory: Path | str) -> dict[str, Any]:
         actual_digest = _sha256(path)
         if actual_digest != expected_digest.lower():
             raise VerificationError(
-                f"checksum mismatch for {name}: "
-                f"expected {expected_digest}, got {actual_digest}"
+                f"checksum mismatch for {name}: expected {expected_digest}, got {actual_digest}"
             )
         checked += 1
 
@@ -166,9 +153,7 @@ def verify(directory: Path | str) -> dict[str, Any]:
         raise VerificationError(f"files.json is invalid: {exc}") from exc
 
     if len(inventory) != metadata.get("counts", {}).get("inventory"):
-        raise VerificationError(
-            "files.json inventory count does not match manifest metadata"
-        )
+        raise VerificationError("files.json inventory count does not match manifest metadata")
 
     deleted_path = export / "deleted.txt"
     if not deleted_path.is_file():

@@ -25,6 +25,7 @@ LIST_FIELDS = (
     "suites",
     "sections",
     "architectures",
+    "arch_exclude",
     "rsync_extra",
     "include_patterns",
     "exclude_patterns",
@@ -68,6 +69,10 @@ def _split(raw: str) -> list[str]:
     return [part.strip() for part in re.split(r"[,\n]+", raw) if part.strip()]
 
 
+def _split_architectures(raw: str) -> list[str]:
+    return [part for part in re.split(r"[,\s]+", raw) if part.strip()]
+
+
 def parse_extra_files(raw: str) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     for line in raw.splitlines():
@@ -97,6 +102,8 @@ def parse_form(form: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, str]]
     for name in LIST_FIELDS:
         raw[name] = get(name)
         data[name] = _split(get(name))
+    for name in ("architectures", "arch_exclude"):
+        data[name] = _split_architectures(get(name))
     for name in BOOL_FIELDS:
         data[name] = bool(form.get(name))
         raw[name] = "on" if data[name] else ""
@@ -211,7 +218,7 @@ def validate(data: dict[str, Any]) -> list[str]:
             errors.append(check)
 
     for field in ("include_regex", "exclude_regex"):
-        value = data[field]
+        value = data.get(field, "")
         if len(value) > 500:
             errors.append(f"{field.replace('_', ' ')}: at most 500 characters")
         if "\n" in value or "\r" in value:
@@ -256,7 +263,9 @@ def validate(data: dict[str, Any]) -> list[str]:
             errors.append("root path: must start with the rsync module, e.g. /packages")
         if data["kind"] == "arch":
             if not data["suites"]:
-                errors.append("Arch repositories: at least one repository is required (core, extra, ...)")
+                errors.append(
+                    "Arch repositories: at least one repository is required (core, extra, ...)"
+                )
             if not data["architectures"] or "none" in data["architectures"]:
                 errors.append("Architectures: Arch rsync mirrors require concrete architectures")
             error = validators.validate_architectures(data["architectures"])
@@ -275,8 +284,19 @@ def validate(data: dict[str, Any]) -> list[str]:
     elif tool == "ftpsync":
         if method != "rsync":
             errors.append("method: ftpsync requires method rsync")
-        if not data["architectures"] or "none" in data["architectures"]:
-            errors.append("architectures: ftpsync requires at least one architecture")
+
+        include = data["architectures"]
+        exclude = data["arch_exclude"]
+
+        if include and exclude:
+            errors.append(
+                "architecture selection: use either ARCH_INCLUDE or ARCH_EXCLUDE, not both"
+            )
+
+        if exclude:
+            error = validators.validate_list_field("architectures to exclude", exclude)
+            if error:
+                errors.append(error)
 
     return errors
 
@@ -289,7 +309,9 @@ def _ensure_unique_slug(db: Session, slug: str, repo_id: int | None) -> str | No
 
 
 def create(db: Session, data: dict[str, Any], *, actor: str, ip: str = "") -> Repository:
-    repo = Repository(**{field: data[field] for field in DATA_FIELDS})
+    repo = Repository(
+        **{field: data[field] for field in DATA_FIELDS if field in data}
+    )
     db.add(repo)
     db.flush()
     audit.record(
@@ -323,7 +345,7 @@ def update(
 ) -> Repository:
     before = {field: getattr(repo, field) for field in ("slug", "name", "verify_signatures")}
     for field in DATA_FIELDS:
-        if field == "slug":
+        if field == "slug" or field not in data:
             continue
         setattr(repo, field, data[field])
     audit.record(
@@ -368,16 +390,20 @@ def delete(db: Session, repo: Repository, *, actor: str, ip: str = "") -> list[s
     blockers = deletion_blockers(db, repo.id or 0)
     if blockers:
         return blockers
-    from mirrorhub.models import ManifestSnapshot, NotificationRule, RepoLock, Schedule, StorageCache
+    from mirrorhub.models import (
+        ManifestSnapshot,
+        NotificationRule,
+        RepoLock,
+        Schedule,
+        StorageCache,
+    )
 
     for model in (NotificationRule, Export, Schedule, RepoLock, StorageCache, ManifestSnapshot):
         rows = db.exec(select(model).where(model.repo_id == repo.id)).all()
         for row in rows:
             db.delete(row)
 
-    jobs = db.exec(
-        select(Job).where(Job.repo_id == repo.id).order_by(col(Job.id).desc())
-    ).all()
+    jobs = db.exec(select(Job).where(Job.repo_id == repo.id).order_by(col(Job.id).desc())).all()
     for row in jobs:
         db.delete(row)
 
