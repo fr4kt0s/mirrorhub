@@ -8,8 +8,9 @@ from mirrorhub.worker.main import _build_sync_plan
 
 
 def test_unsupported_sync_tool_raises(configured: Settings) -> None:
-    job = Job(repo_id=1, tool=Tool.EXPORT.value, type="sync")
+    job = Job(id=1, repo_id=1, tool=Tool.EXPORT.value, type="sync")
     repository = Repository(
+        id=1,
         slug="unsupported",
         name="Unsupported",
         tool=Tool.EXPORT.value,
@@ -20,8 +21,9 @@ def test_unsupported_sync_tool_raises(configured: Settings) -> None:
 
 
 def test_non_sync_job_raises(configured: Settings) -> None:
-    job = Job(repo_id=1, tool=Tool.FTPSYNC.value, type="export")
+    job = Job(id=1, repo_id=1, tool=Tool.FTPSYNC.value, type="export")
     repository = Repository(
+        id=1,
         slug="debian",
         name="Debian",
         tool=Tool.FTPSYNC.value,
