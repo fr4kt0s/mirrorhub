@@ -18,22 +18,24 @@ def test_cleanup_keeps_active_jobs_and_releases_references(configured: Settings)
         db.commit()
         db.refresh(repo)
         assert repo.id is not None
+        repo_id = repo.id
 
-        parent = Job(repo_id=repo.id, status=JobStatus.CANCELLED.value)
-        active = Job(repo_id=repo.id, status=JobStatus.QUEUED.value)
+        parent = Job(repo_id=repo_id, status=JobStatus.CANCELLED.value)
+        active = Job(repo_id=repo_id, status=JobStatus.QUEUED.value)
         db.add(parent)
         db.add(active)
         db.commit()
         db.refresh(parent)
         assert parent.id is not None
+        parent_id = parent.id
         db.refresh(active)
         assert active.id is not None
 
-        child = Job(repo_id=repo.id, status=JobStatus.CANCELLED.value, parent_job_id=parent.id)
+        child = Job(repo_id=repo_id, status=JobStatus.CANCELLED.value, parent_job_id=parent_id)
         db.add(child)
-        db.add(Export(export_id="20261106T000000Z-full", repo_id=repo.id, job_id=parent.id))
-        db.add(ManifestSnapshot(repo_id=repo.id, job_id=parent.id, path="/state/x.jsonl.zst"))
-        db.add(RepoLock(repo_id=repo.id, job_id=parent.id, worker_id="w1"))
+        db.add(Export(export_id="20261106T000000Z-full", repo_id=repo_id, job_id=parent_id))
+        db.add(ManifestSnapshot(repo_id=repo_id, job_id=parent_id, path="/state/x.jsonl.zst"))
+        db.add(RepoLock(repo_id=repo_id, job_id=parent_id, worker_id="w1"))
         db.commit()
         active_id = active.id
 
