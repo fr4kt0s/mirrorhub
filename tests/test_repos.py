@@ -2,6 +2,7 @@
 
 import pytest
 from fastapi.testclient import TestClient
+from httpx2 import Response
 from sqlmodel import Session, select
 
 from mirrorhub.db import get_engine
@@ -56,7 +57,7 @@ def _repos() -> list[Repository]:
         return list(db.exec(select(Repository)).all())
 
 
-def _post(admin: TestClient, token: str, path: str, data: dict[str, str]) -> object:
+def _post(admin: TestClient, token: str, path: str, data: dict[str, str]) -> Response:
     return admin.post(path, data=data, headers={"X-CSRF-Token": token})
 
 
