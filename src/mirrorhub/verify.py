@@ -39,7 +39,9 @@ def _resolve_export(directory: Path) -> Path:
     candidates = [marker.parent for marker in directory.rglob(".done") if marker.is_file()]
 
     if not candidates:
-        raise VerificationError(f"no published export with .done found below: {directory}")
+        raise VerificationError(
+            f"no published export with required .done marker found below: {directory}"
+        )
 
     return max(candidates, key=lambda path: (path / ".done").stat().st_mtime)
 
