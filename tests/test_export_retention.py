@@ -22,6 +22,7 @@ def _setup(settings: Settings, keep: int) -> int:
         db.add(Setting(key=export_jobs.RETENTION_KEY, value=keep))
         db.commit()
         db.refresh(repo)
+        assert repo.id is not None
         previous = None
         for export_id, mode in IDS:
             directory = settings.export_dir / "files" / export_id
