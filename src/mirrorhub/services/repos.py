@@ -309,9 +309,7 @@ def _ensure_unique_slug(db: Session, slug: str, repo_id: int | None) -> str | No
 
 
 def create(db: Session, data: dict[str, Any], *, actor: str, ip: str = "") -> Repository:
-    repo = Repository(
-        **{field: data[field] for field in DATA_FIELDS if field in data}
-    )
+    repo = Repository(**{field: data[field] for field in DATA_FIELDS if field in data})
     db.add(repo)
     db.flush()
     audit.record(
