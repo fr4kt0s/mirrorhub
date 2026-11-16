@@ -48,7 +48,7 @@ def claim_next(
     tool: str | None = None,
     tools: Iterable[Tool] | None = None,
     limit: int,
-    global_limit: int | None = None,
+    global_limit: int = 1,
     now: datetime | None = None,
 ) -> ClaimedJob | None:
     """Claim the oldest eligible job for the supported tools.
@@ -74,7 +74,7 @@ def claim_next(
             running_filter.append(col(Job.tool) == tool)
 
         running = db.exec(select(func.count()).select_from(Job).where(*running_filter)).one()
-        if global_limit is not None and int(running) >= max(global_limit, 1):
+        if int(running) >= max(global_limit, 1):
             return None
 
         worker_running_filter = [*running_filter, col(Job.claimed_by) == worker_id]
