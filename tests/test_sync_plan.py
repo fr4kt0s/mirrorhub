@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -8,7 +9,7 @@ from mirrorhub.sync.errors import SyncConfigurationError
 from mirrorhub.sync.plan import DebmirrorPlan, FtpsyncPlan, RsyncPlan, WgetPlan
 
 
-def _ftpsync_plan_kwargs() -> dict:
+def _ftpsync_plan_kwargs() -> dict[str, Any]:
     return {
         "job_id": 1,
         "repository_id": 2,
@@ -24,7 +25,7 @@ def _ftpsync_plan_kwargs() -> dict:
     }
 
 
-def _rsync_plan_kwargs() -> dict:
+def _rsync_plan_kwargs() -> dict[str, Any]:
     return {
         "job_id": 1,
         "repository_id": 2,
@@ -40,7 +41,7 @@ def _rsync_plan_kwargs() -> dict:
     }
 
 
-def _debmirror_plan_kwargs() -> dict:
+def _debmirror_plan_kwargs() -> dict[str, Any]:
     return {
         "job_id": 1,
         "repository_id": 2,
@@ -60,7 +61,7 @@ def _debmirror_plan_kwargs() -> dict:
     }
 
 
-def _wget_plan_kwargs() -> dict:
+def _wget_plan_kwargs() -> dict[str, Any]:
     return {
         "job_id": 1,
         "repository_id": 2,
