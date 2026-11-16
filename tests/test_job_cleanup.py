@@ -17,6 +17,7 @@ def test_cleanup_keeps_active_jobs_and_releases_references(configured: Settings)
         db.add(repo)
         db.commit()
         db.refresh(repo)
+        assert repo.id is not None
 
         parent = Job(repo_id=repo.id, status=JobStatus.CANCELLED.value)
         active = Job(repo_id=repo.id, status=JobStatus.QUEUED.value)
@@ -24,7 +25,9 @@ def test_cleanup_keeps_active_jobs_and_releases_references(configured: Settings)
         db.add(active)
         db.commit()
         db.refresh(parent)
+        assert parent.id is not None
         db.refresh(active)
+        assert active.id is not None
 
         child = Job(repo_id=repo.id, status=JobStatus.CANCELLED.value, parent_job_id=parent.id)
         db.add(child)

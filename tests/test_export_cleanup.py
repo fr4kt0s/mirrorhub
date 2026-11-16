@@ -16,10 +16,12 @@ def test_failed_and_stale_exports_are_removed(configured: Settings) -> None:
         db.add(repo)
         db.commit()
         db.refresh(repo)
+        assert repo.id is not None
         running = Job(repo_id=repo.id, type="export", tool="export", status="running")
         db.add(running)
         db.commit()
         db.refresh(running)
+        assert running.id is not None
 
         failed = "20261101T000000Z-full"
         stale = "20261102T000000Z-incr"
