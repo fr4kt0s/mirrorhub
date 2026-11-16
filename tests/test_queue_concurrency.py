@@ -17,11 +17,12 @@ def _enqueue(slug: str, count: int) -> None:
         db.add(repository)
         db.flush()
         assert repository.id is not None
+        repository_id = repository.id
 
         for _ in range(count):
             db.add(
                 Job(
-                    repo_id=repository.id,
+                    repo_id=repository_id,
                     tool="debmirror",
                     max_attempts=3,
                 )
