@@ -2,6 +2,7 @@
 
 import yaml
 from fastapi.testclient import TestClient
+from httpx2 import Response
 from sqlmodel import Session, select
 
 from mirrorhub.db import get_engine
@@ -23,7 +24,7 @@ repositories:
 """
 
 
-def _post(admin: TestClient, token: str, data: dict[str, str]) -> object:
+def _post(admin: TestClient, token: str, data: dict[str, str]) -> Response:
     return admin.post("/config/import", data=data, headers={"X-CSRF-Token": token})
 
 
