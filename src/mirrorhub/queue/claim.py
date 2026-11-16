@@ -48,7 +48,7 @@ def claim_next(
     tool: str | None = None,
     tools: Iterable[Tool] | None = None,
     limit: int,
-    global_limit: int = 1,
+    global_limit: int | None = None,
     now: datetime | None = None,
 ) -> ClaimedJob | None:
     """Claim the oldest eligible job for the supported tools.
@@ -65,6 +65,9 @@ def claim_next(
 
     if tool_set is not None and not tool_set:
         return None
+
+    if global_limit is None:
+        global_limit = limit
 
     with immediate_session() as db:
         running_filter = [col(Job.status) == JobStatus.RUNNING.value]
