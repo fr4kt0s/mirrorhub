@@ -1,9 +1,11 @@
 """Backoff arithmetic and retryable exit codes."""
 
+from typing import Any
+
 from mirrorhub.queue import retry
 
 
-def _policy(**overrides):
+def _policy(**overrides: Any) -> dict[str, Any]:
     base = {
         "max_attempts": 4,
         "backoff": "exponential",
