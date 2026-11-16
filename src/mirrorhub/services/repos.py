@@ -218,7 +218,7 @@ def validate(data: dict[str, Any]) -> list[str]:
             errors.append(check)
 
     for field in ("include_regex", "exclude_regex"):
-        value = data[field]
+        value = data.get(field, "")
         if len(value) > 500:
             errors.append(f"{field.replace('_', ' ')}: at most 500 characters")
         if "\n" in value or "\r" in value:
@@ -309,7 +309,7 @@ def _ensure_unique_slug(db: Session, slug: str, repo_id: int | None) -> str | No
 
 
 def create(db: Session, data: dict[str, Any], *, actor: str, ip: str = "") -> Repository:
-    repo = Repository(**{field: data[field] for field in DATA_FIELDS})
+    repo = Repository(**{field: data.get(field) for field in DATA_FIELDS})
     db.add(repo)
     db.flush()
     audit.record(
@@ -343,7 +343,7 @@ def update(
 ) -> Repository:
     before = {field: getattr(repo, field) for field in ("slug", "name", "verify_signatures")}
     for field in DATA_FIELDS:
-        if field == "slug":
+        if field == "slug" or field not in data:
             continue
         setattr(repo, field, data[field])
     audit.record(
