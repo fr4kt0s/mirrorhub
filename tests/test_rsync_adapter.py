@@ -1,13 +1,20 @@
+from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from mirrorhub.enums import Tool
+from mirrorhub.models import Job, Repository
+from mirrorhub.settings import Settings
 from mirrorhub.sync.adapters import RsyncAdapter
+from mirrorhub.sync.context import SyncExecutionContext
 from mirrorhub.sync.errors import SyncConfigurationError
 from mirrorhub.sync.plan import FtpsyncPlan, RsyncPlan
 from mirrorhub.sync.result import SyncErrorCode, SyncStatus
+from mirrorhub.worker.runner import RunResult
+
+_STARTED_AT = datetime(2024, 1, 1, tzinfo=UTC)
+_FINISHED_AT = datetime(2024, 1, 1, 0, 0, 1, tzinfo=UTC)
 
 
 def _plan(**overrides: object) -> RsyncPlan:
@@ -28,27 +35,37 @@ def _plan(**overrides: object) -> RsyncPlan:
     return RsyncPlan(**values)
 
 
-def _context(plan: RsyncPlan) -> SimpleNamespace:
-    job = SimpleNamespace(dry_run=plan.dry_run)
-    repository = SimpleNamespace(
+def _context(plan: RsyncPlan) -> SyncExecutionContext:
+    settings = Settings(state_dir=Path("/tmp"))
+    job = Job(
+        id=1,
+        repo_id=2,
+        tool=Tool.RSYNC.value,
+        dry_run=plan.dry_run,
+    )
+    repository = Repository(
+        id=2,
+        slug=plan.slug,
+        name=plan.slug,
+        kind=plan.repository_kind,
+        tool=Tool.RSYNC.value,
         upstream_host=plan.upstream_host,
         upstream_root=plan.upstream_root,
         method=plan.source_protocol,
-        kind=plan.repository_kind,
-        suites=plan.suites,
-        architectures=plan.architectures,
-        include_patterns=plan.include_patterns,
-        exclude_patterns=plan.exclude_patterns,
+        suites=list(plan.suites),
+        architectures=list(plan.architectures),
+        include_patterns=list(plan.include_patterns),
+        exclude_patterns=list(plan.exclude_patterns),
         bwlimit_kbps=plan.bwlimit_kbps,
-        extra_args=plan.extra_args,
+        extra_args=list(plan.extra_args),
     )
-    return SimpleNamespace(
+    return SyncExecutionContext(
+        settings=settings,
         job=job,
         repository=repository,
         target=plan.target,
         work_dir=plan.work_dir,
         log_dir=plan.log_dir,
-        settings=SimpleNamespace(tmp_dir=Path("/tmp")),
     )
 
 
@@ -100,9 +117,9 @@ def test_rsync_adapter_interprets_success() -> None:
     plan = _plan()
     result = RsyncAdapter().interpret_result(
         plan,
-        SimpleNamespace(cancelled=False, exit_code=0),
-        started_at=1,
-        finished_at=2,
+        RunResult(exit_code=0, cancelled=False),
+        started_at=_STARTED_AT,
+        finished_at=_FINISHED_AT,
     )
 
     assert result.status == SyncStatus.SUCCEEDED
@@ -114,9 +131,9 @@ def test_rsync_adapter_interprets_failure() -> None:
     plan = _plan()
     result = RsyncAdapter().interpret_result(
         plan,
-        SimpleNamespace(cancelled=False, exit_code=23),
-        started_at=1,
-        finished_at=2,
+        RunResult(exit_code=23, cancelled=False),
+        started_at=_STARTED_AT,
+        finished_at=_FINISHED_AT,
     )
 
     assert result.status == SyncStatus.FAILED
@@ -130,9 +147,9 @@ def test_rsync_adapter_interprets_cancellation() -> None:
     plan = _plan()
     result = RsyncAdapter().interpret_result(
         plan,
-        SimpleNamespace(cancelled=True, exit_code=130),
-        started_at=1,
-        finished_at=2,
+        RunResult(exit_code=130, cancelled=True),
+        started_at=_STARTED_AT,
+        finished_at=_FINISHED_AT,
     )
 
     assert result.status == SyncStatus.CANCELLED
