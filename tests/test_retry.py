@@ -6,7 +6,7 @@ from mirrorhub.queue import retry
 
 
 def _policy(**overrides: Any) -> dict[str, Any]:
-    base = {
+    base: dict[str, Any] = {
         "max_attempts": 4,
         "backoff": "exponential",
         "base_seconds": 60,
