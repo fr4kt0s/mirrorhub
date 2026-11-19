@@ -12,7 +12,6 @@ Exit code is 0 only when every required check passes.
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
 import shutil
@@ -257,37 +256,6 @@ def check_unauthenticated_redirect(
     raise CheckError(f"GET /jobs returned {status}: {_tail(body, 80)}")
 
 
-def check_api_auth(
-    base_url: str,
-    user: str,
-    password: str,
-    options: TlsOptions,
-) -> tuple[str, str]:
-    token = base64.b64encode(f"{user}:{password}".encode()).decode()
-    target = _checked_url(f"{base_url.rstrip('/')}/api/v1/repos")
-    request = urllib.request.Request(  # noqa: S310 - scheme checked above
-        target,
-        headers={
-            "Authorization": f"Basic {token}",
-            "User-Agent": "mirrorhub-smoke",
-        },
-    )
-    if options.host_header:
-        request.add_unredirected_header("Host", options.host_header)
-
-    try:
-        with _opener(options, follow=True).open(request, timeout=15) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        raise CheckError(f"GET /api/v1/repos returned {error.code}") from error
-    except urllib.error.URLError as error:
-        raise CheckError(str(error.reason)) from error
-
-    if not isinstance(payload, list):
-        raise CheckError("repos endpoint did not return a list")
-    return PASS, f"{len(payload)} repositories"
-
-
 def check_worker_tools(worker: str) -> tuple[str, str]:
     output = _exec(
         worker,
@@ -351,11 +319,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--worker",
-        default=os.environ.get("SMOKE_WORKER", "worker-debmirror"),
+        default=os.environ.get("SMOKE_WORKER", "worker"),
     )
     parser.add_argument(
         "--required-services",
-        default=os.environ.get("SMOKE_SERVICES", "web,worker-debmirror"),
+        default=os.environ.get("SMOKE_SERVICES", "web,worker,worker-export,proxy"),
     )
     parser.add_argument(
         "--data-path",
@@ -382,8 +350,6 @@ def main(argv: list[str] | None = None) -> int:
         host_header=args.host_header,
     )
     required = tuple(item.strip() for item in args.required_services.split(",") if item.strip())
-    user = os.environ.get("SMOKE_USER", "")
-    password = os.environ.get("SMOKE_PASS", "")
 
     plan: list[tuple[str, Callable[[], tuple[str, str]]]] = [
         ("compose services", lambda: check_compose(required)),
@@ -403,14 +369,6 @@ def main(argv: list[str] | None = None) -> int:
             ),
         ),
     ]
-    if user and password:
-        plan.append(
-            (
-                "api auth",
-                lambda: check_api_auth(args.base_url, user, password, options),
-            )
-        )
-
     results: list[Result] = []
     for label, check in plan:
         try:

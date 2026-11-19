@@ -398,15 +398,15 @@ MIRRORHUB_URL=https://mirrorhub.lan:8443 \
   sh scripts/smoke_test.sh
 ```
 
-The script prompts for the admin password unless MIRRORHUB_SMOKE_PASSWORD is set.
+It needs Python 3.10 or newer on the host and no admin password. It checks:
 
-It checks:
+- The services web, worker, worker-export and proxy are running.
+- HTTPS against the Caddy internal CA and the login page.
+- Unauthenticated requests are redirected to the login page.
+- debmirror and gpgv in the worker, and public keys in /gnupg/trustedkeys.gpg.
+- Free space on the mirror data mount (default: at least 10 %).
 
-- Expected services and container health.
-- HTTPS with the internal CA.
-- Login and authenticated pages.
-- Secure session-cookie presence.
-- CSRF rejection and logout.
+Extra arguments are passed to scripts/smoke_test.py, for example --json.
 
 It does not sync a repository, publish an export, send a notification, or prove
 upstream mirror correctness.
