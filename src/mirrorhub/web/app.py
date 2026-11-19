@@ -47,6 +47,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if generated:
             auth.print_generated_password(settings.admin_username, generated)
         purged = auth.purge_expired_sessions(db)
+        auth.purge_stale_throttles(db)
         seeded = presets.seed(db)
         scheduler.ensure_next_fire(db)
 

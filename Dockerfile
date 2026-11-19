@@ -51,10 +51,12 @@ RUN apt-get update \
      || echo "WARNING: ubuntu-keyring not available in this base image; skipping") \
  && rm -rf /var/lib/apt/lists/*
 USER mirror
-ENV MIRRORHUB_ROLE=web
+# uvicorn trusts X-Forwarded-* only from FORWARDED_ALLOW_IPS. Compose sets it to the
+# proxy network; the image default trusts nobody but localhost.
+ENV MIRRORHUB_ROLE=web FORWARDED_ALLOW_IPS=127.0.0.1
 EXPOSE 8000
 CMD ["uvicorn", "mirrorhub.web.app:app", "--host", "0.0.0.0", "--port", "8000", \
-     "--proxy-headers", "--forwarded-allow-ips", "*"]
+     "--proxy-headers"]
 
 # ---------- worker: universal sync worker with all sync tools ----------
 FROM apt-base AS worker

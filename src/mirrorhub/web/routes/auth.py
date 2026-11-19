@@ -46,13 +46,16 @@ def login(
         return resp
 
     try:
-        admin = auth.attempt_login(db, username, password)
+        admin = auth.attempt_login(db, username, password, ip)
     except auth.LoginLocked as exc:
         record(db, actor=username, ip=ip, action="login.locked")
         resp = render(
             request,
             "login.html",
-            {"error": f"Account locked. Try again in {exc.retry_after_s} seconds."},
+            {
+                "error": "Too many failed attempts from this address. "
+                f"Try again in {exc.retry_after_s} seconds."
+            },
             429,
         )
         resp.headers["Retry-After"] = str(exc.retry_after_s)

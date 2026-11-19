@@ -1,4 +1,4 @@
-"""Admin authentication: argon2 hashing, lockout/backoff, IP rate limiting, DB-backed sessions."""
+"""Admin authentication: argon2 hashing, per-(user, IP) lockout, IP rate limiting, sessions."""
 
 import hashlib
 import secrets
@@ -12,12 +12,14 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from sqlmodel import Session, col, select
 
-from mirrorhub.models import Admin, AuthSession, utcnow
+from mirrorhub.models import Admin, AuthSession, LoginThrottle, utcnow
 from mirrorhub.services.audit import record
 from mirrorhub.settings import Settings, get_settings
 
 MAX_LOCK_S = 3600
 MAX_PASSWORD_LEN = 256
+# A (username, IP) pair without failures for this long starts again from zero.
+THROTTLE_RESET_S = 24 * 3600
 
 _hasher = PasswordHasher()
 _DUMMY_HASH = _hasher.hash("mirrorhub-dummy-password")
@@ -107,45 +109,93 @@ def print_generated_password(username: str, password: str) -> None:
     sys.stderr.flush()
 
 
+def _throttle_key(username: str, ip: str) -> str:
+    return hashlib.sha256(f"{username}\0{ip}".encode()).hexdigest()
+
+
+def _throttle(db: Session, username: str, ip: str, now: datetime) -> LoginThrottle:
+    key = _throttle_key(username, ip)
+    row = db.get(LoginThrottle, key)
+    if row is None:
+        return LoginThrottle(key=key, username=username[:64], ip=ip[:64], updated_at=now)
+    unlocked = row.locked_until is None or row.locked_until <= now
+    if unlocked and now - row.updated_at > timedelta(seconds=THROTTLE_RESET_S):
+        row.failed_attempts = 0
+        row.locked_until = None
+    return row
+
+
 def attempt_login(
     db: Session,
     username: str,
     password: str,
+    ip: str = "",
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> Admin:
+    """Verify credentials with lockout per (username, client IP).
+
+    Failures from one address lock only that address for this username, with
+    exponential backoff capped at MAX_LOCK_S. The admin can still log in from any
+    other address, so a remote attacker cannot lock the account out. Unknown
+    usernames are throttled the same way, which keeps responses uniform.
+    """
     s = settings or get_settings()
     now = now or utcnow()
     password = password[:MAX_PASSWORD_LEN]
-    admin = db.exec(select(Admin).where(Admin.username == username)).first()
 
+    throttle = _throttle(db, username, ip, now)
+    if throttle.locked_until is not None and throttle.locked_until > now:
+        raise LoginLocked(int((throttle.locked_until - now).total_seconds()) + 1)
+
+    admin = db.exec(select(Admin).where(Admin.username == username)).first()
     if admin is None:
         verify_password(_DUMMY_HASH, password)  # equalize timing
-        raise InvalidCredentials
+        valid = False
+    else:
+        valid = verify_password(admin.password_hash, password)
 
-    if admin.locked_until is not None and admin.locked_until > now:
-        raise LoginLocked(int((admin.locked_until - now).total_seconds()) + 1)
-
-    if not verify_password(admin.password_hash, password):
-        admin.failed_attempts += 1
+    if not valid:
+        throttle.failed_attempts += 1
+        throttle.updated_at = now
         lock_s = 0
-        if admin.failed_attempts >= s.login_max_attempts:
-            exponent = min(admin.failed_attempts - s.login_max_attempts, 16)
+        if throttle.failed_attempts >= s.login_max_attempts:
+            exponent = min(throttle.failed_attempts - s.login_max_attempts, 16)
             lock_s = min(s.login_lockout_s * 2**exponent, MAX_LOCK_S)
-            admin.locked_until = now + timedelta(seconds=lock_s)
-        db.add(admin)
+            throttle.locked_until = now + timedelta(seconds=lock_s)
+        db.add(throttle)
+        if admin is not None:
+            # Account-wide counter for visibility only; it no longer locks the account.
+            admin.failed_attempts += 1
+            db.add(admin)
         db.commit()
         if lock_s:
             raise LoginLocked(lock_s)
         raise InvalidCredentials
 
+    assert admin is not None
     if _hasher.check_needs_rehash(admin.password_hash):
         admin.password_hash = hash_password(password)
     admin.failed_attempts = 0
     admin.locked_until = None
     db.add(admin)
+    existing = db.get(LoginThrottle, throttle.key)
+    if existing is not None:
+        db.delete(existing)
     db.commit()
     return admin
+
+
+def purge_stale_throttles(db: Session, now: datetime | None = None) -> int:
+    """Delete unlocked throttle rows that have been quiet for THROTTLE_RESET_S."""
+    now = now or utcnow()
+    cutoff = now - timedelta(seconds=THROTTLE_RESET_S)
+    rows = db.exec(select(LoginThrottle).where(col(LoginThrottle.updated_at) < cutoff)).all()
+    stale = [row for row in rows if row.locked_until is None or row.locked_until <= now]
+    for row in stale:
+        db.delete(row)
+    db.commit()
+    return len(stale)
 
 
 def _session_id(token: str) -> str:
