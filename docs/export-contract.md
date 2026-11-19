@@ -45,14 +45,39 @@ The pickup tool MUST:
 
 1. Ignore directories ending in .tmp.
 2. Ignore every directory without a .done marker.
-3. Read exports without modifying their files.
-4. Preserve all files, including .done.
-5. Transfer full exports before dependent incremental exports.
-6. Preserve export identifiers and base identifiers.
-7. Deduplicate by repository slug and export identifier.
+3. Transfer every file of an export, including .done, without modifying it.
+4. Transfer full exports before dependent incremental exports.
+5. Preserve export identifiers and base identifiers.
+6. Deduplicate by repository slug and export identifier.
 
-The pickup tool MUST NOT remove the sender's published export directories.
-MirrorHub reads the last successful inventory there to construct the next diff.
+The pickup tool MAY move published export directories out of the drop folder and
+delete them later. Moving the whole `<slug>/<export-id>/` directory at once is
+preferred.
+
+MirrorHub does not need a published export after publication. Before writing
+.done it stores a copy of the export's metadata (files.json, manifest.json,
+MANIFEST.sha256, MANIFEST.sha256.sig, deleted.txt) on its state volume under
+`export-meta/<slug>/<export-id>/`. The next incremental export reads its base
+inventory from there and checks files.json and manifest.json against
+MANIFEST.sha256. Archive parts of the base are neither required nor hashed.
+
+Exports published before this behaviour existed are read once from the drop
+folder, and a copy is stored then. If neither the copy nor the directory exists,
+the next incremental export fails and asks for a full export.
+
+Drop-folder housekeeping (every scheduler tick, about 30 s):
+
+- Empty export directories are removed.
+- Export directories that contain only metadata files and .done, no archive
+  part, and have not changed for 24 hours are removed. The grace period protects
+  a pickup tool that moves files one by one.
+- Empty repository directories are removed when no export of that repository is
+  running.
+- `<export-id>.tmp` directories and unexpected content are never touched.
+
+Metadata copies are kept for the newest 30 exports per repository, and always for
+the newest published one. Applying the retention rule also removes the copies of
+the deleted exports.
 
 The appearance of .done is the publication signal, not the mere existence of
 the final directory.

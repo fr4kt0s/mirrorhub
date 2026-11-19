@@ -7,7 +7,9 @@
   <h2>Create an export</h2>
   <p class="muted">
     Incremental exports compare complete file inventories with the last published
-    export. MirrorHub deletes exports only when you apply the retention rule below.
+    export. MirrorHub keeps a copy of each export's metadata on its state volume, so
+    the pickup tool may move exports out of the drop folder. Directories the tool has
+    emptied are removed automatically.
   </p>
 
   <table class="table">
@@ -75,7 +77,7 @@
     <thead>
       <tr>
         <th>Export</th><th>Repository</th><th>Mode</th><th>Base</th>
-        <th>Status</th><th>Payload</th><th>Deleted</th><th>Archive size</th>
+        <th>Status</th><th>Drop folder</th><th>Payload</th><th>Deleted</th><th>Archive size</th>
         <th>Signed</th><th>Job</th>
       </tr>
     </thead>
@@ -87,6 +89,7 @@
         <td>{{ export.mode }}</td>
         <td>{{ export.base_export_id or "-" }}</td>
         <td>{{ export.status }}</td>
+        <td>{{ drop_folder.get(export.id, "-") }}</td>
         <td>{{ export.file_count }}</td>
         <td>{{ export.deleted_count }}</td>
         <td>{{ export.total_bytes | bytes }}</td>
@@ -98,7 +101,7 @@
         </td>
       </tr>
     {% else %}
-      <tr><td colspan="10" class="muted">No exports yet.</td></tr>
+      <tr><td colspan="11" class="muted">No exports yet.</td></tr>
     {% endfor %}
     </tbody>
   </table>

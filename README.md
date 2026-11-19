@@ -313,7 +313,9 @@ order. This is a release blocker, not a documented reliability guarantee.
 
 Read docs/export-contract.md.
 
-The pickup tool must consume only export directories with .done.
+The pickup tool must consume only export directories with .done. It may move
+them away; MirrorHub keeps each export's metadata on the state volume and
+removes directories the tool has emptied.
 
 Incremental exports use complete manifests and SHA-256 comparisons, not a
 timestamp-only filter.
