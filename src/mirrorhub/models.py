@@ -84,6 +84,22 @@ class Admin(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime)
 
 
+class LoginThrottle(SQLModel, table=True):
+    """Failed-login counter and lockout per (username, client IP).
+
+    Locking per pair instead of per account means an attacker cannot lock the admin
+    out from another address. ``key`` is the SHA-256 of ``username\\0ip``.
+    """
+
+    __tablename__ = "login_throttle"
+    key: str = Field(primary_key=True, max_length=64)
+    username: str = Field(max_length=64, index=True)
+    ip: str = Field(default="", max_length=64)
+    failed_attempts: int = 0
+    locked_until: datetime | None = Field(default=None, sa_type=UTCDateTime)
+    updated_at: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime, index=True)
+
+
 class AuthSession(SQLModel, table=True):
     __tablename__ = "session"
     id: str = Field(primary_key=True, max_length=64)  # SHA-256 of the cookie token
