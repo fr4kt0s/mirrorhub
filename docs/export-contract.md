@@ -111,8 +111,22 @@ cause publication to be refused.
 Operators and other applications must not modify repository data while a worker
 is using it. The advisory repository guard only coordinates MirrorHub workers.
 
-Inventory collection performs full hashing and can take considerable time.
-This implementation favors correctness over hashing shortcuts.
+Inventory collection hashes file contents with SHA-256. To avoid rehashing a
+whole mirror after every sync, the sync worker and incremental exports keep a
+per-repository hash cache on the local state volume
+(`manifests/hashcache-<slug>.json`). A cached hash is reused only when the
+file's inode, size, mtime and ctime are all unchanged. ctime cannot be set from
+user space, so rewriting a file and restoring its old size and mtime still
+forces a rehash. Files changed within 60 seconds before the inventory started
+are hashed but not cached, which covers coarse kernel timestamps and moderate
+NFS clock skew.
+
+The cache does not change the inventory format or the export contract. A
+missing or damaged cache only costs time: everything is rehashed.
+
+Full exports ignore the cache, rehash every file and rebuild the cache from the
+results. Run a full export if the hash cache is ever in doubt, for example after
+storage-level repairs on the mirror volume.
 
 ## Verification
 

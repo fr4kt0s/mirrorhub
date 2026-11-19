@@ -34,6 +34,11 @@ def sync_snapshot_path(
     return settings.manifest_dir / f"sync-{job_id}-attempt-{attempt}.json"
 
 
+def hash_cache_path(settings: Settings, slug: str) -> Path:
+    """Per-repository SHA-256 cache on the local state volume (never on NFS)."""
+    return settings.manifest_dir / f"hashcache-{slug}.json"
+
+
 def capture_sync(
     settings: Settings,
     repo: Repository,
@@ -43,8 +48,11 @@ def capture_sync(
     path = sync_snapshot_path(settings, job.id or 0, job.attempt)
     if path.exists():
         raise ExportError("sync inventory already exists for this attempt")
-    inventory = manifest.snapshot(settings.data_dir / repo.slug, pulse)
+    cache_path = hash_cache_path(settings, repo.slug)
+    cache = manifest.load_hash_cache(cache_path)
+    inventory = manifest.snapshot(settings.data_dir / repo.slug, pulse, cache)
     manifest.save(path, inventory)
+    manifest.save_hash_cache(cache_path, cache)
     return path
 
 
@@ -204,8 +212,14 @@ def execute(
     if root.resolve().parent != settings.data_dir.resolve():
         raise ExportError("repository path escapes the data directory")
 
+    # Full exports rehash every file and rebuild the cache from the results;
+    # incremental exports reuse cached hashes for files whose stat data is unchanged.
+    cache_path = hash_cache_path(settings, repo.slug)
+    cache = manifest.load_hash_cache(cache_path) if requested == "incr" else {}
+
     pulse(0, "Building repository inventory")
-    current = manifest.snapshot(root, pulse)
+    current = manifest.snapshot(root, pulse, cache)
+    manifest.save_hash_cache(cache_path, cache)
 
     expected_path = job.params.get("sync_snapshot")
     if expected_path:
@@ -300,7 +314,7 @@ def execute(
         _write_json(temporary / "manifest.json", metadata)
 
         pulse(85, "Checking repository did not change during packing")
-        if manifest.snapshot(root, pulse) != current:
+        if manifest.snapshot(root, pulse, cache) != current:
             raise ExportError("repository changed during export; publication refused")
 
         _write_checksums(temporary, pulse)
