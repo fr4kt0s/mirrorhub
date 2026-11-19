@@ -62,6 +62,9 @@ services:
     environment:
       MIRRORHUB_ROLE: web
       HOME: /tmp
+      # Trust X-Forwarded-* only from the proxy network, never from arbitrary clients.
+      FORWARDED_ALLOW_IPS: ${MIRRORHUB_FRONTEND_SUBNET:-172.31.254.0/28}
+    networks: [frontend]
     volumes:
       - state:/var/lib/mirrorhub
       - gnupg:/gnupg                       # read-write: only web imports keys
@@ -135,6 +138,7 @@ services:
         condition: service_completed_successfully
       web:
         condition: service_healthy
+    networks: [frontend]
     ports:
       - "${HTTPS_PORT:-8443}:8443"         # HTTPS only; no port 80 published
     volumes:
@@ -147,6 +151,14 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+networks:
+  # Proxy <-> web only. The fixed subnet is what the web container trusts for
+  # X-Forwarded-For; change MIRRORHUB_FRONTEND_SUBNET if it collides locally.
+  frontend:
+    ipam:
+      config:
+        - subnet: ${MIRRORHUB_FRONTEND_SUBNET:-172.31.254.0/28}
 
 volumes:
   state:        # SQLite (WAL), job logs, manifest snapshots: LOCAL volume, never NFS

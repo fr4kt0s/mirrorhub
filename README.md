@@ -50,6 +50,8 @@ Copy .env.example to .env and edit:
 - MIRRORHUB_PUBLIC_ORIGIN, the exact HTTPS origin clients use (for example
   https://mirrorhub.example.lan:8443). It is used for CSRF origin checks behind
   the proxy.
+- MIRRORHUB_FRONTEND_SUBNET, only if the default 172.31.254.0/28 overlaps a local
+  network. The web container trusts X-Forwarded-For only from this proxy network.
 
 Use non-root PUID and PGID values.
 
