@@ -91,6 +91,7 @@ services:
       HOME: /tmp
     volumes:
       - state:/var/lib/mirrorhub
+      - gnupg:/gnupg:ro                    # debmirror verifies Release signatures here
       - mirror_data:/data
     healthcheck: *worker-healthcheck
     deploy:
