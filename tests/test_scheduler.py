@@ -105,3 +105,37 @@ def test_disabled_schedule_never_fires(configured: Settings) -> None:
         db.commit()
     with Session(get_engine()) as db:
         assert scheduler.fire_due(db) == []
+
+
+def _fire(chain_export: bool | None) -> dict[str, object]:
+    with Session(get_engine()) as db:
+        repo_id = _repo(db, "debian")
+        db.add(
+            Schedule(
+                repo_id=repo_id,
+                cron_expr="0 3 * * *",
+                enabled=True,
+                chain_export=chain_export,
+                next_fire_at=utcnow() - timedelta(minutes=1),
+            )
+        )
+        db.commit()
+    with Session(get_engine()) as db:
+        assert len(scheduler.fire_due(db)) == 1
+    with Session(get_engine()) as db:
+        return dict(db.exec(select(Job)).one().params)
+
+
+def test_new_schedules_inherit_the_repository_setting(configured: Settings) -> None:
+    assert Schedule(repo_id=1).chain_export is None
+    params = _fire(None)
+    # No key: the worker falls back to repository.chain_export.
+    assert "chain_export" not in params
+
+
+def test_schedule_override_is_passed_to_the_job(configured: Settings) -> None:
+    assert _fire(True)["chain_export"] is True
+
+
+def test_schedule_never_override_is_passed_to_the_job(configured: Settings) -> None:
+    assert _fire(False)["chain_export"] is False

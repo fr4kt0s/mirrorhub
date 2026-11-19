@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import cast
+from typing import Any, cast
 
 from croniter import croniter
 from sqlmodel import Session, col, select
@@ -75,12 +75,16 @@ def fire_due(db: Session, now: datetime | None = None, actor: str = "scheduler")
                 extra={"schedule_id": schedule.id, "repo": repo.slug},
             )
             continue
+        params: dict[str, Any] = {"schedule_id": schedule.id}
+        if schedule.chain_export is not None:
+            # Explicit override; otherwise the worker falls back to repo.chain_export.
+            params["chain_export"] = schedule.chain_export
         job = jobsvc.enqueue(
             db,
             repo,
             job_type=schedule.job_type,
             trigger=Trigger.SCHEDULE.value,
-            params={"schedule_id": schedule.id, "chain_export": schedule.chain_export},
+            params=params,
             requested_by=actor,
         )
         created.append(job.id or 0)

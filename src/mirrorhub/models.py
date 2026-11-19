@@ -220,7 +220,8 @@ class Schedule(SQLModel, table=True):
     cron_expr: str = "0 3 * * *"
     preset_label: str = ""
     enabled: bool = True
-    chain_export: bool = False
+    # None: use the repository's chain_export. True/False: override it for this schedule.
+    chain_export: bool | None = None
     last_fire_at: datetime | None = Field(default=None, sa_type=UTCDateTime)
     next_fire_at: datetime | None = Field(default=None, sa_type=UTCDateTime)
 

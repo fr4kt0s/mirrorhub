@@ -14,4 +14,5 @@
   </label>
   <label>Split parts at (MB, 0 = no split) <input name="export_split_mb" value="{{ values.export_split_mb }}" inputmode="numeric"></label>
   <label class="check"><input type="checkbox" name="chain_export" {% if values.chain_export %}checked{% endif %}> Queue an export after a successful sync</label>
+  <p class="muted">Applies to manual syncs and to schedules set to "Use the repository setting".</p>
 </fieldset>

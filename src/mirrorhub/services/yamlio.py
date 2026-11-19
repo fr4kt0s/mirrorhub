@@ -238,6 +238,13 @@ def build_plan(
         if error:
             plan.errors.append(f"schedules[{index}] ({slug}): {error}")
             continue
+        chain = entry.get("chain_export")
+        if chain is not None and not isinstance(chain, bool):
+            plan.errors.append(
+                f"schedules[{index}] ({slug}): chain_export must be true, false or null "
+                "(null uses the repository setting)"
+            )
+            continue
         plan.schedules.append(
             {
                 "repo_slug": slug,
@@ -245,7 +252,7 @@ def build_plan(
                 "cron_expr": cron,
                 "preset_label": str(entry.get("preset_label", "")),
                 "enabled": bool(entry.get("enabled", True)),
-                "chain_export": bool(entry.get("chain_export", False)),
+                "chain_export": chain,
             }
         )
     return plan

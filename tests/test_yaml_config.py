@@ -1,5 +1,6 @@
 """Config-as-code: export shape, import planning, conflicts and signature opt-in."""
 
+import pytest
 import yaml
 from fastapi.testclient import TestClient
 from httpx2 import Response
@@ -136,3 +137,42 @@ schedules:
     response = _post(admin, csrf_token, {"yaml_text": text, "apply": "1"})
     assert response.status_code == 200
     assert "unknown repository" in response.text
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [("", None), ("    chain_export: null\n", None), ("    chain_export: true\n", True)],
+)
+def test_import_schedule_chain_export_tri_state(
+    admin: TestClient, csrf_token: str, line: str, expected: bool | None
+) -> None:
+    text = (
+        MINIMAL_YAML
+        + """\
+schedules:
+  - repo_slug: debian-test
+    job_type: sync
+    cron_expr: "0 3 * * *"
+"""
+        + line
+    )
+    response = _post(admin, csrf_token, {"yaml_text": text, "apply": "1"})
+    assert response.status_code == 200
+    with Session(get_engine()) as db:
+        schedule = db.exec(select(Schedule)).one()
+    assert schedule.chain_export is expected
+
+
+def test_import_rejects_non_boolean_chain_export(admin: TestClient, csrf_token: str) -> None:
+    text = (
+        MINIMAL_YAML
+        + """\
+schedules:
+  - repo_slug: debian-test
+    job_type: sync
+    cron_expr: "0 3 * * *"
+    chain_export: "yes"
+"""
+    )
+    response = _post(admin, csrf_token, {"yaml_text": text, "apply": "1"})
+    assert "chain_export must be true, false or null" in response.text
