@@ -62,7 +62,7 @@ CMD ["uvicorn", "mirrorhub.web.app:app", "--host", "0.0.0.0", "--port", "8000", 
 FROM apt-base AS worker
 RUN apt-get update \
  && apt-get install -y --no-install-recommends debmirror rsync gpgv gnupg ca-certificates \
-        xz-utils bzip2 wget ftpsync \
+        xz-utils bzip2 patch ed wget ftpsync \
  && rm -rf /var/lib/apt/lists/*
 USER mirror
 ENV MIRRORHUB_ROLE=worker
@@ -72,7 +72,7 @@ CMD ["python", "-m", "mirrorhub.worker.main", "--tools", "ftpsync,rsync,debmirro
 FROM apt-base AS worker-debmirror
 RUN apt-get update \
  && apt-get install -y --no-install-recommends debmirror rsync gpgv gnupg ca-certificates \
-        xz-utils bzip2 \
+        xz-utils bzip2 patch ed \
  && rm -rf /var/lib/apt/lists/*
 USER mirror
 ENV MIRRORHUB_ROLE=worker MIRRORHUB_TOOL=debmirror
