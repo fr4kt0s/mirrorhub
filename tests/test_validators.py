@@ -111,3 +111,11 @@ def test_rel_path_blocks_traversal() -> None:
     assert v.validate_rel_path("keys/archive.asc") is None
     for bad in ("/etc/passwd", "../../etc/passwd", "", "a/../../b"):
         assert v.validate_rel_path(bad) is not None
+
+
+def test_extra_files_limit_message_names_the_limit() -> None:
+    items = [
+        {"url": f"https://example.org/f{i}", "path": f"f{i}"} for i in range(v.MAX_EXTRA_FILES + 1)
+    ]
+    error = v.validate_extra_files(items)
+    assert error == f"extra files: at most {v.MAX_EXTRA_FILES} entries"

@@ -153,7 +153,8 @@ def heartbeat(
         job.heartbeat_at = now
         if progress_pct is not None:
             job.progress_pct = max(0.0, min(float(progress_pct), 100.0))
-        job.progress_text = (job.progress_text or "")[:500]
+        if progress_text is not None:
+            job.progress_text = progress_text[:500]
         db.add(job)
         lock = db.get(RepoLock, job.repo_id)
         if lock is not None and lock.job_id == job_id:
