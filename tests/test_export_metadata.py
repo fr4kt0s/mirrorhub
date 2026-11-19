@@ -13,7 +13,7 @@ from mirrorhub.export import job as engine
 from mirrorhub.export import metadata_store
 from mirrorhub.export.manifest import ExportError
 from mirrorhub.models import Job, Repository
-from mirrorhub.services import export_jobs
+from mirrorhub.services import appsettings, export_jobs
 from mirrorhub.settings import Settings
 from mirrorhub.verify import verify
 
@@ -205,7 +205,7 @@ def test_retention_removes_metadata_copies(configured: Settings) -> None:
     second = _export(repo, configured, mode="full")
 
     with Session(get_engine()) as db:
-        export_jobs.appsettings.set_value(db, export_jobs.RETENTION_KEY, 1)
+        appsettings.set_value(db, export_jobs.RETENTION_KEY, 1)
         removed, _freed = export_jobs.apply_retention(db, configured, actor="test")
 
     assert removed == [f"files/{first}"]
