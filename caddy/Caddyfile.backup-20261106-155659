@@ -1,6 +1,0 @@
-https://localhost:8443 {
-	tls internal
-	encode zstd gzip
-
-	reverse_proxy web:8000
-}
