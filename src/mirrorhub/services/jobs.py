@@ -14,13 +14,6 @@ from mirrorhub.services import audit
 
 ACTIVE = (JobStatus.QUEUED.value, JobStatus.RUNNING.value, JobStatus.CANCELLING.value)
 
-# Phase 6 flips this on once the export worker can execute export jobs.
-EXPORT_CHAIN_ENABLED = False
-
-
-def chain_export_enabled() -> bool:
-    return EXPORT_CHAIN_ENABLED
-
 
 def enqueue(
     db: Session,

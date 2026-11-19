@@ -11,6 +11,16 @@ from mirrorhub.web.deps import CurrentUser, client_ip, get_db, render, require_u
 
 router = APIRouter()
 
+CHAIN_CHOICES: dict[str, bool | None] = {"inherit": None, "always": True, "never": False}
+
+
+def _chain_choice(value: object) -> bool | str | None:
+    """Map the form value to a tri-state; return an error string for unknown values."""
+    text = str(value or "inherit")
+    if text not in CHAIN_CHOICES:
+        return "export after sync must be inherit, always or never"
+    return CHAIN_CHOICES[text]
+
 
 def _page(
     request: Request,
@@ -18,12 +28,14 @@ def _page(
     errors: list[str] | None = None,
 ) -> Response:
     schedules = list(db.exec(select(Schedule).order_by(col(Schedule.id))).all())
+    repositories = repos.list_all(db)
     return render(
         request,
         "schedules.html",
         {
             "schedules": schedules,
-            "repositories": repos.list_all(db),
+            "repositories": repositories,
+            "repos_by_id": {repo.id: repo for repo in repositories},
             "presets": scheduler.PRESETS,
             "errors": errors or [],
         },
@@ -64,13 +76,17 @@ async def create(
     if job_type not in ("sync", "export"):
         return _page(request, db, ["job type must be sync or export"])
 
+    chain = _chain_choice(form.get("chain_export"))
+    if isinstance(chain, str):
+        return _page(request, db, [chain])
+
     schedule = Schedule(
         repo_id=repo_id,
         job_type=job_type,
         cron_expr=cron,
         preset_label=str(form.get("preset_label") or ""),
         enabled=bool(form.get("enabled")),
-        chain_export=bool(form.get("chain_export")),
+        chain_export=chain,
         next_fire_at=scheduler.next_after(cron),
     )
     db.add(schedule)
@@ -104,10 +120,13 @@ async def update(
     error = validators.validate_cron(cron)
     if error:
         return _page(request, db, [error])
+    chain = _chain_choice(form.get("chain_export"))
+    if isinstance(chain, str):
+        return _page(request, db, [chain])
 
     schedule.cron_expr = cron
     schedule.enabled = bool(form.get("enabled"))
-    schedule.chain_export = bool(form.get("chain_export"))
+    schedule.chain_export = chain
     schedule.preset_label = str(form.get("preset_label") or "")
     schedule.next_fire_at = scheduler.next_after(cron)
     db.add(schedule)
