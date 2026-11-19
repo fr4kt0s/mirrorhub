@@ -62,3 +62,25 @@ def test_global_concurrency_limit(configured: Settings) -> None:
         for slug in ("debian", "ubuntu"):
             jobsvc.enqueue(db, _repo(db, slug), requested_by="test")
     assert claim.claim_next(worker_id="w1", tool="debmirror", limit=1) is not None
+
+
+def test_heartbeat_persists_progress_text(configured: Settings) -> None:
+    with Session(get_engine()) as db:
+        job_id = jobsvc.enqueue(db, _repo(db, "debian"), requested_by="test").id or 0
+
+    claimed = claim.claim_next(worker_id="w1", tool="debmirror", limit=1)
+    assert claimed is not None and claimed.id == job_id
+
+    assert claim.heartbeat(job_id, "w1", progress_pct=42.0, progress_text="x" * 600)
+    with Session(get_engine()) as db:
+        job = db.get(Job, job_id)
+        assert job is not None
+        assert job.progress_pct == 42.0
+        assert job.progress_text == "x" * 500
+
+    # Omitting progress_text keeps the last reported text.
+    assert claim.heartbeat(job_id, "w1", progress_pct=50.0)
+    with Session(get_engine()) as db:
+        job = db.get(Job, job_id)
+        assert job is not None
+        assert job.progress_text == "x" * 500

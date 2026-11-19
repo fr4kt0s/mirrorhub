@@ -16,7 +16,6 @@ from mirrorhub.sync.adapters import DebmirrorAdapter, FtpsyncAdapter, RsyncAdapt
 from mirrorhub.sync.context import SyncExecutionContext
 from mirrorhub.sync.errors import SyncConfigurationError
 from mirrorhub.sync.factory import build_sync_plan
-from mirrorhub.sync.plan import DebmirrorPlan, FtpsyncPlan, RsyncPlan, WgetPlan
 from mirrorhub.worker import builders
 from mirrorhub.worker.builders import BuildError
 from mirrorhub.worker.progress import ProgressParser

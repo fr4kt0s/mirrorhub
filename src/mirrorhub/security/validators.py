@@ -249,7 +249,7 @@ def validate_export_fields(mode: str, fmt: str, split_mb: int) -> str | None:
 
 def validate_extra_files(items: list[dict[str, str]]) -> str | None:
     if len(items) > MAX_EXTRA_FILES:
-        return "extra files: at most {MAX_EXTRA_FILES} entries"
+        return f"extra files: at most {MAX_EXTRA_FILES} entries"
     for item in items:
         error = validate_url(item.get("url", "")) or validate_rel_path(item.get("path", ""))
         if error:

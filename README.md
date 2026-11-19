@@ -41,16 +41,19 @@ Runtime operation does not require a CDN.
 Copy .env.example to .env and edit:
 
 - PUID and PGID.
-- MIRROR_DATA_DIR.
-- EXPORT_DIR.
+- HOST_DATA_DIR.
+- HOST_EXPORT_DIR.
 - MIRRORHUB_HOSTNAME.
 - HTTPS_PORT.
 - MIRRORHUB_ADMIN_PASSWORD.
 - MIRRORHUB_SECRET_KEY, if externally managed.
+- MIRRORHUB_PUBLIC_ORIGIN, the exact HTTPS origin clients use (for example
+  https://mirrorhub.example.lan:8443). It is used for CSRF origin checks behind
+  the proxy.
 
 Use non-root PUID and PGID values.
 
-MIRROR_DATA_DIR and EXPORT_DIR are host-side mount sources. The application sees
+HOST_DATA_DIR and HOST_EXPORT_DIR are host-side mount sources. The application sees
 them at /data and /export.
 
 Create these directories on the host before starting Compose. Arrange ownership

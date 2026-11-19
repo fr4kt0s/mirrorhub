@@ -1,10 +1,23 @@
+# Local configuration and secrets
 .env
+importer.toml
+caddy-root.crt
+
+# Python tooling
 .venv/
 __pycache__/
 *.pyc
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
-caddy-root.crt
-/output.log
-importer.tomlimporter.toml
+.coverage
+htmlcov/
+
+# IDE settings
+.idea/
+.vscode/
+
+# Local logs and editor/manual backups
+*.log
+*.bck
+*.backup-*

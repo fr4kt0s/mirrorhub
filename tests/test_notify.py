@@ -65,7 +65,9 @@ def test_config_secrets_are_encrypted_at_rest(configured: Settings) -> None:
     assert notify.decrypt_config(stored) == config
 
 
-def test_channel_without_rules_sends_nothing(configured: Settings, captured: list[dict[str, Any]]) -> None:
+def test_channel_without_rules_sends_nothing(
+    configured: Settings, captured: list[dict[str, Any]]
+) -> None:
     with Session(get_engine()) as db:
         _channel(db, "hook")
         assert notify.dispatch(db, "job_failed", title="t", message="m") == []
@@ -102,7 +104,9 @@ def test_ntfy_payload_uses_headers(configured: Settings, captured: list[dict[str
     assert captured[0]["payload"].startswith(b"Disk")
 
 
-def test_gotify_url_gets_message_endpoint(configured: Settings, captured: list[dict[str, Any]]) -> None:
+def test_gotify_url_gets_message_endpoint(
+    configured: Settings, captured: list[dict[str, Any]]
+) -> None:
     with Session(get_engine()) as db:
         channel_id = _channel(db, "gotify", url="https://gotify.example", fmt="gotify", token="tok")
         notify.create_rule(
