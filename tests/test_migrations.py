@@ -89,7 +89,7 @@ def test_0005_makes_schedule_chain_export_inheritable(configured: Settings) -> N
     with get_engine().connect() as connection:
         columns = {column["name"]: column for column in inspect(connection).get_columns("schedule")}
         assert columns["chain_export"]["nullable"] is True
-        rows = dict(
+        rows: dict[int, int | None] = dict(
             connection.execute(text("SELECT id, chain_export FROM schedule ORDER BY id")).all()
         )
     # Equal to the repository -> inherit (NULL); different -> explicit override kept.
