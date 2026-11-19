@@ -62,8 +62,9 @@ services:
     environment:
       MIRRORHUB_ROLE: web
       HOME: /tmp
-      # Trust X-Forwarded-* only from the proxy network, never from arbitrary clients.
-      FORWARDED_ALLOW_IPS: ${MIRRORHUB_FRONTEND_SUBNET:-172.31.254.0/28}
+      # Trust X-Forwarded-* only from the Caddy container, not from the whole network
+      # (the network gateway is the Docker host itself).
+      FORWARDED_ALLOW_IPS: ${MIRRORHUB_PROXY_IP:-172.31.254.2}
     networks: [frontend]
     volumes:
       - state:/var/lib/mirrorhub
@@ -138,7 +139,9 @@ services:
         condition: service_completed_successfully
       web:
         condition: service_healthy
-    networks: [frontend]
+    networks:
+      frontend:
+        ipv4_address: ${MIRRORHUB_PROXY_IP:-172.31.254.2}
     ports:
       - "${HTTPS_PORT:-8443}:8443"         # HTTPS only; no port 80 published
     volumes:
@@ -153,12 +156,14 @@ services:
       start_period: 10s
 
 networks:
-  # Proxy <-> web only. The fixed subnet is what the web container trusts for
-  # X-Forwarded-For; change MIRRORHUB_FRONTEND_SUBNET if it collides locally.
+  # Proxy <-> web only. Caddy gets a fixed address outside the dynamic ip_range, so
+  # no other container can take it; the web container trusts X-Forwarded-For only
+  # from that address. Change all three variables together if the subnet collides.
   frontend:
     ipam:
       config:
         - subnet: ${MIRRORHUB_FRONTEND_SUBNET:-172.31.254.0/28}
+          ip_range: ${MIRRORHUB_FRONTEND_IP_RANGE:-172.31.254.8/29}
 
 volumes:
   state:        # SQLite (WAL), job logs, manifest snapshots: LOCAL volume, never NFS

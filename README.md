@@ -50,8 +50,10 @@ Copy .env.example to .env and edit:
 - MIRRORHUB_PUBLIC_ORIGIN, the exact HTTPS origin clients use (for example
   https://mirrorhub.example.lan:8443). It is used for CSRF origin checks behind
   the proxy.
-- MIRRORHUB_FRONTEND_SUBNET, only if the default 172.31.254.0/28 overlaps a local
-  network. The web container trusts X-Forwarded-For only from this proxy network.
+- MIRRORHUB_FRONTEND_SUBNET, MIRRORHUB_FRONTEND_IP_RANGE and MIRRORHUB_PROXY_IP,
+  only if the default 172.31.254.0/28 overlaps a local network. Caddy gets the
+  fixed MIRRORHUB_PROXY_IP (inside the subnet, outside the IP range, not .1), and
+  the web container trusts X-Forwarded-For only from that address.
 
 Use non-root PUID and PGID values.
 
@@ -398,15 +400,15 @@ MIRRORHUB_URL=https://mirrorhub.lan:8443 \
   sh scripts/smoke_test.sh
 ```
 
-The script prompts for the admin password unless MIRRORHUB_SMOKE_PASSWORD is set.
+It needs Python 3.10 or newer on the host and no admin password. It checks:
 
-It checks:
+- The services web, worker, worker-export and proxy are running.
+- HTTPS against the Caddy internal CA and the login page.
+- Unauthenticated requests are redirected to the login page.
+- debmirror and gpgv in the worker, and public keys in /gnupg/trustedkeys.gpg.
+- Free space on the mirror data mount (default: at least 10 %).
 
-- Expected services and container health.
-- HTTPS with the internal CA.
-- Login and authenticated pages.
-- Secure session-cookie presence.
-- CSRF rejection and logout.
+Extra arguments are passed to scripts/smoke_test.py, for example --json.
 
 It does not sync a repository, publish an export, send a notification, or prove
 upstream mirror correctness.

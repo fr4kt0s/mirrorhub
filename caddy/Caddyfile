@@ -1,4 +1,12 @@
-https://localhost:8443 {
+{
+	# Caddy would try to add its internal CA to the container's trust store, which is
+	# read-only. Clients get the root certificate via `make root-cert` instead.
+	skip_install_trust
+}
+
+# MIRRORHUB_HOSTNAME comes from .env (default: localhost). The container port is
+# always 8443; HTTPS_PORT only changes the published host port.
+https://{$MIRRORHUB_HOSTNAME:localhost}:8443 {
 	tls internal
 	encode zstd gzip
 

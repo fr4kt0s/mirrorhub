@@ -8,7 +8,7 @@ cd "$ROOT"
 if [ -x .venv/bin/python ]; then
     PYTHON=.venv/bin/python
 else
-    PYTHON=${PYTHON:-python3.12}
+    PYTHON=${PYTHON:-python3}
 fi
 
 if [ -z "${MIRRORHUB_URL:-}" ]; then
@@ -25,5 +25,6 @@ docker compose cp \
     "$TEMP_DIR/root.crt"
 
 "$PYTHON" scripts/smoke_test.py \
-    --url "$MIRRORHUB_URL" \
-    --ca "$TEMP_DIR/root.crt"
+    --base-url "$MIRRORHUB_URL" \
+    --ca-bundle "$TEMP_DIR/root.crt" \
+    "$@"
