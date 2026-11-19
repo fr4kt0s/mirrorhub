@@ -50,8 +50,10 @@ Copy .env.example to .env and edit:
 - MIRRORHUB_PUBLIC_ORIGIN, the exact HTTPS origin clients use (for example
   https://mirrorhub.example.lan:8443). It is used for CSRF origin checks behind
   the proxy.
-- MIRRORHUB_FRONTEND_SUBNET, only if the default 172.31.254.0/28 overlaps a local
-  network. The web container trusts X-Forwarded-For only from this proxy network.
+- MIRRORHUB_FRONTEND_SUBNET, MIRRORHUB_FRONTEND_IP_RANGE and MIRRORHUB_PROXY_IP,
+  only if the default 172.31.254.0/28 overlaps a local network. Caddy gets the
+  fixed MIRRORHUB_PROXY_IP (inside the subnet, outside the IP range, not .1), and
+  the web container trusts X-Forwarded-For only from that address.
 
 Use non-root PUID and PGID values.
 
