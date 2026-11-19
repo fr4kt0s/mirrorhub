@@ -414,6 +414,10 @@ def _execute(
                         status="succeeded",
                         exit_code=0,
                     )
+                    with contextlib.suppress(OSError):
+                        export_jobs.discard_sync_inventory(
+                            settings, job.params.get("sync_snapshot")
+                        )
                     return
 
                 plan, adapter, sync_plan, started_at = _build_sync_plan(job, repo, settings)
@@ -478,17 +482,17 @@ def _execute(
                     )
                     return
 
+                # The sync inventory exists only to pin the state a chained export must
+                # publish; without a chained export nothing would ever read it.
                 snapshot_path: Path | None = None
-                if not job.dry_run:
-                    captured = export_engine.capture_sync(
+                should_chain = bool(job.params.get("chain_export", repo.chain_export))
+                if should_chain and not job.dry_run:
+                    snapshot_path = export_engine.capture_sync(
                         settings,
                         repo,
                         job,
                         lease.export_pulse,
                     )
-                    should_chain = bool(job.params.get("chain_export", repo.chain_export))
-                    if should_chain:
-                        snapshot_path = captured
 
                 finish(
                     claimed.id,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -17,6 +18,69 @@ from mirrorhub.settings import Settings
 from mirrorhub.verify import verify
 
 ACTIVE = ("queued", "running", "cancelling")
+
+SYNC_INVENTORY_RE = re.compile(r"^sync-\d+-attempt-\d+\.json$")
+SYNC_INVENTORY_MAX_AGE_S = 7 * 86400
+
+
+def _sync_inventory(settings: Settings, value: object) -> Path | None:
+    """Return the path if value names a sync inventory inside the manifest directory."""
+    if not isinstance(value, str) or not value:
+        return None
+    path = Path(value)
+    if not SYNC_INVENTORY_RE.fullmatch(path.name):
+        return None
+    if path.parent.resolve() != settings.manifest_dir.resolve():
+        return None
+    return path
+
+
+def discard_sync_inventory(settings: Settings, value: object) -> bool:
+    """Delete the sync inventory a chained export consumed. Returns True if a file was removed."""
+    path = _sync_inventory(settings, value)
+    if path is None:
+        return False
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def purge_sync_inventories(
+    db: Session,
+    settings: Settings,
+    *,
+    max_age_s: int = SYNC_INVENTORY_MAX_AGE_S,
+    now: float | None = None,
+) -> int:
+    """Delete sync inventories older than max_age_s that no queued or running export needs.
+
+    Leftovers come from chained exports that failed permanently or were cancelled, and
+    from versions that wrote an inventory after every sync.
+    """
+    if not settings.manifest_dir.is_dir():
+        return 0
+    in_use = set()
+    for job in db.exec(
+        select(Job).where(col(Job.type) == "export", col(Job.status).in_(ACTIVE))
+    ).all():
+        path = _sync_inventory(settings, (job.params or {}).get("sync_snapshot"))
+        if path is not None:
+            in_use.add(path.name)
+
+    cutoff = (now if now is not None else time.time()) - max_age_s
+    removed = 0
+    for path in settings.manifest_dir.iterdir():
+        if not SYNC_INVENTORY_RE.fullmatch(path.name) or path.name in in_use:
+            continue
+        try:
+            if path.is_file() and not path.is_symlink() and path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+        except FileNotFoundError:
+            continue
+    return removed
 
 
 def enqueue(

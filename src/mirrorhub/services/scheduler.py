@@ -17,8 +17,9 @@ from sqlmodel import Session, col, select
 from mirrorhub.db import get_engine
 from mirrorhub.enums import Trigger
 from mirrorhub.models import Repository, Schedule, utcnow
-from mirrorhub.services import appsettings, logs, notify, storage
+from mirrorhub.services import appsettings, export_jobs, logs, notify, storage
 from mirrorhub.services import jobs as jobsvc
+from mirrorhub.settings import get_settings
 
 log = logging.getLogger("mirrorhub.scheduler")
 
@@ -109,12 +110,24 @@ def upcoming(db: Session, limit: int = 5) -> list[Schedule]:
 
 def tick() -> dict[str, int]:
     """One housekeeping pass. Blocking; run it in a worker thread."""
-    summary = {"fired": 0, "jobs_notified": 0, "logs_removed": 0, "disk_alerts": 0}
+    summary = {
+        "fired": 0,
+        "jobs_notified": 0,
+        "logs_removed": 0,
+        "disk_alerts": 0,
+        "sync_inventories_removed": 0,
+    }
     with Session(get_engine()) as db:
         ensure_next_fire(db)
         summary["fired"] = len(fire_due(db))
         summary["jobs_notified"] = len(notify.sweep_finished(db))
         retention = int(appsettings.get(db, "log_retention_days", 30))
+        try:
+            summary["sync_inventories_removed"] = export_jobs.purge_sync_inventories(
+                db, get_settings()
+            )
+        except OSError:
+            log.exception("sync inventory cleanup failed")
         try:
             summary["disk_alerts"] = len(notify.check_disk(db, storage.mount_usage()))
         except Exception:
