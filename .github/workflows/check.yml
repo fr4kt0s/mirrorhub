@@ -60,3 +60,80 @@ jobs:
             sh -c 'caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile &&
                    caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile |
                    grep -q "mirrorhub.example.lan"'
+
+  stack:
+    # Builds the images, starts the full Compose stack and runs the smoke test.
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Prepare .env and host directories
+        run: |
+          mkdir -p /tmp/mirrorhub/data /tmp/mirrorhub/export
+          chmod 0777 /tmp/mirrorhub/data /tmp/mirrorhub/export
+          cp .env.example .env
+          sed -i \
+            -e 's|^HOST_DATA_DIR=.*|HOST_DATA_DIR=/tmp/mirrorhub/data|' \
+            -e 's|^HOST_EXPORT_DIR=.*|HOST_EXPORT_DIR=/tmp/mirrorhub/export|' \
+            -e 's|^MIRRORHUB_ADMIN_PASSWORD=.*|MIRRORHUB_ADMIN_PASSWORD=ci-smoke-password-123|' \
+            -e 's|^MIRRORHUB_WORKER_REPLICAS=.*|MIRRORHUB_WORKER_REPLICAS=2|' \
+            .env
+
+      - name: Build images
+        run: docker compose build
+
+      - name: Start stack
+        run: docker compose up -d
+
+      - name: Wait for healthy containers
+        run: |
+          for _ in $(seq 1 60); do
+            states=$(docker inspect -f '{{.Name}} {{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' $(docker compose ps -q))
+            echo "$states"
+            if ! echo "$states" | grep -v -E ' (healthy|exited)$' | grep -q .; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "containers did not become healthy"
+          exit 1
+
+      - name: Import a test key into the managed keyring
+        run: |
+          docker compose exec -T web python -c "
+          from pathlib import Path
+          from mirrorhub.services import gpg
+          keys = gpg.import_key_file(Path('/usr/share/keyrings/debian-archive-keyring.gpg'))
+          print(f'imported {len(keys)} keys')
+          assert keys
+          "
+
+      - name: Smoke test
+        run: MIRRORHUB_URL=https://localhost:8443 sh scripts/smoke_test.sh
+
+      - name: Database is at the latest migration
+        run: |
+          expected=$(ls migrations/versions | sed -n 's/^\([0-9]\{4\}\)_.*/\1/p' | sort | tail -1)
+          actual=$(docker compose exec -T web python -c "import sqlite3; print(sqlite3.connect('/var/lib/mirrorhub/db/mirrorhub.sqlite3').execute('select version_num from alembic_version').fetchone()[0])")
+          echo "expected=$expected actual=$actual"
+          test "$expected" = "$actual"
+
+      - name: Web trusts only the proxy
+        run: |
+          test "$(docker compose exec -T web printenv FORWARDED_ALLOW_IPS)" = "172.31.254.2"
+          docker network inspect mirrorhub_frontend \
+            -f '{{range .Containers}}{{.Name}}={{.IPv4Address}} {{end}}' | grep -q 'proxy-1=172.31.254.2/'
+
+      - name: Container logs
+        if: always()
+        run: docker compose logs --no-color --tail 200
+
+      - name: Stop stack
+        if: always()
+        run: docker compose down -v
