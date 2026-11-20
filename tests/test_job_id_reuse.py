@@ -212,5 +212,6 @@ def test_0006_rebuilds_job_with_autoincrement_and_keeps_references(
 
     command.downgrade(config, "0005")
     assert "AUTOINCREMENT" not in _job_table_sql().upper()
-    with Session(get_engine()) as db:
-        assert len(db.exec(select(Job)).all()) == 4
+    # Raw SQL: the ORM model describes the newest schema, not revision 0005.
+    with get_engine().connect() as connection:
+        assert connection.execute(text("SELECT COUNT(*) FROM job")).scalar_one() == 4
