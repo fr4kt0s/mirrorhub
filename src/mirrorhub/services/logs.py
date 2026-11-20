@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from mirrorhub.settings import Settings, get_settings
@@ -14,6 +16,9 @@ TAIL_MAX_BYTES = 256 * 1024
 STREAM_MAX_BYTES = 64 * 1024
 
 
+RUN_HEADER_PREFIX = "# run job "
+
+
 def job_log_path(
     job_id: int,
     settings: Settings | None = None,
@@ -21,6 +26,62 @@ def job_log_path(
     base = (settings or get_settings()).log_dir / "jobs"
     base.mkdir(parents=True, exist_ok=True)
     return base / f"{job_id}.log"
+
+
+def run_header(
+    job_id: int,
+    attempt: int,
+    repo: str,
+    job_type: str,
+    tool: str,
+    worker: str,
+    started: datetime,
+) -> str:
+    """First line of every run, so a log is self-describing and the current run can be
+    cut out of it (retries append to the same file)."""
+    # models.utcnow() returns naive UTC; astimezone() would read it as local time.
+    aware = started.replace(tzinfo=UTC) if started.tzinfo is None else started.astimezone(UTC)
+    stamp = aware.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return (
+        f"{RUN_HEADER_PREFIX}{job_id} attempt {attempt} repo {repo} "
+        f"type {job_type} tool {tool} worker {worker} started {stamp}\n"
+    )
+
+
+def quarantine_stale(path: Path) -> Path | None:
+    """Move a log that exists before the job's first run out of the way.
+
+    That file belongs to an earlier job with the same id (ids were reused before
+    migration 0006). It keeps the .log suffix so the retention sweep removes it.
+    """
+    if not path.exists():
+        return None
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    target = path.with_name(f"{path.stem}.stale-{stamp}.log")
+    path.replace(target)
+    log.warning(
+        "stale job log moved aside",
+        extra={"path": str(path), "moved_to": str(target)},
+    )
+    return target
+
+
+def remove_job_logs(
+    job_ids: Iterable[int],
+    settings: Settings | None = None,
+) -> int:
+    """Delete the log files of deleted jobs. Missing files are fine."""
+    base = (settings or get_settings()).log_dir / "jobs"
+    removed = 0
+    for job_id in job_ids:
+        try:
+            (base / f"{int(job_id)}.log").unlink()
+            removed += 1
+        except FileNotFoundError:
+            continue
+        except OSError:
+            log.warning("could not remove job log", extra={"job_id": job_id})
+    return removed
 
 
 def tail_snapshot(
@@ -52,6 +113,18 @@ def tail_snapshot(
 
 def tail(path: Path, lines: int = 200) -> list[str]:
     values, _offset = tail_snapshot(path, lines)
+    return values
+
+
+def tail_current_run(path: Path, lines: int = 200) -> list[str]:
+    """Like tail(), but starting no earlier than the last run header.
+
+    Logs written before run headers existed have none; then this equals tail().
+    """
+    values = tail(path, lines)
+    for index in range(len(values) - 1, -1, -1):
+        if values[index].startswith(RUN_HEADER_PREFIX):
+            return values[index:]
     return values
 
 
