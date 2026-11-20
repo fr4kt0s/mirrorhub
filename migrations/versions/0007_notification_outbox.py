@@ -9,8 +9,8 @@ Existing finished jobs are marked as notified so the upgrade does not resend old
 events. Jobs above the old high-water mark that finished within the last day are left
 unmarked, so their pending notifications still go out.
 
-Revision ID: 0006
-Revises: 0005
+Revision ID: 0007
+Revises: 0006
 Create Date: 2026-11-20
 """
 
@@ -21,8 +21,8 @@ from datetime import UTC, datetime, timedelta
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0006"
-down_revision: str | None = "0005"
+revision: str = "0007"
+down_revision: str | None = "0006"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -94,6 +94,22 @@ def upgrade() -> None:
     )
 
 
+def _job_sequence() -> int:
+    row = (
+        op.get_bind().execute(sa.text("SELECT seq FROM sqlite_sequence WHERE name = 'job'")).first()
+    )
+    return int(row[0]) if row and row[0] is not None else 0
+
+
+def _job_has_autoincrement() -> bool:
+    sql = (
+        op.get_bind()
+        .execute(sa.text("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'job'"))
+        .scalar_one()
+    )
+    return "AUTOINCREMENT" in str(sql).upper()
+
+
 def downgrade() -> None:
     inspector = _inspector()
     if TABLE in inspector.get_table_names():
@@ -101,5 +117,22 @@ def downgrade() -> None:
         op.drop_index("ix_notification_delivery_channel_id", table_name=TABLE)
         op.drop_table(TABLE)
     if "notified_at" in {column["name"] for column in inspector.get_columns("job")}:
-        with op.batch_alter_table("job") as batch:
+        # Dropping the column rebuilds job. Keep AUTOINCREMENT from 0006 and the
+        # sequence value: copying rows would otherwise reset it to max(id).
+        autoincrement = _job_has_autoincrement()
+        sequence = _job_sequence()
+        with op.batch_alter_table(
+            "job", table_kwargs={"sqlite_autoincrement": autoincrement}
+        ) as batch:
             batch.drop_column("notified_at")
+        if autoincrement:
+            bind = op.get_bind()
+            bind.execute(sa.text("DELETE FROM sqlite_sequence WHERE name = 'job'"))
+            bind.execute(
+                sa.text("INSERT INTO sqlite_sequence (name, seq) VALUES ('job', :seq)"),
+                {"seq": max(sequence, _current_max_job_id())},
+            )
+
+
+def _current_max_job_id() -> int:
+    return int(op.get_bind().execute(sa.text("SELECT COALESCE(MAX(id), 0) FROM job")).scalar_one())

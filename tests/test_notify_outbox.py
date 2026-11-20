@@ -369,3 +369,25 @@ def test_events_directory_is_ignored_by_drop_folder_cleanup_and_importer(
         staging_dir=configured.state_dir / "staging",
     )
     assert importer_cli.list_slugs(config) == []
+
+
+def test_file_channel_tail_contains_only_the_latest_run(configured: Settings) -> None:
+    with Session(get_engine()) as db:
+        repo_id = _repo(db, "mint")
+        _file_channel(db, ("job_failed",), log_mode="tail", log_lines=50)
+        job_id = _job(db, repo_id, JobStatus.FAILED.value, attempt=2, max_attempts=2)
+        started = utcnow()
+        logs.job_log_path(job_id).write_text(
+            logs.run_header(job_id, 1, "mint", "sync", "ftpsync", "w1", started)
+            + "first attempt failed\n"
+            + logs.run_header(job_id, 2, "mint", "sync", "ftpsync", "w1", started)
+            + "second attempt failed\n",
+            encoding="utf-8",
+        )
+        notify.sweep_finished(db)
+    notify.deliver_due()
+
+    (path,) = list(_events(configured).iterdir())
+    tail = json.loads(path.read_text(encoding="utf-8"))["log_tail"]
+    assert tail[0].startswith(f"# run job {job_id} attempt 2 ")
+    assert tail[1:] == ["second attempt failed"]

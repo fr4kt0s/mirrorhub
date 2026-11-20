@@ -452,7 +452,10 @@ def _write_event_file(
         if not log_file.is_file():
             document["log_unavailable"] = True
         elif mode == "tail":
-            document["log_tail"] = logs.tail(log_file, int(config.get("log_lines") or 50))
+            # Only the job's latest run: retries append to the same log file.
+            document["log_tail"] = logs.tail_current_run(
+                log_file, int(config.get("log_lines") or 50)
+            )
         else:
             _atomic_copy(log_file, directory, f"{base}.log")
             document["log_file"] = f"{base}.log"
