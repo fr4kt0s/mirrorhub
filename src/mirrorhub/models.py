@@ -173,6 +173,9 @@ class Job(SQLModel, table=True):
     __table_args__ = (
         Index("ix_job_claim", "status", "tool", "next_run_at"),
         Index("ix_job_repo_status", "repo_id", "status"),
+        # Job ids name the log files (<log_dir>/jobs/<id>.log); without AUTOINCREMENT
+        # SQLite reuses the highest id after deletions and a new job inherits a stale log.
+        {"sqlite_autoincrement": True},
     )
     id: int | None = Field(default=None, primary_key=True)
     repo_id: int = Field(foreign_key="repository.id")
