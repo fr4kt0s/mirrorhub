@@ -14,6 +14,7 @@
       <select name="type">
         <option value="webhook">webhook</option>
         <option value="smtp">smtp</option>
+        <option value="file">file (drop folder)</option>
       </select>
     </label>
     <fieldset>
@@ -39,6 +40,20 @@
       <label>To <input name="to"></label>
       <label class="check"><input type="checkbox" name="tls" checked> STARTTLS</label>
     </fieldset>
+    <fieldset>
+      <legend>File (drop folder)</legend>
+      <p class="muted">Writes one JSON file per event to <code>/export/_events/</code>, so the
+        pickup tool can transfer it through the data diode.</p>
+      <label>Job log
+        <select name="log_mode">
+          <option value="none">none</option>
+          <option value="tail" selected>last lines in the JSON (tail)</option>
+          <option value="full">full log as an extra .log file (verbose)</option>
+        </select>
+      </label>
+      <label>Lines for tail <input name="log_lines" value="50" inputmode="numeric"></label>
+      <label>Delete files not picked up after (days) <input name="retention_days" value="14" inputmode="numeric"></label>
+    </fieldset>
     <button class="btn" type="submit">Create channel</button>
   </form>
 </section>
@@ -50,7 +65,7 @@
     <tr>
       <td>{{ c.name }}</td>
       <td>{{ c.type }}</td>
-      <td>{{ c.url or c.format }}</td>
+      <td>{{ c.target }}</td>
       <td class="row-actions">
         <button class="btn btn-secondary" hx-post="/notifications/channels/{{ c.id }}/test" hx-target="body">Send test</button>
         <button class="btn btn-danger" hx-post="/notifications/channels/{{ c.id }}/delete" hx-target="body"
@@ -93,9 +108,9 @@
   {% for r in rules %}
     <tr>
       <td>{{ r.id }}</td>
-      <td>{{ r.channel_id }}</td>
+      <td>{{ channel_names.get(r.channel_id, r.channel_id) }}</td>
       <td><code>{{ r.event }}</code></td>
-      <td>{{ r.repo_id or "any" }}</td>
+      <td>{{ repo_names.get(r.repo_id, r.repo_id) if r.repo_id else "any" }}</td>
       <td class="row-actions">
         <button class="btn btn-danger" hx-post="/notifications/rules/{{ r.id }}/delete" hx-target="body"
                 hx-confirm="Delete rule {{ r.id }}?">Delete</button>
@@ -103,6 +118,33 @@
     </tr>
   {% else %}
     <tr><td colspan="5" class="muted">No rules, so nothing is sent.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<section class="card">
+  <h2>Recent deliveries</h2>
+  <p class="muted">Queued notifications are sent within a few seconds. Failed attempts are
+    retried after 1, 5, 15 and 30 minutes, then 1, 2 and 4 hours; after that the delivery
+    is marked failed and recorded in the audit log.</p>
+</section>
+<table class="table">
+  <thead><tr><th>Queued (UTC)</th><th>Channel</th><th>Event</th><th>Status</th><th>Attempts</th><th>Detail</th></tr></thead>
+  <tbody>
+  {% for d in deliveries %}
+    <tr>
+      <td>{{ d.created_at.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+      <td>{{ channel_names.get(d.channel_id, d.channel_id) }}</td>
+      <td><code>{{ d.event }}</code>{% if d.job_id %} job {{ d.job_id }}{% endif %}</td>
+      <td>{{ d.status }}</td>
+      <td>{{ d.attempts }}</td>
+      <td>
+        {% if d.status == "pending" and d.attempts %}next {{ d.next_attempt_at.strftime("%H:%M:%S") }}: {% endif %}
+        {{ d.last_error }}
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="muted">No deliveries yet.</td></tr>
   {% endfor %}
   </tbody>
 </table>

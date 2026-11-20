@@ -40,7 +40,7 @@ def test_migration_installs_append_only_audit_triggers(
 
     with get_engine().connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert version == "0006"
+        assert version == "0007"
 
     command.upgrade(config, "head")
 
@@ -94,3 +94,89 @@ def test_0005_makes_schedule_chain_export_inheritable(configured: Settings) -> N
         )
     # Equal to the repository -> inherit (NULL); different -> explicit override kept.
     assert rows == {1: None, 2: 0, 3: None, 4: 1}
+
+
+def test_0007_marks_old_jobs_and_keeps_recent_unnotified_ones(configured: Settings) -> None:
+    from datetime import timedelta
+
+    from sqlmodel import Session
+
+    from mirrorhub.models import Job, Repository, utcnow
+    from mirrorhub.services import appsettings
+
+    now = utcnow()
+    with Session(get_engine()) as db:
+        db.add(Repository(id=1, slug="repo", name="repo"))
+        db.commit()
+        rows = [
+            # (id, status, finished_at)
+            (1, "succeeded", now - timedelta(hours=1)),  # <= old mark -> marked
+            (2, "failed", now - timedelta(hours=1)),  # <= old mark -> marked
+            (3, "failed", now - timedelta(hours=1)),  # above mark, recent -> stays unmarked
+            (4, "succeeded", now - timedelta(days=3)),  # above mark, old -> marked
+            (5, "cancelled", now - timedelta(minutes=5)),  # cancelled -> marked
+            (6, "running", None),  # not finished -> unmarked
+        ]
+        for job_id, status, finished in rows:
+            db.add(Job(id=job_id, repo_id=1, status=status, finished_at=finished))
+        db.commit()
+        appsettings.set_value(db, "notified_job_id", 2)
+
+    config = _alembic_config()
+    command.stamp(config, "0006")
+    command.upgrade(config, "head")
+
+    with get_engine().connect() as connection:
+        marked = {
+            row[0]: row[1] is not None
+            for row in connection.execute(text("SELECT id, notified_at FROM job ORDER BY id"))
+        }
+        tables = {
+            row[0]
+            for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+        }
+    assert marked == {1: True, 2: True, 3: False, 4: True, 5: True, 6: False}
+    assert "notification_delivery" in tables
+
+
+def test_0007_downgrade_keeps_job_autoincrement_and_sequence(configured: Settings) -> None:
+    from sqlmodel import Session
+
+    from mirrorhub.models import Job, Repository
+
+    config = _alembic_config()
+    command.upgrade(config, "head")
+    with Session(get_engine()) as db:
+        db.add(Repository(id=1, slug="repo", name="repo"))
+        db.commit()
+        for job_id in (1, 2, 3):
+            db.add(Job(id=job_id, repo_id=1))
+        db.commit()
+        newest = db.get(Job, 3)
+        assert newest is not None
+        db.delete(newest)
+        db.commit()
+
+    command.downgrade(config, "0006")
+
+    with get_engine().connect() as connection:
+        table_sql = connection.execute(
+            text("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'job'")
+        ).scalar_one()
+        columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(job)")}
+    assert "AUTOINCREMENT" in table_sql.upper()
+    assert "notified_at" not in columns
+
+    with get_engine().begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO job (repo_id, type, tool, trigger, dry_run, params, "
+                "status, attempt, max_attempts, next_run_at, created_at, "
+                "progress_text, log_path, cancel_requested, error_summary, "
+                "requested_by) VALUES (1, 'sync', 'debmirror', 'manual', 0, "
+                "'{}', 'queued', 1, 1, '2026-11-20 00:00:00', "
+                "'2026-11-20 00:00:00', '', '', 0, '', 'test')"
+            )
+        )
+        new_id = connection.execute(text("SELECT MAX(id) FROM job")).scalar_one()
+    assert new_id == 4  # id 3 is not reused after the downgrade

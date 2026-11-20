@@ -75,6 +75,8 @@ def list_slugs(config: Config) -> list[str]:
     for child in sorted(config.export_dir.iterdir()):
         if child.is_symlink() or not child.is_dir():
             continue
+        if child.name.startswith("_"):
+            continue  # reserved sender directories such as _events (event files)
         if not SLUG_RE.fullmatch(child.name):
             log_event(
                 logging.WARNING,

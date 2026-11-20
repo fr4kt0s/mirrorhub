@@ -184,8 +184,11 @@ def test_sweep_finished_is_idempotent(configured: Settings, captured: list[dict[
 
     # job_failed plus retry_exhausted, both routed to the same channel
     assert len(first) == 2
-    assert all(delivery.ok for delivery in first)
     assert second == []
+    results = notify.deliver_due()
+    assert len(results) == 2
+    assert all(delivery.ok for delivery in results)
+    assert notify.deliver_due() == []
     assert len(captured) == 2
 
 
@@ -207,7 +210,10 @@ def test_successful_job_notifies_once(configured: Settings, captured: list[dict[
             )
         )
         db.commit()
-        deliveries = notify.sweep_finished(db)
-        assert len(deliveries) == 1
+        assert len(notify.sweep_finished(db)) == 1
         assert notify.sweep_finished(db) == []
-    assert json.loads(captured[0]["payload"])["title"].startswith("Mirror job")
+    assert [delivery.ok for delivery in notify.deliver_due()] == [True]
+    payload = json.loads(captured[0]["payload"])
+    assert payload["title"].startswith("Mirror job")
+    assert payload["repo"] == "debian"
+    assert payload["status"] == "succeeded"
