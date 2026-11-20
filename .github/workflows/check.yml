@@ -82,7 +82,7 @@ jobs:
             -e 's|^HOST_DATA_DIR=.*|HOST_DATA_DIR=/tmp/mirrorhub/data|' \
             -e 's|^HOST_EXPORT_DIR=.*|HOST_EXPORT_DIR=/tmp/mirrorhub/export|' \
             -e 's|^MIRRORHUB_ADMIN_PASSWORD=.*|MIRRORHUB_ADMIN_PASSWORD=ci-smoke-password-123|' \
-            -e 's|^MIRRORHUB_WORKER_REPLICAS=.*|MIRRORHUB_WORKER_REPLICAS=1|' \
+            -e 's|^MIRRORHUB_WORKER_REPLICAS=.*|MIRRORHUB_WORKER_REPLICAS=2|' \
             .env
 
       - name: Build images

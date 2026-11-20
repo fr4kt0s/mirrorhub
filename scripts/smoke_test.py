@@ -172,9 +172,9 @@ def _tail(text: str, limit: int = 120) -> str:
     return (lines[-1] if lines else "")[:limit]
 
 
-def _exec(service: str, command: str, timeout: int = 60) -> str:
+def _exec(service: str, command: str, timeout: int = 60, index: int = 1) -> str:
     result = _run(
-        [*_compose_prefix(), "exec", "-T", service, "sh", "-c", command],
+        [*_compose_prefix(), "exec", "-T", "--index", str(index), service, "sh", "-c", command],
         timeout=timeout,
     )
     if result.returncode != 0:
@@ -209,29 +209,73 @@ def _parse_ps(output: str) -> list[dict[str, object]]:
     return services
 
 
-def check_compose(required: tuple[str, ...]) -> tuple[str, str]:
-    result = _run([*_compose_prefix(), "ps", "--all", "--format", "json"])
-    if result.returncode != 0:
-        raise CheckError(_tail(result.stderr or result.stdout))
+def evaluate_services(
+    services: list[dict[str, object]],
+    required: tuple[str, ...],
+) -> tuple[str, str]:
+    """Every container of a required service must be running and, if it has a
+    healthcheck, healthy. "starting" is a warning; "unhealthy" fails."""
+    containers: dict[str, list[tuple[str, str]]] = {}
+    for service in services:
+        name = str(service.get("Service", "?"))
+        state = str(service.get("State", "?")).lower()
+        health = str(service.get("Health", "") or "").lower()
+        containers.setdefault(name, []).append((state, health))
 
-    services = _parse_ps(result.stdout)
-    if not services:
-        raise CheckError("no services reported by docker compose ps")
+    def describe(name: str) -> str:
+        entries = containers.get(name, [])
+        labels = [health or state for state, health in entries]
+        if len(set(labels)) == 1:
+            label = labels[0]
+            return f"{name}={label}" if len(labels) == 1 else f"{name}={len(labels)}x{label}"
+        return f"{name}={'/'.join(labels)}"
 
-    states = {
-        str(service.get("Service", "?")): str(service.get("State", "?")) for service in services
-    }
-    detail = ", ".join(f"{name}={state}" for name, state in sorted(states.items()))
+    detail = ", ".join(describe(name) for name in sorted(containers))
 
-    missing = [name for name in required if name not in states]
+    missing = [name for name in required if name not in containers]
     if missing:
         raise CheckError(f"missing services: {', '.join(missing)}")
 
-    down = [name for name in required if states.get(name, "").lower() != "running"]
+    down = [
+        name for name in required if any(state != "running" for state, _health in containers[name])
+    ]
     if down:
-        summary = ", ".join(f"{name}={states[name]}" for name in down)
-        raise CheckError(f"not running: {summary}")
+        raise CheckError(f"not running: {', '.join(describe(name) for name in down)}")
+
+    unhealthy = [
+        name
+        for name in required
+        if any(health == "unhealthy" for _state, health in containers[name])
+    ]
+    if unhealthy:
+        raise CheckError(f"unhealthy: {', '.join(describe(name) for name in unhealthy)}")
+
+    starting = [
+        name
+        for name in required
+        if any(health == "starting" for _state, health in containers[name])
+    ]
+    if starting:
+        return WARN, f"still starting: {', '.join(describe(name) for name in starting)}"
     return PASS, detail
+
+
+def replica_count(services: list[dict[str, object]], name: str) -> int:
+    return sum(1 for service in services if str(service.get("Service")) == name)
+
+
+def _compose_services() -> list[dict[str, object]]:
+    result = _run([*_compose_prefix(), "ps", "--all", "--format", "json"])
+    if result.returncode != 0:
+        raise CheckError(_tail(result.stderr or result.stdout))
+    services = _parse_ps(result.stdout)
+    if not services:
+        raise CheckError("no services reported by docker compose ps")
+    return services
+
+
+def check_compose(required: tuple[str, ...]) -> tuple[str, str]:
+    return evaluate_services(_compose_services(), required)
 
 
 def check_login_page(base_url: str, options: TlsOptions) -> tuple[str, str]:
@@ -256,40 +300,81 @@ def check_unauthenticated_redirect(
     raise CheckError(f"GET /jobs returned {status}: {_tail(body, 80)}")
 
 
-def check_worker_tools(worker: str) -> tuple[str, str]:
+def _missing_tools(service: str, tools: tuple[str, ...], index: int) -> set[str]:
+    names = " ".join(tools)
     output = _exec(
-        worker,
-        'for tool in debmirror gpgv patch ed; do command -v "$tool" || echo "MISSING:$tool"; done',
+        service,
+        f'for tool in {names}; do command -v "$tool" >/dev/null || echo "MISSING:$tool"; done',
+        index=index,
     )
-    missing = {
+    return {
         line.split(":", 1)[1].strip()
         for line in output.splitlines()
         if line.strip().startswith("MISSING:")
     }
-    for tool in ("debmirror", "gpgv"):
-        if tool in missing:
-            raise CheckError(f"{tool} not installed in {worker}")
 
-    optional = [tool for tool in ("patch", "ed") if tool in missing]
-    if optional:
-        return WARN, f"missing {' and '.join(optional)}; diffs disabled"
-    return PASS, "debmirror, gpgv, patch, ed present"
+
+def _replicas(service: str) -> int:
+    return max(replica_count(_compose_services(), service), 1)
+
+
+def check_worker_tools(worker: str) -> tuple[str, str]:
+    replicas = _replicas(worker)
+    optional_missing: set[str] = set()
+    for index in range(1, replicas + 1):
+        missing = _missing_tools(worker, ("debmirror", "gpgv", "patch", "ed"), index)
+        for tool in ("debmirror", "gpgv"):
+            if tool in missing:
+                raise CheckError(f"{tool} not installed in {worker} #{index}")
+        optional_missing |= {tool for tool in ("patch", "ed") if tool in missing}
+
+    scope = f"{replicas} {worker} containers" if replicas > 1 else worker
+    if optional_missing:
+        tools = " and ".join(sorted(optional_missing))
+        return WARN, f"missing {tools} in {scope}; diffs disabled"
+    return PASS, f"debmirror, gpgv, patch, ed present in {scope}"
 
 
 def check_keyring(worker: str, path: str = "/gnupg/trustedkeys.gpg") -> tuple[str, str]:
-    output = _exec(
-        worker,
-        f"test -s {path} && "
-        f"gpg --no-default-keyring --keyring {path} --list-keys 2>/dev/null | "
-        f"grep -c '^pub'",
+    replicas = _replicas(worker)
+    counts: list[int] = []
+    for index in range(1, replicas + 1):
+        output = _exec(
+            worker,
+            f"test -s {path} && "
+            f"gpg --no-default-keyring --keyring {path} --list-keys 2>/dev/null | "
+            f"grep -c '^pub'",
+            index=index,
+        )
+        try:
+            counts.append(int(output.strip().splitlines()[-1]))
+        except (IndexError, ValueError) as error:
+            raise CheckError(f"could not inspect {path} in {worker} #{index}") from error
+        if counts[-1] == 0:
+            raise CheckError(f"{path} contains no public keys in {worker} #{index}")
+    return PASS, f"{counts[0]} keys in {path}" + (
+        f" ({replicas} containers)" if replicas > 1 else ""
     )
-    try:
-        count = int(output.strip().splitlines()[-1])
-    except (IndexError, ValueError) as error:
-        raise CheckError(f"could not inspect {path}") from error
-    if count == 0:
-        raise CheckError(f"{path} contains no public keys")
-    return PASS, f"{count} keys in {path}"
+
+
+def check_export_tools(export_worker: str) -> tuple[str, str]:
+    missing = _missing_tools(export_worker, ("zstd", "gpg"), 1)
+    if missing:
+        raise CheckError(f"missing in {export_worker}: {', '.join(sorted(missing))}")
+    return PASS, f"zstd, gpg present in {export_worker}"
+
+
+def check_export_writable(export_worker: str, path: str) -> tuple[str, str]:
+    # A top-level dot file: drop-folder housekeeping only looks at directories.
+    probe = f"{path.rstrip('/')}/.mirrorhub-smoke-probe"
+    _exec(
+        export_worker,
+        f'p="{probe}.$$"; echo smoke > "$p" || exit 1; rm -f "$p" || exit 1',
+    )
+    output = _exec(export_worker, f"test -w {path} && df -Pk {path} | tail -1")
+    fields = output.split()
+    free = f", {100.0 - float(fields[4].rstrip('%')):.1f}% free" if len(fields) >= 6 else ""
+    return PASS, f"{path} writable{free}"
 
 
 def check_data_space(
@@ -329,6 +414,14 @@ def main(argv: list[str] | None = None) -> int:
         "--data-path",
         default=os.environ.get("SMOKE_DATA_PATH", "/data"),
     )
+    parser.add_argument(
+        "--export-worker",
+        default=os.environ.get("SMOKE_EXPORT_WORKER", "worker-export"),
+    )
+    parser.add_argument(
+        "--export-path",
+        default=os.environ.get("SMOKE_EXPORT_PATH", "/export"),
+    )
     parser.add_argument("--min-free-pct", type=float, default=10.0)
     parser.add_argument(
         "--insecure",
@@ -360,6 +453,11 @@ def main(argv: list[str] | None = None) -> int:
         ),
         ("worker tools", lambda: check_worker_tools(args.worker)),
         ("gpg keyring", lambda: check_keyring(args.worker)),
+        ("export tools", lambda: check_export_tools(args.export_worker)),
+        (
+            "export writable",
+            lambda: check_export_writable(args.export_worker, args.export_path),
+        ),
         (
             "mirror data space",
             lambda: check_data_space(
