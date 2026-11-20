@@ -635,8 +635,9 @@ docker compose exec worker gpg --no-default-keyring --keyring /gnupg/trustedkeys
 
 Then run a small debmirror sync and follow `docker compose logs -f worker`.
 
-Export chain with a moved export. Use a repository whose receiver side may get a
-fresh full export afterwards:
+Export chain after the pickup tool took an export. Use a small repository: the
+full export needs as much space in the drop folder as the repository itself.
+Deleting the export simulates the pickup tool without needing extra space:
 
 ```sh
 EXPORT_DIR=$(grep '^HOST_EXPORT_DIR=' .env | cut -d= -f2)
@@ -645,14 +646,17 @@ SLUG=<slug>
 docker compose exec web ls /var/lib/mirrorhub/export-meta/$SLUG/
 # 2. Simulate the pickup tool:
 FULL=$(ls "$EXPORT_DIR/$SLUG" | grep -- '-full$' | tail -1)
-mkdir -p /tmp/pickup-test && sudo mv "$EXPORT_DIR/$SLUG/$FULL" /tmp/pickup-test/
+sudo rm -rf "$EXPORT_DIR/$SLUG/$FULL"
 # 3. Start an incremental export on the Exports page, then:
 INCR=$(ls "$EXPORT_DIR/$SLUG" | grep -- '-incr$' | tail -1)
 docker compose exec worker-export python -m mirrorhub.verify /export/$SLUG/$INCR
+docker compose exec worker-export grep -o '"base_export_id": *"[^"]*"' /export/$SLUG/$INCR/manifest.json
 ```
 
 The incremental export must succeed with base_export_id equal to $FULL, and the
-Exports page must show the full export as `picked up`.
+Exports page must show the full export as `picked up`. The deleted export never
+reached the receiver: if the receiver uses this repository, start a new full
+export afterwards.
 
 Drop-folder cleanup. The directory must disappear within about a minute, and
 the Audit log shows `exports.drop_folder_cleanup`:
