@@ -51,7 +51,7 @@ def upgrade() -> None:
     bind = op.get_bind()
     if not _has_autoincrement():
         # Rebuild (copy, drop, rename). migrations/env.py runs migrations with
-        # foreign_keys=OFF and runs foreign_key_check before commit, as SQLite's
+        # foreign_keys=OFF and runs foreign_key_check afterwards, as SQLite's
         # table-rebuild procedure requires (repo_lock, export, manifest_snapshot
         # and job.parent_job_id reference job.id).
         with op.batch_alter_table(
