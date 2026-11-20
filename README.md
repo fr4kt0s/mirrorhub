@@ -438,7 +438,15 @@ Stopping a subprocess sends SIGTERM, followed by SIGKILL after its grace period.
 
 Exports cancel cooperatively until publication begins.
 
-Job history is retained independently of log-file retention.
+Job history is retained independently of log-file retention. Deleting a job
+also deletes its log file.
+
+Job ids are never reused (SQLite `AUTOINCREMENT`, migration 0006), and each job
+log is `<state>/logs/jobs/<id>.log`. Every run starts with a header line such as
+`# run job 18 attempt 1 repo packages.linuxmint.com type sync tool ftpsync worker … started …`;
+retries append to the same file. A log file found before a job's first run
+belongs to an earlier job with the same id (ids were reused before 0006); the
+worker moves it to `<id>.stale-<UTC time>.log`, which the log retention removes.
 
 "Export after a successful sync" can be set on the repository and on each
 schedule:
@@ -816,6 +824,14 @@ docker compose logs -f worker
 ```
 
 Use the UI job history to identify the job ID before inspecting a specific log.
+
+### Job log shows output of another repository or tool
+
+Before migration 0006, SQLite reused job ids after jobs were deleted, and the new
+job appended to the old `<id>.log`. The command lines (`$ debmirror …`,
+`$ … ftpsync sync:archive:<repo>`) show where each job's part starts. After
+upgrading, new jobs get unused ids and leftover files are moved to
+`<id>.stale-*.log` on the job's first run.
 
 ## Security boundary
 

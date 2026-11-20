@@ -10,7 +10,7 @@ from sqlmodel import Session, col, select
 
 from mirrorhub.enums import JobStatus, JobType, Tool, Trigger
 from mirrorhub.models import Export, Job, ManifestSnapshot, RepoLock, Repository, utcnow
-from mirrorhub.services import audit
+from mirrorhub.services import audit, logs
 
 ACTIVE = (JobStatus.QUEUED.value, JobStatus.RUNNING.value, JobStatus.CANCELLING.value)
 
@@ -154,6 +154,8 @@ def delete_job(db: Session, job: Job, *, actor: str, finished: Collection[str]) 
         commit=False,
     )
     db.commit()
+    # After the commit: a failed delete must not lose the log.
+    logs.remove_job_logs([job_id])
     return True
 
 
@@ -189,4 +191,5 @@ def delete_finished(
         commit=False,
     )
     db.commit()
+    logs.remove_job_logs(ids)
     return len(ids)

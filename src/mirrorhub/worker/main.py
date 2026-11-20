@@ -363,6 +363,10 @@ def _execute(
         current = db.get(Job, claimed.id)
         if current is None or current.claimed_by != worker_id:
             raise LeaseLost("job ownership was lost")
+        # log_path is set on the first run and kept for retries and deferrals, which
+        # append to the same file. A file that exists before the first run belongs to
+        # an earlier job with the same id.
+        first_run = not current.log_path
         current.log_path = str(log_path)
         db.add(current)
         audit.record(
@@ -374,6 +378,9 @@ def _execute(
             detail={"repo": repo.slug, "type": job.type, "attempt": job.attempt},
             commit=False,
         )
+
+    if first_run:
+        logs.quarantine_stale(log_path)
 
     with repository_guard(settings, claimed.repo_id) as acquired:
         if not acquired:
@@ -389,6 +396,18 @@ def _execute(
             return
 
         with Lease(claimed.id, worker_id, settings, stopping) as lease:
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    logs.run_header(
+                        claimed.id,
+                        job.attempt,
+                        repo.slug,
+                        job.type,
+                        job.tool,
+                        worker_id,
+                        utcnow(),
+                    )
+                )
             try:
                 if job.type == "export":
                     with log_path.open("a", encoding="utf-8") as handle:
