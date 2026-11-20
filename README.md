@@ -540,6 +540,61 @@ Example:
 
 Webhooks in the generic JSON format receive the same fields.
 
+### Checkmk on the receiving side
+
+contrib/checkmk/mirrorhub_events.py is a Checkmk local check for the host that
+receives the event files. It needs Python 3.9 or newer and only the standard
+library.
+
+```sh
+install -m 0755 contrib/checkmk/mirrorhub_events.py \
+  /usr/lib/check_mk_agent/local/mirrorhub_events
+```
+
+Configure it in /etc/check_mk/mirrorhub_events.json (or the file named in
+MIRRORHUB_EVENTS_CONFIG). All keys are optional:
+
+```json
+{
+  "events_dir": "/srv/diode-inbox/_events",
+  "state_file": "/var/lib/check_mk_agent/mirrorhub_events_state.json",
+  "sync_warn_hours": 26,
+  "sync_crit_hours": 50,
+  "export_warn_hours": 26,
+  "export_crit_hours": 50,
+  "disk_alert_hours": 24,
+  "feed_warn_hours": 0,
+  "ignore_repos": [],
+  "repos": {"ubuntu": {"sync_warn_hours": 30}, "archlinux": {"export": false}}
+}
+```
+
+Services, created by a service discovery on the host:
+
+| Service | OK | WARN | CRIT |
+|---|---|---|---|
+| MirrorHub sync &lt;repo&gt; | last sync succeeded, younger than sync_warn_hours | last success older than sync_warn_hours | last sync failed, or last success older than sync_crit_hours |
+| MirrorHub export &lt;repo&gt; | last export published, younger than export_warn_hours | older than export_warn_hours | last export job failed, or older than export_crit_hours |
+| MirrorHub sender disk | no low_disk event within disk_alert_hours | warn level | critical level |
+| MirrorHub event feed | event files readable | unreadable files, or no event for feed_warn_hours (if > 0) | (UNKNOWN if events_dir is missing) |
+
+The check remembers the newest result per repository in state_file, so services
+keep their state after the event files are deleted. Dry runs and channel tests
+are ignored. Metrics: age of the last success or export, archive size and file
+count of the last export, sender disk usage.
+
+The sender emits low_disk only when a threshold is crossed upwards, so the disk
+service returns to OK after disk_alert_hours, not when space is freed.
+
+Example output:
+
+```
+0 "MirrorHub event feed" - 6 event files in /srv/diode-inbox/_events, newest event 1.0 h ago
+0 "MirrorHub sync docker" last_success_age=10800;93600;180000 Last sync OK 3.0 h ago (job 41)
+0 "MirrorHub export docker" last_export_age=9000;93600;180000|archive_bytes=812000000|files=37 Last export 20261120T190000Z-incr (incr, 37 files, 0.81 GB) 2.5 h ago
+2 "MirrorHub sync ubuntu" last_success_age=72000;93600;180000 Last sync FAILED 1.0 h ago (job 43, exit code 23): rsync: connection unexpectedly closed; last success 20.0 h ago
+```
+
 Secrets are encrypted using the application secret. Back up that secret together
 with the database.
 
