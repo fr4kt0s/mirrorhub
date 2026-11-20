@@ -11,6 +11,7 @@ from pathlib import Path
 from sqlmodel import Session, col, select
 
 from mirrorhub.db import get_engine, immediate_session
+from mirrorhub.export import metadata_store
 from mirrorhub.export.manifest import ExportError
 from mirrorhub.models import Export, Job, Repository
 from mirrorhub.services import appsettings, audit
@@ -264,6 +265,7 @@ def apply_retention(
             if directory.is_dir():
                 (directory / ".done").unlink(missing_ok=True)
                 shutil.rmtree(directory)
+            metadata_store.remove(settings, slug, row.export_id)
             db.delete(row)
             db.commit()
             removed.append(name)
@@ -328,3 +330,110 @@ def delete_failed(db: Session, settings: Settings, *, actor: str, ip: str = "") 
             )
             db.commit()
     return removed
+
+
+# Files an export directory may still hold after the pickup tool took the archive.
+_LEFTOVER_FILES = frozenset({*metadata_store.META_FILES, ".done"})
+PICKED_UP_GRACE_S = 24 * 3600
+
+
+def drop_folder_state(settings: Settings, slug: str, export_id: str) -> str:
+    """Where a published export is now: 'present', 'partial' or 'picked up'."""
+    try:
+        directory = publication_directory(settings, slug, export_id)
+    except ExportError:
+        return "picked up"
+    if not directory.is_dir():
+        return "picked up"
+    if (directory / ".done").is_file() and (directory / "manifest.json").is_file():
+        return "present"
+    return "partial"
+
+
+def _latest_published(db: Session) -> dict[str, str]:
+    slugs = {repo.id: repo.slug for repo in db.exec(select(Repository)).all()}
+    latest: dict[str, str] = {}
+    rows = db.exec(
+        select(Export).where(Export.status == "published").order_by(col(Export.id))
+    ).all()
+    for row in rows:
+        slug = slugs.get(row.repo_id)
+        if slug is not None:
+            latest[slug] = row.export_id
+    return latest
+
+
+def _only_leftovers(directory: Path) -> bool:
+    """True if the directory holds no archive part, only small metadata files."""
+    for entry in directory.iterdir():
+        if entry.is_symlink() or not entry.is_file() or entry.name not in _LEFTOVER_FILES:
+            return False
+    return True
+
+
+def clean_drop_folder(db: Session, settings: Settings, *, now: float | None = None) -> list[str]:
+    """Remove export directories the pickup tool has emptied.
+
+    Removed: empty export directories, and directories that hold only metadata files
+    (no archive part) and have not changed for PICKED_UP_GRACE_S, so a tool that is
+    still moving files is not disturbed. Empty repository directories are removed
+    when no export of that repository is running. In-progress `.tmp` directories and
+    anything unexpected are left alone. Metadata copies on the state volume are kept.
+    """
+    root = settings.export_dir
+    if not root.is_dir():
+        return []
+    cutoff = (now if now is not None else time.time()) - PICKED_UP_GRACE_S
+    busy = {
+        row.repo_id
+        for row in db.exec(
+            select(Job).where(col(Job.type) == "export", col(Job.status).in_(ACTIVE))
+        ).all()
+    }
+    repo_ids = {repo.slug: repo.id for repo in db.exec(select(Repository)).all()}
+
+    removed: list[str] = []
+    for repo_dir in sorted(root.iterdir()):
+        if repo_dir.is_symlink() or not repo_dir.is_dir():
+            continue
+        for directory in sorted(repo_dir.iterdir()):
+            if directory.is_symlink() or not directory.is_dir():
+                continue
+            if not _EXPORT_ID.fullmatch(directory.name):
+                continue  # includes <id>.tmp directories of running exports
+            try:
+                if not any(directory.iterdir()):
+                    directory.rmdir()
+                elif _only_leftovers(directory) and directory.stat().st_mtime < cutoff:
+                    shutil.rmtree(directory)
+                else:
+                    continue
+            except OSError:
+                continue
+            removed.append(f"{repo_dir.name}/{directory.name}")
+
+        if repo_ids.get(repo_dir.name) in busy:
+            continue
+        try:
+            if not any(repo_dir.iterdir()):
+                repo_dir.rmdir()
+                removed.append(f"{repo_dir.name}/")
+        except OSError:
+            continue
+    return removed
+
+
+def housekeeping(db: Session, settings: Settings) -> dict[str, int]:
+    """Periodic export cleanup run by the scheduler."""
+    pruned = metadata_store.prune(settings, _latest_published(db))
+    cleaned = clean_drop_folder(db, settings)
+    if cleaned:
+        audit.record(
+            db,
+            actor="scheduler",
+            action="exports.drop_folder_cleanup",
+            target_type="export",
+            target_id="*",
+            detail={"removed": cleaned},
+        )
+    return {"metadata_pruned": pruned, "drop_folder_removed": len(cleaned)}

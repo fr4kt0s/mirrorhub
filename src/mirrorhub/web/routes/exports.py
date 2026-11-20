@@ -21,13 +21,22 @@ def page(
     repositories = repos.list_all(db)
     keep = export_jobs.keep_chains(db)
     plan = export_jobs.retention_plan(db, keep)
+    exports = export_jobs.list_exports(db)
+    names = {repo.id: repo.slug for repo in repositories}
+    settings = get_settings()
+    drop_folder = {
+        row.id: export_jobs.drop_folder_state(settings, names[row.repo_id], row.export_id)
+        for row in exports
+        if row.status == "published" and row.repo_id in names
+    }
     return render(
         request,
         "exports.html",
         {
-            "exports": export_jobs.list_exports(db),
+            "exports": exports,
+            "drop_folder": drop_folder,
             "repositories": repositories,
-            "repo_names": {repo.id: repo.slug for repo in repositories},
+            "repo_names": names,
             "failed_count": len(export_jobs.failed_exports(db)),
             "retention": {
                 "keep": keep,

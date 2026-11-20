@@ -16,7 +16,7 @@ from sqlmodel import Session, col, select
 
 from mirrorhub import __version__
 from mirrorhub.db import get_engine
-from mirrorhub.export import manifest, pack
+from mirrorhub.export import manifest, metadata_store, pack
 from mirrorhub.export.manifest import ExportError, Inventory, Pulse
 from mirrorhub.models import Export, Job, Repository
 from mirrorhub.services import audit
@@ -163,16 +163,9 @@ def _previous(
             return None, {}
         export_id = row.export_id
 
-    directory = settings.export_dir / slug / export_id
-    if not (directory / ".done").is_file():
-        raise ExportError("last published export is missing its .done marker")
-
-    from mirrorhub.verify import verify
-
-    metadata = verify(directory)
-    if metadata["repo"] != slug or metadata["export_id"] != export_id:
-        raise ExportError("base export identity does not match repository")
-    return export_id, manifest.load(directory / "files.json")
+    # The base comes from the metadata copy on the state volume, so the drop folder
+    # may be emptied by the pickup tool. Archive parts are neither needed nor hashed.
+    return export_id, metadata_store.load_base(settings, slug, export_id)
 
 
 def _record_failure(row_id: int | None, export_id: str, slug: str) -> None:
@@ -324,6 +317,10 @@ def execute(
             with path.open("rb") as handle:
                 os.fsync(handle.fileno())
         _fsync_directory(temporary)
+
+        # Before publishing: once .done exists, the pickup tool may move the export.
+        pulse(97, "Storing export metadata")
+        metadata_store.save(settings, repo.slug, export_id, temporary)
 
         pulse(98, "Publishing export")
         os.rename(temporary, final)
