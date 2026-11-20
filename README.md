@@ -27,7 +27,8 @@ Review docs/release-checklist.md before deployment.
 
 - A single Linux Docker host.
 - Docker Engine and Docker Compose.
-- Python 3.12 for local checks.
+- Python 3.12 for local checks; Python 3.10 or newer on the Docker host for the
+  smoke test.
 - Local project directory and local Docker named volumes.
 - Mirror and export directories provisioned for the selected UID/GID.
 - DNS or client host entries for the configured HTTPS hostname.
@@ -38,33 +39,70 @@ Runtime operation does not require a CDN.
 
 ## Configuration
 
-Copy .env.example to .env and edit:
+Copy .env.example to .env and edit it. Every container reads .env; Compose also
+uses it for variable substitution.
 
-- PUID and PGID.
-- HOST_DATA_DIR.
-- HOST_EXPORT_DIR.
-- MIRRORHUB_HOSTNAME.
-- HTTPS_PORT.
-- MIRRORHUB_ADMIN_PASSWORD.
-- MIRRORHUB_SECRET_KEY, if externally managed.
-- MIRRORHUB_PUBLIC_ORIGIN, the exact HTTPS origin clients use (for example
-  https://mirrorhub.example.lan:8443). It is used for CSRF origin checks behind
-  the proxy.
-- MIRRORHUB_FRONTEND_SUBNET, MIRRORHUB_FRONTEND_IP_RANGE and MIRRORHUB_PROXY_IP,
-  only if the default 172.31.254.0/28 overlaps a local network. Caddy gets the
-  fixed MIRRORHUB_PROXY_IP (inside the subnet, outside the IP range, not .1), and
-  the web container trusts X-Forwarded-For only from that address.
+### Required for every deployment
 
-Use non-root PUID and PGID values.
+| Variable | Default | Purpose |
+|---|---|---|
+| PUID, PGID | 1000 | Non-root numeric IDs of all containers. Must be able to write the NFS directories. Rebuild images after changing them. |
+| HOST_DATA_DIR | /mnt/repository | Host path of the mirror tree, seen as /data in the containers. |
+| HOST_EXPORT_DIR | /mnt/repository/export | Host path of the drop folder, seen as /export. |
+| MIRRORHUB_HOSTNAME | localhost | Name clients use. Caddy serves exactly this name and issues its internal-CA certificate for it. |
+| HTTPS_PORT | 8443 | Published host port. The container port is always 8443. |
+| MIRRORHUB_PUBLIC_ORIGIN | https://localhost:8443 | Exact origin in the browser address bar: `https://<MIRRORHUB_HOSTNAME>:<HTTPS_PORT>`. Used for CSRF origin checks; a mismatch rejects the login and every form with 403. |
+| MIRRORHUB_ADMIN_PASSWORD | empty | Initial admin password. Empty: a one-time password is printed to the first web log. Does not reset an existing account. |
 
-HOST_DATA_DIR and HOST_EXPORT_DIR are host-side mount sources. The application sees
-them at /data and /export.
+### Optional
 
-Create these directories on the host before starting Compose. Arrange ownership
-and permissions on the NFS server when NFS is used.
+| Variable | Default | Purpose |
+|---|---|---|
+| MIRRORHUB_ADMIN_USERNAME | admin | Initial admin username. |
+| MIRRORHUB_SECRET_KEY | generated | Encrypts notification secrets. Empty: generated once and stored on the state volume. Back it up with the database. |
+| MIRRORHUB_LOG_FORMAT | text | `text` or `json`. |
+| MIRRORHUB_LOG_LEVEL | INFO | Python log level. |
+| MIRRORHUB_WORKER_REPLICAS | 3 | Number of universal sync worker containers. |
+| MIRRORHUB_WORKER_CONCURRENCY | 1 | Sync jobs per worker container. |
+| MIRRORHUB_GLOBAL_CONCURRENCY | 2 | Initial global limit of parallel jobs; later changed on the Settings page. |
+| MIRRORHUB_HEARTBEAT_INTERVAL_S | 10 | Initial worker heartbeat interval; Settings page afterwards. |
+| MIRRORHUB_HEARTBEAT_STALE_S | 60 | Initial stale-job threshold; Settings page afterwards. |
+| MIRRORHUB_LOG_RETENTION_DAYS | 30 | Initial job-log retention; Settings page afterwards. |
+| MIRRORHUB_SESSION_TTL_S | 28800 | Login session lifetime (minimum 300). |
+| MIRRORHUB_LOGIN_MAX_ATTEMPTS | 5 | Failed logins per username and client IP before a lockout. |
+| MIRRORHUB_LOGIN_LOCKOUT_S | 300 | First lockout; doubles with each further failure, capped at one hour. |
+| MIRRORHUB_MAX_GPG_UPLOAD_BYTES | 2097152 | Maximum size of an uploaded key file. |
+| MIRRORHUB_TAG | dev | Image tag. |
+
+### Proxy network
+
+Caddy and the web container share a private network. Change these only if
+172.31.254.0/28 overlaps a network the Docker host can reach, and then change all
+three together:
+
+| Variable | Default | Rule |
+|---|---|---|
+| MIRRORHUB_FRONTEND_SUBNET | 172.31.254.0/28 | Free private subnet. |
+| MIRRORHUB_FRONTEND_IP_RANGE | 172.31.254.8/29 | Inside the subnet; addresses for other containers. |
+| MIRRORHUB_PROXY_IP | 172.31.254.2 | Inside the subnet, outside the IP range, not the gateway (.1). |
+
+The web container trusts X-Forwarded-For only from MIRRORHUB_PROXY_IP. Changing
+these values requires `docker compose down` before `docker compose up -d`,
+because Docker cannot change an existing network.
+
+### Storage rules
+
+HOST_DATA_DIR and HOST_EXPORT_DIR are host-side mount sources. Create them before
+starting Compose, and arrange ownership and permissions on the NFS server when
+NFS is used.
 
 Do not put SQLite, its WAL files, the project directory or local worker guard
-files on NFS.
+files on NFS. They live on the local `state` volume, together with sync
+inventories, the hash cache and export metadata copies.
+
+The repository ships docker-compose.override.yml, which Compose loads
+automatically. It builds the proxy image with your PUID/PGID and supplies the
+MIRRORHUB_PUBLIC_ORIGIN default.
 
 ## Dependencies and lockfiles
 
@@ -118,24 +156,116 @@ Commit the resulting static file.
 The current vendor script prints a hash but does not enforce an independently
 recorded expected hash. Resolve that release-checklist item before production.
 
-## Build and start
+## First deployment
 
-```sh
-docker compose config --quiet
-docker compose build
-docker compose up -d
-docker compose ps
-```
+Run all commands on the Docker host in the project directory.
 
-Open the configured HTTPS hostname and port.
+1. Create the host directories and give them to PUID:PGID. On NFS with
+   root_squash, set the ownership on the NFS server instead:
 
-The web process runs migrations before starting. Workers wait for the schema.
+   ```sh
+   sudo mkdir -p /mnt/repository/export
+   sudo chown -R 1000:1000 /mnt/repository
+   ```
 
-The web process is single-instance because it owns the scheduler.
+2. Create and edit .env (see Configuration):
+
+   ```sh
+   cp .env.example .env
+   chmod 600 .env
+   ```
+
+3. Check that the proxy subnet is free. 172.31.254.x must not appear:
+
+   ```sh
+   docker network ls -q | xargs docker network inspect -f '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}'
+   ip -4 route
+   ```
+
+4. Validate, build and start:
+
+   ```sh
+   docker compose config --quiet
+   docker compose build
+   docker compose up -d
+   docker compose ps
+   ```
+
+   All services must become `healthy`; init-volumes ends as `exited (0)`.
+
+   The web process runs the database migrations before starting. Workers wait
+   for the schema. The web process is single-instance because it owns the
+   scheduler.
+
+5. Check the database revision. It must equal the newest file in
+   migrations/versions:
+
+   ```sh
+   docker compose exec web python -c "import sqlite3; print(sqlite3.connect('/var/lib/mirrorhub/db/mirrorhub.sqlite3').execute('select version_num from alembic_version').fetchone()[0])"
+   ls migrations/versions
+   ```
+
+6. Export the internal CA certificate and install it on the clients (see TLS
+   trust):
+
+   ```sh
+   make root-cert
+   ```
+
+7. Open MIRRORHUB_PUBLIC_ORIGIN in a browser and log in (see Initial login).
+
+8. Import the archive keys on the Keys page, then create the first repository.
+
+9. Run the smoke test (see Testing):
+
+   ```sh
+   MIRRORHUB_URL=https://<MIRRORHUB_HOSTNAME>:<HTTPS_PORT> sh scripts/smoke_test.sh
+   ```
+
+## Upgrading
+
+1. Read the commit log for new .env variables and migrations:
+
+   ```sh
+   git fetch origin
+   git log --oneline HEAD..origin/master
+   git diff HEAD..origin/master -- .env.example migrations/versions
+   ```
+
+2. Back up the database (see Backup).
+
+3. Update the code and add new variables from .env.example to .env (the
+   comparison needs bash):
+
+   ```sh
+   git switch master
+   git pull
+   diff <(grep -o '^[A-Z_]*=' .env.example | sort) <(grep -o '^[A-Z_]*=' .env | sort)
+   ```
+
+   Lines starting with `<` exist only in .env.example. Their defaults apply
+   unless you add them to .env.
+
+4. Rebuild and restart. Use `docker compose down` first when the proxy network
+   changed (new or changed MIRRORHUB_FRONTEND_* or MIRRORHUB_PROXY_IP values, or
+   an upgrade that introduces them). Volumes are kept.
+
+   ```sh
+   docker compose down                     # only when the network changed
+   docker compose build
+   docker compose up -d --remove-orphans
+   docker compose ps
+   ```
+
+   `--remove-orphans` removes containers of services that no longer exist, for
+   example the old per-tool workers.
+
+5. Check the database revision (First deployment, step 5) and run the smoke
+   test.
 
 ## Initial login
 
-The default administrator username is admin.
+The default administrator username is admin (MIRRORHUB_ADMIN_USERNAME).
 
 Set MIRRORHUB_ADMIN_PASSWORD before first start, or retrieve the one-time
 generated password from the first web startup log.
@@ -149,10 +279,11 @@ Protect logs containing generated bootstrap credentials.
 Export the internal CA certificate:
 
 ```sh
-docker compose cp \
-  proxy:/data/caddy/pki/authorities/local/root.crt \
-  ./caddy-root.crt
+make root-cert
 ```
+
+This copies proxy:/data/caddy/pki/authorities/local/root.crt to
+./caddy-root.crt.
 
 Install it into the trust stores of authorized clients through your organization's
 normal certificate distribution process.
@@ -161,6 +292,20 @@ For command-line diagnostics, prefer explicitly trusting that certificate over
 disabling certificate verification.
 
 Changing the Caddy CA volume changes the CA identity. Back up that volume.
+
+## Login and proxy security
+
+- Failed logins are counted per username and client IP. After
+  MIRRORHUB_LOGIN_MAX_ATTEMPTS failures that address is locked for
+  MIRRORHUB_LOGIN_LOCKOUT_S, doubling with every further failure up to one hour.
+  Other addresses can still log in, so an attacker cannot lock the administrator
+  out. Counters reset after 24 hours without failures.
+- An attacker with many source addresses still gets that many guesses per
+  address. Use a strong administrator password.
+- The client IP comes from X-Forwarded-For, trusted only from Caddy
+  (MIRRORHUB_PROXY_IP). Browsers on the Docker host itself appear as the
+  network gateway, for example 172.31.254.1; remote clients appear with their
+  own address.
 
 ## UID/GID and NFS
 
@@ -295,6 +440,17 @@ Exports cancel cooperatively until publication begins.
 
 Job history is retained independently of log-file retention.
 
+"Export after a successful sync" can be set on the repository and on each
+schedule:
+
+- Repository checkbox: applies to manual syncs and to schedules set to "Use the
+  repository setting" (the default for new schedules).
+- Schedule "Always" or "Never": overrides the repository for syncs started by
+  that schedule.
+
+Only a sync that chains an export writes a sync inventory; it is deleted after
+the export succeeded. Leftovers older than seven days are removed automatically.
+
 ## Notifications
 
 1. Create an SMTP or webhook channel.
@@ -314,18 +470,44 @@ order. This is a release blocker, not a documented reliability guarantee.
 Read docs/export-contract.md.
 
 The pickup tool must consume only export directories with .done. It may move
-them away; MirrorHub keeps each export's metadata on the state volume and
-removes directories the tool has emptied.
+them out of the drop folder and delete them later; moving the whole
+`<slug>/<export-id>/` directory at once is preferred.
 
 Incremental exports use complete manifests and SHA-256 comparisons, not a
 timestamp-only filter.
 
-MirrorHub never automatically deletes exports.
+What MirrorHub keeps on the local state volume:
+
+- `export-meta/<slug>/<export-id>/`: files.json, manifest.json,
+  MANIFEST.sha256(.sig) and deleted.txt of each export, written before .done.
+  The next incremental export reads its base from here and does not need or
+  hash the previous archive. The newest 30 copies per repository and the newest
+  published one are kept.
+- `manifests/hashcache-<slug>.json`: SHA-256 cache for unchanged files (same
+  inode, size, mtime and ctime). Incremental exports use it; full exports
+  rehash every file and rebuild it.
+
+Automatic cleanup in the drop folder (scheduler, about every 30 seconds):
+
+- Empty export directories.
+- Export directories holding only metadata files and .done, no archive part,
+  unchanged for 24 hours.
+- Empty repository directories without a running export.
+
+`.tmp` directories and anything unexpected are never touched. The Exports page
+shows for each export whether it is `present`, `partial` or `picked up`.
+
+Exports that still contain archive parts are deleted only by the retention rule
+on the Exports page, which also removes their metadata copies.
+
+If the base of an incremental export is gone (no metadata copy and no export
+directory), the export fails with "run a full export". Run a full export and
+import it on the receiver with `--rebase`.
 
 Verify an export:
 
 ```sh
-python -m mirrorhub.verify /path/to/export-directory
+docker compose exec worker-export python -m mirrorhub.verify /export/<slug>/<export-id>
 ```
 
 The verifier uses only the standard library. It validates package checksums and
@@ -363,7 +545,11 @@ Also preserve:
 - The GPG volume, including any configured signing key.
 - The Caddy data volume containing the internal CA.
 - .env, uv.lock, requirements.txt and deployment configuration.
-- Mirror data and export inventories according to your retention policy.
+- Mirror data according to your retention policy.
+
+The state volume also holds export metadata copies (export-meta/) and the hash
+cache. Back up export-meta/ together with the database, otherwise the next
+incremental export after a restore needs a full export first.
 
 Database and filesystem backups taken at different times are not automatically
 a consistent application snapshot. For a coordinated recovery point, stop jobs
@@ -384,22 +570,27 @@ Keep signing keys and application secrets encrypted in backup storage.
 Do not combine a database backup with unrelated export directories and assume
 the incremental chain remains valid.
 
-## Local checks
+## Testing
+
+### Local checks
 
 ```sh
 sh scripts/check.sh
 ```
 
-The checks stop at the first failure. A mypy failure is a failed release gate;
-do not disable strict mode to hide it.
+Runs compileall, ruff check, ruff format --check, mypy (strict), pytest and
+`docker compose config`. The checks stop at the first failure. A mypy failure is
+a failed release gate; do not disable strict mode to hide it.
 
-## Docker smoke test
+GitHub Actions runs the same gates for every pull request and push to master
+(.github/workflows/check.yml), and validates the Caddyfile with the caddy image.
+
+### Docker smoke test
 
 Start the deployment first, then run:
 
 ```sh
-MIRRORHUB_URL=https://mirrorhub.lan:8443 \
-  sh scripts/smoke_test.sh
+MIRRORHUB_URL=https://<MIRRORHUB_HOSTNAME>:<HTTPS_PORT> sh scripts/smoke_test.sh
 ```
 
 It needs Python 3.10 or newer on the host and no admin password. It checks:
@@ -407,13 +598,72 @@ It needs Python 3.10 or newer on the host and no admin password. It checks:
 - The services web, worker, worker-export and proxy are running.
 - HTTPS against the Caddy internal CA and the login page.
 - Unauthenticated requests are redirected to the login page.
-- debmirror and gpgv in the worker, and public keys in /gnupg/trustedkeys.gpg.
+- debmirror, gpgv, patch and ed in the worker, and public keys in
+  /gnupg/trustedkeys.gpg.
 - Free space on the mirror data mount (default: at least 10 %).
 
 Extra arguments are passed to scripts/smoke_test.py, for example --json.
 
 It does not sync a repository, publish an export, send a notification, or prove
 upstream mirror correctness.
+
+### Acceptance checks after deployment or upgrade
+
+Container health and restarts:
+
+```sh
+docker inspect -f '{{.Name}} restarts={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{end}}' $(docker compose ps -q)
+docker compose logs --since 15m | grep -i -E "error|traceback|exception" || echo "no errors"
+```
+
+Proxy trust. The first command prints MIRRORHUB_PROXY_IP; the second must show
+the proxy container at that address:
+
+```sh
+docker compose exec web printenv FORWARDED_ALLOW_IPS
+docker network inspect mirrorhub_frontend -f '{{range .Containers}}{{.Name}}={{.IPv4Address}} {{end}}'
+```
+
+After a login, the Audit log page must show the client's real IP (or the
+gateway address for a browser on the Docker host).
+
+Signature keys for debmirror in the sync worker:
+
+```sh
+docker compose exec worker gpg --no-default-keyring --keyring /gnupg/trustedkeys.gpg --list-keys | grep -c '^pub'
+```
+
+Then run a small debmirror sync and follow `docker compose logs -f worker`.
+
+Export chain with a moved export. Use a repository whose receiver side may get a
+fresh full export afterwards:
+
+```sh
+EXPORT_DIR=$(grep '^HOST_EXPORT_DIR=' .env | cut -d= -f2)
+SLUG=<slug>
+# 1. Start a full export on the Exports page, then:
+docker compose exec web ls /var/lib/mirrorhub/export-meta/$SLUG/
+# 2. Simulate the pickup tool:
+FULL=$(ls "$EXPORT_DIR/$SLUG" | grep -- '-full$' | tail -1)
+mkdir -p /tmp/pickup-test && sudo mv "$EXPORT_DIR/$SLUG/$FULL" /tmp/pickup-test/
+# 3. Start an incremental export on the Exports page, then:
+INCR=$(ls "$EXPORT_DIR/$SLUG" | grep -- '-incr$' | tail -1)
+docker compose exec worker-export python -m mirrorhub.verify /export/$SLUG/$INCR
+```
+
+The incremental export must succeed with base_export_id equal to $FULL, and the
+Exports page must show the full export as `picked up`.
+
+Drop-folder cleanup. The directory must disappear within about a minute, and
+the Audit log shows `exports.drop_folder_cleanup`:
+
+```sh
+sudo mkdir "$EXPORT_DIR/$SLUG/20260101T000000Z-incr"
+sleep 60; ls "$EXPORT_DIR/$SLUG/"
+```
+
+Login lockout (optional): five wrong passwords from client A lock only A; a
+correct login from client B must still work.
 
 Login/logout and rejected requests may create audit records.
 
@@ -461,6 +711,37 @@ writer.
 
 The export is not published and must not be consumed, even if its final directory
 exists.
+
+### Incremental export fails with "run a full export"
+
+Neither the metadata copy on the state volume nor the previous export directory
+exists, for example after restoring the database without export-meta/. Start a
+full export and import it on the receiver with --rebase.
+
+### Login or forms fail with 403 "CSRF validation failed"
+
+MIRRORHUB_PUBLIC_ORIGIN does not match the address in the browser. The web log
+shows `CSRF rejected: reason=...`. Set it to
+`https://<MIRRORHUB_HOSTNAME>:<HTTPS_PORT>` exactly and run
+`docker compose up -d`.
+
+### "Pool overlaps with other one on this address space"
+
+The proxy subnet collides with an existing network. Change
+MIRRORHUB_FRONTEND_SUBNET, MIRRORHUB_FRONTEND_IP_RANGE and MIRRORHUB_PROXY_IP
+together (see Configuration), then `docker compose down` and
+`docker compose up -d`.
+
+### Image build cannot reach docker.io
+
+`docker compose build` needs Docker Hub for the base images unless they are
+cached. Do not use `--pull` on hosts without registry access. Check with
+`docker pull docker.io/library/caddy:2-alpine`.
+
+### Caddy logs "aborting with incomplete response" for /jobs/<id>/events
+
+The browser closed the live job-progress stream, for example by leaving the
+page. This is harmless.
 
 ### SQLite locked
 
