@@ -6,7 +6,7 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from mirrorhub.db import get_engine
 from mirrorhub.enums import JobStatus
@@ -186,7 +186,7 @@ def test_0006_rebuilds_job_with_autoincrement_and_keeps_references(
 
     assert "AUTOINCREMENT" in _job_table_sql().upper()
     with Session(get_engine()) as db:
-        assert [job.id for job in db.exec(select(Job).order_by(Job.id)).all()] == [1, 2, 3]
+        assert [job.id for job in db.exec(select(Job).order_by(col(Job.id))).all()] == [1, 2, 3]
         child = db.get(Job, 3)
         assert child is not None
         assert child.parent_job_id == 2
