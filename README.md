@@ -582,8 +582,15 @@ Runs compileall, ruff check, ruff format --check, mypy (strict), pytest and
 `docker compose config`. The checks stop at the first failure. A mypy failure is
 a failed release gate; do not disable strict mode to hide it.
 
-GitHub Actions runs the same gates for every pull request and push to master
-(.github/workflows/check.yml), and validates the Caddyfile with the caddy image.
+GitHub Actions (.github/workflows/check.yml) runs two jobs for every pull
+request and push to master:
+
+- `check`: the same gates as scripts/check.sh, plus a Caddyfile validation with
+  the caddy image.
+- `stack`: builds all images, starts the Compose stack with two worker replicas,
+  waits until every container is healthy, imports the Debian archive keys, runs
+  the smoke test, checks the migration revision and that the web container
+  trusts only the proxy address, then removes the stack.
 
 ### Docker smoke test
 
@@ -593,16 +600,26 @@ Start the deployment first, then run:
 MIRRORHUB_URL=https://<MIRRORHUB_HOSTNAME>:<HTTPS_PORT> sh scripts/smoke_test.sh
 ```
 
-It needs Python 3.10 or newer on the host and no admin password. It checks:
+It needs Python 3.10 or newer on the host and no admin password. It only
+reads, except for a probe file in /export that it creates and deletes. The eight
+checks:
 
-- The services web, worker, worker-export and proxy are running.
-- HTTPS against the Caddy internal CA and the login page.
-- Unauthenticated requests are redirected to the login page.
-- debmirror, gpgv, patch and ed in the worker, and public keys in
-  /gnupg/trustedkeys.gpg.
-- Free space on the mirror data mount (default: at least 10 %).
+| Check | Passes when |
+|---|---|
+| compose services | Every container of web, worker, worker-export and proxy is running and, with a healthcheck, healthy. `starting` is a warning. |
+| login page | /login is served over HTTPS, verified against the Caddy internal CA. |
+| auth redirect | /jobs without a session redirects to the login page. |
+| worker tools | debmirror and gpgv exist in every worker replica. Missing patch or ed is a warning (no index diffs). |
+| gpg keyring | /gnupg/trustedkeys.gpg contains public keys in every worker replica. |
+| export tools | zstd and gpg exist in worker-export. |
+| export writable | worker-export can create and delete a file in /export. On failure it reports the container uid:gid and the directory's owner and mode. |
+| mirror data space | /data has at least 10 % free (--min-free-pct). |
 
-Extra arguments are passed to scripts/smoke_test.py, for example --json.
+The exit code is 0 unless a check fails; warnings do not fail. Extra arguments
+are passed to scripts/smoke_test.py, for example --json.
+
+Wait until `docker compose ps` shows all services healthy before running it,
+otherwise compose services reports `still starting`.
 
 It does not sync a repository, publish an export, send a notification, or prove
 upstream mirror correctness.
@@ -735,6 +752,17 @@ The proxy subnet collides with an existing network. Change
 MIRRORHUB_FRONTEND_SUBNET, MIRRORHUB_FRONTEND_IP_RANGE and MIRRORHUB_PROXY_IP
 together (see Configuration), then `docker compose down` and
 `docker compose up -d`.
+
+### Workers cannot write /data or /export after the first start
+
+Check the host directories: they must belong to PUID:PGID. Versions before the
+`nocopy` volume mounts let Docker reset empty host directories to root:root 0755
+on first start. Fix the ownership on the host (or the NFS server) and restart:
+
+```sh
+sudo chown 1000:1000 "$(grep '^HOST_DATA_DIR=' .env | cut -d= -f2)" "$(grep '^HOST_EXPORT_DIR=' .env | cut -d= -f2)"
+docker compose up -d
+```
 
 ### Image build cannot reach docker.io
 
