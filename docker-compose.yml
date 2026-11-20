@@ -69,8 +69,17 @@ services:
     volumes:
       - state:/var/lib/mirrorhub
       - gnupg:/gnupg                       # read-write: only web imports keys
-      - mirror_data:/data:ro               # never written from web
-      - export_dir:/export
+      - type: volume  # never written from web
+        source: mirror_data
+        target: /data
+        read_only: true
+        volume:
+          nocopy: true
+      - type: volume
+        source: export_dir
+        target: /export
+        volume:
+          nocopy: true
     expose: ["8000"]
     healthcheck:
       test: ["CMD", "python", "-m", "mirrorhub.healthcheck", "web"]
@@ -96,7 +105,11 @@ services:
     volumes:
       - state:/var/lib/mirrorhub
       - gnupg:/gnupg:ro                    # debmirror verifies Release signatures here
-      - mirror_data:/data
+      - type: volume
+        source: mirror_data
+        target: /data
+        volume:
+          nocopy: true
     healthcheck: *worker-healthcheck
     deploy:
       replicas: ${MIRRORHUB_WORKER_REPLICAS:-1}
@@ -116,8 +129,17 @@ services:
     volumes:
       - state:/var/lib/mirrorhub
       - gnupg:/gnupg:ro
-      - mirror_data:/data:ro               # export reads the mirror only
-      - export_dir:/export                 # the only writer of the drop folder
+      - type: volume  # export reads the mirror only
+        source: mirror_data
+        target: /data
+        read_only: true
+        volume:
+          nocopy: true
+      - type: volume  # writes the drop folder
+        source: export_dir
+        target: /export
+        volume:
+          nocopy: true
     healthcheck: *worker-healthcheck
 
   proxy:
@@ -172,6 +194,9 @@ volumes:
   caddy_config:
 
   # Mirror data and export drop folder: bind mounts by default (NFS mounted on the host).
+  # Bind volumes onto host directories. Every mount uses `nocopy`: otherwise
+  # Docker copies the image's /data or /export into an empty host directory on
+  # first start and resets its owner and mode to root:root 0755.
   mirror_data:
     driver: local
     driver_opts:
