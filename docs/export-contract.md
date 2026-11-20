@@ -236,12 +236,18 @@ the rename/marker sequence.
 ## Notifications
 
 Export jobs use the normal job_succeeded, job_failed and retry_exhausted rules.
+A published export additionally raises export_published with the export id, mode,
+base export id, file and deletion counts and the archive size.
 
 Create a channel and event rules before relying on notifications.
 
-The existing Phase 5 notification sweep still uses a job-ID high-water mark.
-It can miss an older job that finishes after a newer one. Do not treat those
-notifications as reliable completion evidence until that sweep is replaced in
-the final review.
+Each finished job is notified exactly once, independent of the order in which
+jobs finish. Deliveries are queued and retried with backoff; a delivery that
+still fails after the last retry is recorded in the audit log.
 
-The export .done contract, job history and audit log are the completion records.
+A file channel writes events as JSON files to `<drop folder>/_events/`. The
+pickup tool may transfer them with the exports; they are not part of any export
+and the importer ignores directories starting with `_`.
+
+The export .done contract, job history and audit log remain the completion
+records.

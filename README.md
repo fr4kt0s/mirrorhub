@@ -453,17 +453,87 @@ the export succeeded. Leftovers older than seven days are removed automatically.
 
 ## Notifications
 
-1. Create an SMTP or webhook channel.
+1. Create a channel: SMTP, webhook (generic JSON, ntfy, Gotify, Slack) or file.
 2. Send a channel test.
-3. Create event rules for the events that should use the channel.
+3. Create event rules for the events that should use the channel, optionally for
+   one repository only.
 
-A channel without rules does not receive job events.
+A channel without rules does not receive events.
+
+Events:
+
+| Event | When |
+|---|---|
+| job_succeeded | A sync or export job finished successfully. |
+| job_failed | A job failed and will not be retried any more. |
+| retry_exhausted | Additionally to job_failed, when all attempts were used. |
+| export_published | An export was published to the drop folder (export id, mode, base, file and deletion counts, archive size). |
+| low_disk | Disk usage crossed the warning or critical threshold from the Settings page. |
+
+Delivery:
+
+- Every job is notified exactly once for its final state, in whatever order jobs
+  finish. Retries of a job are not notified until the job succeeds or gives up.
+- Events are queued and sent by a background thread in the web container within
+  a few seconds. A slow or unreachable target does not delay schedules.
+- Failed deliveries are retried after 1, 5, 15 and 30 minutes, then 1, 2 and 4
+  hours. After that the delivery is marked failed and an audit entry
+  `notify.delivery_failed` is written. The Notifications page lists recent
+  deliveries with status and last error.
+- Delivery history is kept for 30 days.
+
+### File channel (events through the data diode)
+
+A file channel writes one JSON file per event to `/export/_events/` (that is
+`HOST_EXPORT_DIR/_events/` on the host), so the pickup tool can transfer events
+together with the exports and a monitoring system on the other side, for example
+Checkmk, can read them.
+
+- File names: `<UTC time>-<event>-<repo>-d<delivery id>.json`, for example
+  `20261120T214500Z-job_failed-ubuntu-d42.json`.
+- Files are written under a hidden temporary name and renamed, so the pickup
+  tool never sees a partial file. Collect only `*.json` and `*.log`.
+- Job log detail, per channel:
+  - `none`: event data only.
+  - `tail`: the last N lines of the job log in the field `log_tail` (default 50,
+    up to 1000).
+  - `full` (verbose): the complete job log as `<same name>.log` next to the JSON;
+    the JSON names it in `log_file`.
+- Files the pickup tool has not taken are deleted after the channel's retention
+  (default 14 days).
+- `_events` is reserved: drop-folder housekeeping and the importer ignore
+  directories starting with `_`.
+
+Example:
+
+```json
+{
+  "event": "job_failed",
+  "title": "Mirror job 1234 failed",
+  "message": "ubuntu: exit code 23. rsync: connection unexpectedly closed",
+  "time": "2026-11-20T21:45:00Z",
+  "repo": "ubuntu",
+  "repo_id": 3,
+  "job_id": 1234,
+  "job_type": "sync",
+  "trigger": "schedule",
+  "dry_run": false,
+  "status": "failed",
+  "exit_code": 23,
+  "attempt": 3,
+  "max_attempts": 3,
+  "error_summary": "rsync: connection unexpectedly closed",
+  "created_at": "2026-11-20T20:00:00Z",
+  "started_at": "2026-11-20T21:30:03Z",
+  "finished_at": "2026-11-20T21:44:58Z",
+  "log_tail": ["..."]
+}
+```
+
+Webhooks in the generic JSON format receive the same fields.
 
 Secrets are encrypted using the application secret. Back up that secret together
 with the database.
-
-The current notification high-water mark can miss jobs that finish out of job-ID
-order. This is a release blocker, not a documented reliability guarantee.
 
 ## Data diode exports
 

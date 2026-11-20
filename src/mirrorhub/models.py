@@ -199,6 +199,8 @@ class Job(SQLModel, table=True):
     cancel_requested: bool = False
     error_summary: str = ""
     requested_by: str = "system"
+    # Set once notifications for the job's final state were queued.
+    notified_at: datetime | None = Field(default=None, sa_type=UTCDateTime)
 
 
 class RepoLock(SQLModel, table=True):
@@ -281,6 +283,29 @@ class NotificationRule(SQLModel, table=True):
     channel_id: int = Field(foreign_key="notification_channel.id", index=True)
     event: str
     repo_id: int | None = Field(default=None, foreign_key="repository.id")
+
+
+class NotificationDelivery(SQLModel, table=True):
+    """Outbox: one row per (event, channel). The sender thread delivers due rows and
+    retries failed ones with backoff, so a slow or unreachable target never blocks the
+    scheduler and no event is lost while it is down."""
+
+    __tablename__ = "notification_delivery"
+    __table_args__ = (Index("ix_notification_delivery_due", "status", "next_attempt_at"),)
+    id: int | None = Field(default=None, primary_key=True)
+    channel_id: int = Field(foreign_key="notification_channel.id", index=True)
+    event: str
+    title: str = ""
+    message: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict, sa_column=_json())
+    repo_id: int | None = None
+    job_id: int | None = None
+    status: str = "pending"  # pending | sent | failed
+    attempts: int = 0
+    next_attempt_at: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime)
+    last_error: str = ""
+    created_at: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime)
+    sent_at: datetime | None = Field(default=None, sa_type=UTCDateTime)
 
 
 class AuditLog(SQLModel, table=True):

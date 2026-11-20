@@ -17,7 +17,7 @@ from mirrorhub.db import db_ok, get_engine
 from mirrorhub.logging_conf import configure_logging
 from mirrorhub.security import auth
 from mirrorhub.security.headers import SecurityHeadersMiddleware
-from mirrorhub.services import presets, scheduler
+from mirrorhub.services import notify, presets, scheduler
 from mirrorhub.settings import get_settings
 from mirrorhub.web.deps import NotAuthenticated, render, security_context
 from mirrorhub.web.routes import audit, dashboard
@@ -58,16 +58,18 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if not (STATIC_DIR / "htmx.min.js").exists():
         log.warning("vendored htmx.min.js is missing")
 
-    task = asyncio.create_task(
-        scheduler.run_forever(),
-        name="mirrorhub-scheduler",
-    )
+    tasks = [
+        asyncio.create_task(scheduler.run_forever(), name="mirrorhub-scheduler"),
+        asyncio.create_task(notify.run_sender_forever(), name="mirrorhub-notifier"),
+    ]
     try:
         yield
     finally:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
 async def _not_authenticated(request: Request, _exc: Exception) -> Response:

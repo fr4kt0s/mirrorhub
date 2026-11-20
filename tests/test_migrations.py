@@ -40,7 +40,7 @@ def test_migration_installs_append_only_audit_triggers(
 
     with get_engine().connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert version == "0005"
+        assert version == "0006"
 
     command.upgrade(config, "head")
 
@@ -94,3 +94,46 @@ def test_0005_makes_schedule_chain_export_inheritable(configured: Settings) -> N
         )
     # Equal to the repository -> inherit (NULL); different -> explicit override kept.
     assert rows == {1: None, 2: 0, 3: None, 4: 1}
+
+
+def test_0006_marks_old_jobs_and_keeps_recent_unnotified_ones(configured: Settings) -> None:
+    from datetime import timedelta
+
+    from sqlmodel import Session
+
+    from mirrorhub.models import Job, Repository, utcnow
+    from mirrorhub.services import appsettings
+
+    now = utcnow()
+    with Session(get_engine()) as db:
+        db.add(Repository(id=1, slug="repo", name="repo"))
+        db.commit()
+        rows = [
+            # (id, status, finished_at)
+            (1, "succeeded", now - timedelta(hours=1)),  # <= old mark -> marked
+            (2, "failed", now - timedelta(hours=1)),  # <= old mark -> marked
+            (3, "failed", now - timedelta(hours=1)),  # above mark, recent -> stays unmarked
+            (4, "succeeded", now - timedelta(days=3)),  # above mark, old -> marked
+            (5, "cancelled", now - timedelta(minutes=5)),  # cancelled -> marked
+            (6, "running", None),  # not finished -> unmarked
+        ]
+        for job_id, status, finished in rows:
+            db.add(Job(id=job_id, repo_id=1, status=status, finished_at=finished))
+        db.commit()
+        appsettings.set_value(db, "notified_job_id", 2)
+
+    config = _alembic_config()
+    command.stamp(config, "0005")
+    command.upgrade(config, "head")
+
+    with get_engine().connect() as connection:
+        marked = {
+            row[0]: row[1] is not None
+            for row in connection.execute(text("SELECT id, notified_at FROM job ORDER BY id"))
+        }
+        tables = {
+            row[0]
+            for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+        }
+    assert marked == {1: True, 2: True, 3: False, 4: True, 5: True, 6: False}
+    assert "notification_delivery" in tables

@@ -75,6 +75,7 @@ class ExportStatus(StrEnum):
 class ChannelType(StrEnum):
     SMTP = "smtp"
     WEBHOOK = "webhook"
+    FILE = "file"
 
 
 class NotifyEvent(StrEnum):
@@ -82,3 +83,4 @@ class NotifyEvent(StrEnum):
     JOB_SUCCEEDED = "job_succeeded"
     RETRY_EXHAUSTED = "retry_exhausted"
     LOW_DISK = "low_disk"
+    EXPORT_PUBLISHED = "export_published"

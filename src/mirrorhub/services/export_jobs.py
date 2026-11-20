@@ -396,6 +396,8 @@ def clean_drop_folder(db: Session, settings: Settings, *, now: float | None = No
     for repo_dir in sorted(root.iterdir()):
         if repo_dir.is_symlink() or not repo_dir.is_dir():
             continue
+        if repo_dir.name.startswith("_"):
+            continue  # reserved, e.g. _events from the file notification channel
         for directory in sorted(repo_dir.iterdir()):
             if directory.is_symlink() or not directory.is_dir():
                 continue

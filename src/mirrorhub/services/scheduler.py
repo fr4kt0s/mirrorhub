@@ -118,6 +118,8 @@ def tick() -> dict[str, int]:
         "sync_inventories_removed": 0,
         "export_metadata_pruned": 0,
         "drop_folder_removed": 0,
+        "notifications_purged": 0,
+        "event_files_removed": 0,
     }
     with Session(get_engine()) as db:
         ensure_next_fire(db)
@@ -136,6 +138,11 @@ def tick() -> dict[str, int]:
             summary["drop_folder_removed"] = cleanup["drop_folder_removed"]
         except OSError:
             log.exception("export housekeeping failed")
+        summary["notifications_purged"] = notify.purge_deliveries(db)
+        try:
+            summary["event_files_removed"] = notify.purge_event_files(db, get_settings())
+        except OSError:
+            log.exception("event file cleanup failed")
         try:
             summary["disk_alerts"] = len(notify.check_disk(db, storage.mount_usage()))
         except Exception:
