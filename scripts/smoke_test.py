@@ -367,10 +367,18 @@ def check_export_tools(export_worker: str) -> tuple[str, str]:
 def check_export_writable(export_worker: str, path: str) -> tuple[str, str]:
     # A top-level dot file: drop-folder housekeeping only looks at directories.
     probe = f"{path.rstrip('/')}/.mirrorhub-smoke-probe"
-    _exec(
-        export_worker,
-        f'p="{probe}.$$"; echo smoke > "$p" || exit 1; rm -f "$p" || exit 1',
-    )
+    try:
+        _exec(
+            export_worker,
+            f'p="{probe}.$$"; echo smoke > "$p" || exit 1; rm -f "$p" || exit 1',
+        )
+    except CheckError as error:
+        owner = _exec(
+            export_worker,
+            f'echo "container uid:gid $(id -u):$(id -g)," '
+            f'"{path} owner $(stat -c %u:%g {path}) mode $(stat -c %a {path})"',
+        ).strip()
+        raise CheckError(f"{error} ({owner})") from error
     output = _exec(export_worker, f"test -w {path} && df -Pk {path} | tail -1")
     fields = output.split()
     free = f", {100.0 - float(fields[4].rstrip('%')):.1f}% free" if len(fields) >= 6 else ""
