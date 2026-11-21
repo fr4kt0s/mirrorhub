@@ -1,4 +1,4 @@
-.PHONY: help install-dev lock build up down logs ps lint format typecheck test check smoke root-cert
+.PHONY: help install-dev lock build up down logs ps lint format typecheck test check smoke root-cert importer
 
 COMPOSE ?= docker compose
 PY := $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
@@ -64,3 +64,7 @@ smoke:
 root-cert:
 	$(COMPOSE) cp proxy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
 	@echo "Wrote ./caddy-root.crt - import it into client trust stores."
+
+# Receiver-side importer as one file: dist/mirrorhub-importer.pyz (+ .sha256).
+importer:
+	$(PY) scripts/build_importer.py

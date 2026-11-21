@@ -606,6 +606,14 @@ directory), the export fails with "run a full export". Run a full export and
 import it on the receiver with `--rebase`, or an incremental export since an
 export the receiver has applied.
 
+### Importer on the receiver
+
+The receiver needs only the importer, not the application. `make importer` builds
+`dist/mirrorhub-importer.pyz` (plus `.sha256`), one file that runs with the Python
+3.12 standard library: `python3 mirrorhub-importer.pyz --config importer.toml import --slug <slug>`.
+The `check` workflow publishes the same file as artifact `mirrorhub-importer`.
+See docs/importer.md.
+
 Verify an export:
 
 ```sh
@@ -851,7 +859,7 @@ If the importer's state file is gone but the mirror tree is intact, do not impor
 a full export again. On the receiver:
 
 ```sh
-python -m mirrorhub.importer --config importer.toml adopt --slug <slug> --auto
+python3 mirrorhub-importer.pyz --config importer.toml adopt --slug <slug> --auto
 ```
 
 `adopt` compares the tree with the newest published export in the inbox whose
