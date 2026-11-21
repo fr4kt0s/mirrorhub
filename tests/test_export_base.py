@@ -40,7 +40,14 @@ def _repository(settings: Settings) -> Repository:
 def _export(repo: Repository, settings: Settings, **params: Any) -> str:
     params.setdefault("mode", "incr")
     with Session(get_engine()) as db:
-        row = Job(repo_id=repo.id or 0, type="export", tool="export", params=params)
+        # Executed directly below, so the job must not look queued to enqueue().
+        row = Job(
+            repo_id=repo.id or 0,
+            type="export",
+            tool="export",
+            params=params,
+            status="succeeded",
+        )
         db.add(row)
         db.commit()
         db.refresh(row)
@@ -297,7 +304,7 @@ def test_exports_page_offers_incremental_since(
     )
     assert started.status_code == 303
     with Session(get_engine()) as db:
-        job = db.exec(select(Job).where(Job.type == "export")).one()
+        job = db.exec(select(Job).where(Job.type == "export", Job.status == "queued")).one()
         assert job.params == {"mode": "incr", "base": first}
 
 
