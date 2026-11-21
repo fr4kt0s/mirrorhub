@@ -21,7 +21,9 @@ An export contains:
 
 - data.tar or data.tar.zst, optionally split into numbered parts.
 - MANIFEST.sha256, covering archive parts and JSON/text metadata files.
-- manifest.json, describing the export identity, base and payload.
+- manifest.json, describing the export identity, base and payload. Its
+  `tool_versions` include the MirrorHub version and, when known, the sender's
+  commit (`mirrorhub_commit`, 12 hex digits); receivers only compare it and warn.
 - files.json, containing the complete repository inventory.
 - deleted.txt, containing one removed relative path per line.
 - MANIFEST.sha256.sig, if signing is configured.

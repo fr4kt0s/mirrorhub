@@ -24,7 +24,16 @@ Carry both files to the receiver, check and run:
 
 The build is reproducible: the same commit and Python version give the same bytes,
 so the checksum can be compared with a build made elsewhere. The archive contains
-only `mirrorhub/__init__.py`, `mirrorhub/verify.py` and `mirrorhub/importer/`.
+only `mirrorhub/__init__.py`, `mirrorhub/verify.py`, `mirrorhub/buildinfo.py`,
+`mirrorhub/importer/` and `mirrorhub/_build.py` with the commit it was built from.
+
+Build the importer from the same checkout that runs the sender (`git pull && make
+importer` on the sender host). `--version` shows the commit, for example
+`mirrorhub.importer 0.1.0 (9d2440860609)`; `-dirty` means the checkout had local
+changes. Each export records the sender's commit in `manifest.json`
+(`tool_versions.mirrorhub_commit`); when it differs from the importer's commit, the
+importer logs the warning "importer and sender were built from different commits"
+and imports anyway. The sender shows its commit in the footer of every page.
 
 Without the archive, copying those three items into a directory and running
 `python3 -m mirrorhub.importer …` from there works the same way.

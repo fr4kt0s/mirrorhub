@@ -17,6 +17,7 @@ import argparse
 import hashlib
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import zipapp
@@ -49,6 +50,29 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _commit() -> str | None:
+    """Short commit of the checkout, with -dirty if tracked files are modified."""
+    git = shutil.which("git")
+    if git is None:
+        return None
+    try:
+        head = subprocess.run(  # noqa: S603 - fixed git arguments
+            [git, "-C", str(ROOT), "rev-parse", "--short=12", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        changes = subprocess.run(  # noqa: S603 - fixed git arguments
+            [git, "-C", str(ROOT), "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return f"{head}-dirty" if changes else head or None
+
+
 def build(output: Path) -> Path:
     """Write the archive and its .sha256 file; returns the archive path."""
     with tempfile.TemporaryDirectory() as temporary:
@@ -57,6 +81,13 @@ def build(output: Path) -> Path:
         (package / "importer").mkdir(parents=True)
         shutil.copyfile(SOURCE / "__init__.py", package / "__init__.py")
         shutil.copyfile(SOURCE / "verify.py", package / "verify.py")
+        shutil.copyfile(SOURCE / "buildinfo.py", package / "buildinfo.py")
+        commit = _commit()
+        if commit is not None:
+            (package / "_build.py").write_text(
+                f'"""Written by scripts/build_importer.py."""\n\nCOMMIT = {commit!r}\n',
+                encoding="utf-8",
+            )
         for path in sorted((SOURCE / "importer").glob("*.py")):
             shutil.copyfile(path, package / "importer" / path.name)
         (stage / "__main__.py").write_text(ENTRY_POINT, encoding="utf-8")

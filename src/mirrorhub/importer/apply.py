@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from mirrorhub import buildinfo
 from mirrorhub.importer.checks import (
     SKIP_DIRECTORIES,
     Export,
@@ -319,6 +320,28 @@ def _apply_locked(
     return Outcome(export.export_id, "applied", plan)
 
 
+def warn_on_version_mismatch(export: Export) -> bool:
+    """Warn when the export was written by another commit than this importer's.
+
+    Only a warning: the export contract is versioned by format_version, but a sender
+    and importer from different commits may disagree on rules such as superseded
+    exports. Returns True if a warning was logged.
+    """
+    own = buildinfo.commit()
+    sender = export.sender_commit
+    if own is None or sender is None or own == sender:
+        return False
+    log_event(
+        logging.WARNING,
+        "importer and sender were built from different commits",
+        slug=export.slug,
+        export_id=export.export_id,
+        importer_commit=own,
+        sender_commit=sender,
+    )
+    return True
+
+
 def _superseded(export: Export, state: RepoState, options: Options) -> bool:
     """Skip an unapplied export older than the last applied one, unless it is a full
     export the operator explicitly applies with --rebase."""
@@ -399,6 +422,7 @@ def import_export(export_dir: Path, config: Config, options: Options) -> Outcome
     try:
         export = load_export(directory)
         check_signature(directory, config.keyring, config.require_signature)
+        warn_on_version_mismatch(export)
         store = StateStore(config.state_dir, export.slug)
         target = config.mirror_root / export.slug
 

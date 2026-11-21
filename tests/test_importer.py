@@ -695,11 +695,14 @@ def test_zipapp_runs_with_the_standard_library_alone(tmp_path: Path) -> None:
         files = {name for name in bundle.namelist() if not name.endswith("/")}
     assert {"__main__.py", "mirrorhub/__init__.py", "mirrorhub/verify.py"} <= files
     assert "mirrorhub/importer/cli.py" in files
-    assert all(
-        name in {"__main__.py", "mirrorhub/__init__.py", "mirrorhub/verify.py"}
-        or name.startswith("mirrorhub/importer/")
-        for name in files
-    )
+    top_level = {
+        "__main__.py",
+        "mirrorhub/__init__.py",
+        "mirrorhub/verify.py",
+        "mirrorhub/buildinfo.py",
+        "mirrorhub/_build.py",
+    }
+    assert all(name in top_level or name.startswith("mirrorhub/importer/") for name in files)
 
     inbox = tmp_path / "in"
     build_export(inbox, "20261101T000000Z", "full", T1)
@@ -713,6 +716,14 @@ def test_zipapp_runs_with_the_standard_library_alone(tmp_path: Path) -> None:
         [*command[:4], "--version"], capture_output=True, text=True, env=environment
     )
     assert version.returncode == 0 and "mirrorhub.importer" in version.stdout
+    if "mirrorhub/_build.py" in files:  # built from a git checkout
+        head = subprocess.run(
+            ["git", "-C", str(script.parents[1]), "rev-parse", "--short=12", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        assert f"({head}" in version.stdout
     result = subprocess.run(
         [*command, "import", "--slug", "ubuntu"],
         capture_output=True,
@@ -722,3 +733,32 @@ def test_zipapp_runs_with_the_standard_library_alone(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert read_tree(tmp_path / "out" / "ubuntu")["pool/a.deb"] == "aaa"
+
+
+def _with_sender_commit(directory: Path, commit: str) -> None:
+    manifest = json.loads((directory / "manifest.json").read_text())
+    manifest["tool_versions"] = {"mirrorhub": "0.1.0", "mirrorhub_commit": commit}
+    (directory / "manifest.json").write_text(json.dumps(manifest, sort_keys=True))
+    refresh(directory)
+
+
+def test_version_mismatch_is_a_warning(
+    config: Config, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from mirrorhub import buildinfo
+
+    monkeypatch.setenv("MIRRORHUB_COMMIT", "aaaaaaaaaaaa")
+    buildinfo.commit.cache_clear()
+    try:
+        same = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+        _with_sender_commit(same, "aaaaaaaaaaaa")
+        other = build_export(config.export_dir, "20261102T000000Z", "incr", T2, T1, base=ID1)
+        _with_sender_commit(other, "bbbbbbbbbbbb")
+
+        with caplog.at_level("WARNING", logger="mirrorhub.importer"):
+            assert import_export(same, config, Options()).status == "applied"
+            assert "different commits" not in caplog.text
+            assert import_export(other, config, Options()).status == "applied"
+        assert "different commits" in caplog.text
+    finally:
+        buildinfo.commit.cache_clear()

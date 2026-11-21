@@ -41,6 +41,7 @@ class Export:
     inventory: Inventory
     payload: frozenset[str]
     deleted: tuple[str, ...]
+    sender_commit: str | None = None
 
 
 def safe_relative(value: str) -> bool:
@@ -120,7 +121,14 @@ def load_export(directory: Path) -> Export:
         inventory=inventory,
         payload=frozenset(metadata["payload_paths"]),
         deleted=deleted,
+        sender_commit=_sender_commit(metadata),
     )
+
+
+def _sender_commit(metadata: dict[str, Any]) -> str | None:
+    versions = metadata.get("tool_versions")
+    value = versions.get("mirrorhub_commit") if isinstance(versions, dict) else None
+    return value if isinstance(value, str) and value else None
 
 
 def _check_inventory(inventory: Inventory) -> None:

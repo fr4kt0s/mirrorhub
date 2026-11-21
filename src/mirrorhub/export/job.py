@@ -15,7 +15,7 @@ from typing import Any
 
 from sqlmodel import Session, col, select
 
-from mirrorhub import __version__
+from mirrorhub import __version__, buildinfo
 from mirrorhub.db import get_engine
 from mirrorhub.export import manifest, metadata_store, pack, reconcile
 from mirrorhub.export.manifest import ExportError, Inventory, Pulse
@@ -350,6 +350,7 @@ def execute(
             },
             "tool_versions": {
                 "mirrorhub": __version__,
+                "mirrorhub_commit": buildinfo.commit(),
                 "python": platform.python_version(),
                 "archive_writer": "Python tarfile",
             },
