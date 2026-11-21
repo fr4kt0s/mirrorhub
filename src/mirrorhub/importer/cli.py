@@ -14,9 +14,10 @@ from pathlib import Path
 from mirrorhub import buildinfo
 from mirrorhub.importer.adopt import adopt
 from mirrorhub.importer.apply import Options, Outcome, import_export, skip_jumped
+from mirrorhub.importer.check import check_tree
 from mirrorhub.importer.checks import EXPORT_ID_RE, SLUG_RE
 from mirrorhub.importer.config import Config, load_config
-from mirrorhub.importer.errors import ConfigError, ImporterError
+from mirrorhub.importer.errors import ConfigError, DriftError, ImporterError
 from mirrorhub.importer.logs import configure_logging, log_event
 from mirrorhub.importer.state import StateStore
 
@@ -46,11 +47,28 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--rebase", action="store_true", help="allow a full export over existing data")
     run.add_argument("--full-check", action="store_true", help="re-hash the whole tree afterwards")
     run.add_argument(
+        "--no-tree-check",
+        action="store_true",
+        help="skip the quick comparison of the whole tree with files.json after importing",
+    )
+    run.add_argument(
         "--discard-staging", action="store_true", help="drop another unfinished import"
     )
 
     status = commands.add_parser("status", help="show receiver state")
     status.add_argument("--slug", help="repository slug (default: all)")
+
+    check = commands.add_parser(
+        "check", help="compare the tree with the inventory of its last applied export"
+    )
+    scope = check.add_mutually_exclusive_group(required=True)
+    scope.add_argument("--slug", help="repository slug")
+    scope.add_argument(
+        "--all", dest="all_slugs", action="store_true", help="every repository with a state"
+    )
+    check.add_argument(
+        "--hash", action="store_true", help="also compare SHA-256 (reads every file once)"
+    )
 
     take = commands.add_parser(
         "adopt",
@@ -106,6 +124,16 @@ def list_slugs(config: Config) -> list[str]:
     return slugs
 
 
+SHOWN_DIFFERENCES = 50
+
+
+def _print_differences(differences: list[str]) -> None:
+    for line in differences[:SHOWN_DIFFERENCES]:
+        print(f"  {line}")
+    if len(differences) > SHOWN_DIFFERENCES:
+        print(f"  ... and {len(differences) - SHOWN_DIFFERENCES} more")
+
+
 def _print(outcome: Outcome, dry_run: bool) -> None:
     plan = outcome.plan
     if dry_run and outcome.status == "dry-run":
@@ -116,6 +144,12 @@ def _print(outcome: Outcome, dry_run: bool) -> None:
         f"{outcome.status} {outcome.export_id}: "
         f"{len(plan.adds)} added, {len(plan.changes)} changed, {len(plan.deletes)} deleted"
     )
+    if outcome.drift:
+        print(
+            f"warning: the tree differs from files.json of {outcome.export_id} "
+            f"in {len(outcome.drift)} places (not caused by this export):"
+        )
+        _print_differences(outcome.drift)
 
 
 def _base_of(path: Path) -> str | None:
@@ -138,8 +172,8 @@ def _jumped_by(path: Path, pending: list[Path], last: str | None) -> str | None:
     return None
 
 
-def _import_slug(config: Config, slug: str, options: Options) -> int:
-    """Apply all pending exports of one repository; returns how many were processed.
+def _import_slug(config: Config, slug: str, options: Options) -> bool:
+    """Apply all pending exports of one repository; True if the tree differs afterwards.
 
     Exports are taken oldest first. One is skipped as superseded when it is older than
     the last applied export, or when a later pending export starts at the current state
@@ -147,6 +181,7 @@ def _import_slug(config: Config, slug: str, options: Options) -> int:
     """
     store = StateStore(config.state_dir, slug)
     done = 0
+    drift = False
     pending = pending_exports(config, slug)
     for path in pending:
         state = store.load()
@@ -159,6 +194,7 @@ def _import_slug(config: Config, slug: str, options: Options) -> int:
             outcome = import_export(path, config, options)
         _print(outcome, options.dry_run)
         done += 1
+        drift = drift or bool(outcome.drift)
         if outcome.status == "superseded":
             continue  # recorded (or, in a dry run, reported) and skipped
         if options.dry_run:
@@ -171,7 +207,7 @@ def _import_slug(config: Config, slug: str, options: Options) -> int:
         options = dataclasses.replace(options, rebase=False, discard_staging=False)
     if done == 0:
         print(f"nothing to import for {slug}")
-    return done
+    return drift
 
 
 def _import_all(config: Config, options: Options) -> int:
@@ -184,7 +220,8 @@ def _import_all(config: Config, options: Options) -> int:
     worst = 0
     for slug in slugs:
         try:
-            _import_slug(config, slug, options)
+            if _import_slug(config, slug, options):
+                worst = max(worst, DriftError.exit_code)
         except ImporterError as exc:
             log_event(
                 logging.ERROR,
@@ -204,18 +241,58 @@ def _run_import(config: Config, arguments: argparse.Namespace) -> int:
         rebase=arguments.rebase,
         full_check=arguments.full_check,
         discard_staging=arguments.discard_staging,
+        tree_check=not arguments.no_tree_check,
     )
     if arguments.export is not None:
-        _print(import_export(arguments.export, config, options), options.dry_run)
-        return 0
+        outcome = import_export(arguments.export, config, options)
+        _print(outcome, options.dry_run)
+        return DriftError.exit_code if outcome.drift else 0
     if arguments.all_slugs:
         return _import_all(config, options)
-    _import_slug(config, arguments.slug, options)
-    return 0
+    return DriftError.exit_code if _import_slug(config, arguments.slug, options) else 0
+
+
+def _state_slugs(config: Config) -> list[str]:
+    return sorted(path.stem for path in config.state_dir.glob("*.json"))
+
+
+def _check(config: Config, arguments: argparse.Namespace) -> int:
+    """Exit 0 if every checked tree matches, 11 if one differs, else the worst error."""
+    slugs = _state_slugs(config) if arguments.all_slugs else [arguments.slug]
+    if not slugs:
+        print("no repositories with a receiver state")
+    worst = 0
+    for slug in slugs:
+        try:
+            result = check_tree(config, slug, hash_contents=arguments.hash)
+        except ImporterError as exc:
+            if not arguments.all_slugs:
+                raise
+            print(f"{slug}: error: {exc}", file=sys.stderr)
+            worst = max(worst, exc.exit_code)
+            continue
+        kind = "quick check and SHA-256" if result.hashed else "quick check"
+        if not result.differences:
+            print(f"ok {slug}: {result.entries} entries match {result.export_id} ({kind})")
+            continue
+        print(
+            f"differs {slug}: {len(result.differences)} differences from "
+            f"{result.export_id} ({kind}):"
+        )
+        _print_differences(result.differences)
+        log_event(
+            logging.WARNING,
+            "tree differs from inventory",
+            slug=slug,
+            export_id=result.export_id,
+            differences=len(result.differences),
+        )
+        worst = max(worst, DriftError.exit_code)
+    return worst
 
 
 def _status(config: Config, slug: str | None) -> int:
-    slugs = [slug] if slug else sorted(p.stem for p in config.state_dir.glob("*.json"))
+    slugs = [slug] if slug else _state_slugs(config)
     for name in slugs:
         state = StateStore(config.state_dir, name).load()
         skipped = sum(1 for item in state.history if item.get("status") == "superseded")
@@ -247,6 +324,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         config = load_config(Path(location))
         if arguments.command == "status":
             return _status(config, arguments.slug)
+        if arguments.command == "check":
+            return _check(config, arguments)
         if arguments.command == "adopt":
             result = adopt(
                 config,
