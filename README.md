@@ -791,8 +791,9 @@ docker compose exec worker-export grep -o '"base_export_id": *"[^"]*"' /export/$
 
 The incremental export must succeed with base_export_id equal to $FULL, and the
 Exports page must show the full export as `picked up`. The deleted export never
-reached the receiver: if the receiver uses this repository, start a new full
-export afterwards.
+reached the receiver: if the receiver uses this repository, create an
+*Incremental since* export with the receiver's last applied export (see Data
+diode exports) instead of a full export.
 
 Drop-folder cleanup. The directory must disappear within about a minute, and
 the Audit log shows `exports.drop_folder_cleanup`:
@@ -806,6 +807,68 @@ Login lockout (optional): five wrong passwords from client A lock only A; a
 correct login from client B must still work.
 
 Login/logout and rejected requests may create audit records.
+
+#### Build commit, export markers and receiver importer
+
+Sender and receiver importer must come from the same commit. The page footer
+shows the sender's commit; the containers must report the checked-out commit:
+
+```sh
+git rev-parse --short=12 HEAD
+docker compose exec web python -c "from mirrorhub import buildinfo; print(buildinfo.describe())"
+```
+
+Every published export's metadata copy carries a `.published` marker (existing
+copies get one on the first scheduler tick after the upgrade; the Audit log shows
+`exports.reconcile`). Both numbers should be equal:
+
+```sh
+docker compose exec web sh -c 'ls -d /var/lib/mirrorhub/export-meta/*/*/ | grep -vc "\.tmp/$"'
+docker compose exec web sh -c 'ls /var/lib/mirrorhub/export-meta/*/*/.published | wc -l'
+```
+
+An export directory without marker belongs to an export that was never
+published; the count may differ by those. The Exports page shows *Incremental
+since …* for every repository with kept copies.
+
+Build the receiver importer from the same checkout and check it on the receiver:
+
+```sh
+make importer                                         # sender host
+sha256sum -c mirrorhub-importer.pyz.sha256            # receiver
+python3 mirrorhub-importer.pyz --version              # same commit as the footer
+python3 mirrorhub-importer.pyz --config importer.toml check --all --output-dir /tmp/mh-check
+```
+
+`check` must exit with 0 and leave only empty lists in `/tmp/mh-check/<slug>/`.
+
+#### Receiver: detection (practical test)
+
+Rename one unimportant file in a receiver tree, check, rename it back:
+
+```sh
+mv /srv/mirrorhub/mirror/<slug>/<path> /srv/mirrorhub/mirror/<slug>/<path>.moved
+python3 mirrorhub-importer.pyz --config importer.toml check --slug <slug> --output-dir /tmp/mh-check
+echo "exit $?"                                        # 11
+cat /tmp/mh-check/<slug>/missing.txt /tmp/mh-check/<slug>/extra.txt
+mv /srv/mirrorhub/mirror/<slug>/<path>.moved /srv/mirrorhub/mirror/<slug>/<path>
+python3 mirrorhub-importer.pyz --config importer.toml check --slug <slug>   # exit 0
+```
+
+`missing.txt` lists `<path>`, `extra.txt` lists `<path>.moved`.
+
+#### Lost export and "incremental since" (practical test)
+
+Start on a receiver whose state is current (`status` shows the newest export as
+`last`, call it E0):
+
+1. Sender: start an incremental export (E1).
+2. Receiver: move E1 out of the inbox before importing it (simulated loss).
+3. Sender: on the Exports page use *Incremental since …* with E0 (export E2).
+4. Receiver: `import --slug <slug>` applies E2; `status` shows `last=E2`.
+5. Receiver: move E1 back into the inbox and run `import --slug <slug>` again. It
+   reports E1 as `superseded`, exits with 0, and `status` shows `superseded=1`.
+   The sender's Exports page marks E1 as superseded.
 
 ## Troubleshooting
 
