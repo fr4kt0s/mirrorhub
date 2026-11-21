@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session
 
-from mirrorhub.services import presets
+from mirrorhub.services import audit, presets
 from mirrorhub.web.deps import CurrentUser, client_ip, get_db, render, require_user
 
 router = APIRouter()
@@ -16,7 +16,6 @@ def list_page(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
-    presets.seed(db)
     return render(request, "presets/list.html", {"presets": presets.list_all(db)})
 
 
@@ -39,5 +38,15 @@ def reseed(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
-    presets.seed(db)
+    created = presets.seed(db, restore=True)
+    if created:
+        audit.record(
+            db,
+            actor=user.admin.username,
+            ip=client_ip(request),
+            action="preset.reseed",
+            target_type="preset",
+            target_id="*",
+            detail={"created": created},
+        )
     return RedirectResponse("/presets", status_code=303)

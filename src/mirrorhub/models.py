@@ -79,8 +79,6 @@ class Admin(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     username: str = Field(unique=True, index=True, max_length=64)
     password_hash: str
-    failed_attempts: int = 0
-    locked_until: datetime | None = Field(default=None, sa_type=UTCDateTime)
     created_at: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime)
 
 

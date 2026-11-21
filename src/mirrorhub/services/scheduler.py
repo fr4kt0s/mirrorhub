@@ -1,7 +1,8 @@
 """Cron scheduler and the periodic housekeeping loop.
 
 Runs only inside the web container (single instance). Every tick: fire due schedules,
-dispatch job notifications, check disk thresholds, sweep old logs.
+dispatch job notifications, check disk thresholds, sweep old logs, expired sessions and
+stale login throttles.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from sqlmodel import Session, col, select
 from mirrorhub.db import get_engine
 from mirrorhub.enums import Trigger
 from mirrorhub.models import Repository, Schedule, utcnow
+from mirrorhub.security import auth
 from mirrorhub.services import appsettings, export_jobs, logs, notify, storage
 from mirrorhub.services import jobs as jobsvc
 from mirrorhub.settings import get_settings
@@ -120,6 +122,8 @@ def tick() -> dict[str, int]:
         "drop_folder_removed": 0,
         "notifications_purged": 0,
         "event_files_removed": 0,
+        "sessions_purged": 0,
+        "login_throttles_purged": 0,
     }
     with Session(get_engine()) as db:
         ensure_next_fire(db)
@@ -139,6 +143,10 @@ def tick() -> dict[str, int]:
         except OSError:
             log.exception("export housekeeping failed")
         summary["notifications_purged"] = notify.purge_deliveries(db)
+        # Throttle rows exist for every username tried from every address; without a
+        # periodic sweep they would only disappear on the next restart.
+        summary["sessions_purged"] = auth.purge_expired_sessions(db)
+        summary["login_throttles_purged"] = auth.purge_stale_throttles(db)
         try:
             summary["event_files_removed"] = notify.purge_event_files(db, get_settings())
         except OSError:

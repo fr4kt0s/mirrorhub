@@ -7,7 +7,7 @@ import pytest
 from sqlmodel import Session, select
 
 from mirrorhub.db import get_engine
-from mirrorhub.models import Admin, LoginThrottle, utcnow
+from mirrorhub.models import LoginThrottle, utcnow
 from mirrorhub.security import auth
 from mirrorhub.settings import Settings
 
@@ -71,9 +71,6 @@ def test_success_clears_the_pair_counter(db: Session, configured: Settings) -> N
     auth.attempt_login(db, configured.admin_username, PASSWORD, ADMIN_IP, configured)
 
     assert db.exec(select(LoginThrottle)).all() == []
-    admin = db.exec(select(Admin)).one()
-    assert admin.failed_attempts == 0
-    assert admin.locked_until is None
 
 
 def test_counter_resets_after_quiet_period(db: Session, configured: Settings) -> None:

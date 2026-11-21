@@ -47,7 +47,8 @@
       <td>{{ key.imported_at | ts }}</td>
       <td class="row-actions">
         <button class="btn btn-danger" hx-post="/keys/{{ key.fingerprint }}/delete"
-                hx-confirm="Delete key {{ key.fingerprint[-16:] }}?">Delete</button>
+                hx-confirm="Delete key {{ key.fingerprint[-16:] }}?"
+                hx-target="body">Delete</button>
       </td>
     </tr>
   {% else %}

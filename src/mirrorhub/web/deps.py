@@ -24,13 +24,12 @@ PRE_COOKIE_TTL_S = 3600
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.filters["ts"] = lambda value: value.strftime("%Y-%m-%d %H:%M:%S") if value else ""
-templates.env.filters["gb"] = lambda value: f"{(value or 0) / 1e9:.1f}"
 
 
 def _human_bytes(value: int | None) -> str:
     size = float(value or 0)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size < 1024 or unit == "TB":
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024:
             return f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} TB"
@@ -117,8 +116,14 @@ async def security_context(
     if request.method in csrf.SAFE_METHODS:
         return
 
-    supplied = await csrf.extract_token(request)
+    # Check everything that does not need the body first: a request without CSRF
+    # context or from a foreign origin is rejected before this function parses the
+    # form. (FastAPI parses Form/File parameters before dependencies run; the request
+    # body limit in the Caddyfile bounds those.)
     origin_matches = csrf.origin_ok(request)
+    supplied = ""
+    if secret is not None and origin_matches:
+        supplied = await csrf.extract_token(request)
     token_matches = False
 
     if secret is not None and supplied:
@@ -146,7 +151,7 @@ async def security_context(
         user is not None,
         bool(pre_secret),
         csrf.valid_secret_format(pre_secret),
-        bool(supplied),
+        bool(supplied or request.headers.get(csrf.HEADER_NAME)),
         origin_matches,
     )
     raise HTTPException(status_code=403, detail="CSRF validation failed")

@@ -73,6 +73,7 @@ uses it for variable substitution.
 | MIRRORHUB_LOGIN_MAX_ATTEMPTS | 5 | Failed logins per username and client IP before a lockout. |
 | MIRRORHUB_LOGIN_LOCKOUT_S | 300 | First lockout; doubles with each further failure, capped at one hour. |
 | MIRRORHUB_MAX_GPG_UPLOAD_BYTES | 2097152 | Maximum size of an uploaded key file. |
+| MIRRORHUB_MAX_REQUEST_BODY | 16MB | Largest request body Caddy passes to the web container (Caddy size syntax). Keep it above MIRRORHUB_MAX_GPG_UPLOAD_BYTES and the 1 MiB YAML import limit. |
 | MIRRORHUB_TAG | dev | Image tag. |
 
 ### Proxy network
@@ -307,6 +308,21 @@ Changing the Caddy CA volume changes the CA identity. Back up that volume.
   (MIRRORHUB_PROXY_IP). Browsers on the Docker host itself appear as the
   network gateway, for example 172.31.254.1; remote clients appear with their
   own address.
+- Each client IP gets at most 10 login attempts per minute. Further attempts are
+  rejected without a password check, and only the first rejection per address and
+  minute is written to the audit log. At most four password checks (argon2,
+  64 MiB each) run at the same time.
+- Caddy rejects request bodies larger than MIRRORHUB_MAX_REQUEST_BODY before they
+  reach the web container.
+- Only the web container receives MIRRORHUB_ADMIN_PASSWORD and
+  MIRRORHUB_SECRET_KEY; docker-compose.yml blanks both for the workers, which
+  process data from foreign upstreams. Remove MIRRORHUB_ADMIN_PASSWORD from
+  `.env` after the first start.
+- Expired sessions and login lockout entries older than 24 hours are removed by
+  the scheduler every 30 seconds. A live job log stops streaming when the
+  session ends.
+- `scripts/reset_password.sh` sets a new password, ends all sessions and lifts
+  all login lockouts.
 
 ## UID/GID and NFS
 
@@ -370,7 +386,9 @@ rules.
 
 ## Repository setup
 
-Create a repository directly or clone an editable preset.
+Create a repository directly or clone an editable preset. Deleted seed presets
+stay deleted, also across restarts; *Restore missing seed presets* on the Presets
+page brings them back.
 
 For APT, configure suites, components and architectures explicitly.
 
@@ -463,6 +481,11 @@ the export succeeded. Leftovers older than seven days are removed automatically.
 ## Notifications
 
 1. Create a channel: SMTP, webhook (generic JSON, ntfy, Gotify, Slack) or file.
+   An SMTP channel with a username requires TLS (STARTTLS, or implicit TLS on port
+   465); without it the password would travel in clear text. Older channels saved
+   with a username but without TLS now fail with "smtp login without TLS refused"
+   until TLS is enabled. Gotify tokens are sent in the `X-Gotify-Key` header, not
+   in the URL.
 2. Send a channel test.
 3. Create event rules for the events that should use the channel, optionally for
    one repository only.

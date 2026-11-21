@@ -87,14 +87,6 @@ def recent(db: Session, limit: int = 100) -> list[Job]:
     return list(db.exec(select(Job).order_by(col(Job.id).desc()).limit(limit)).all())
 
 
-def for_repo(db: Session, repo_id: int, limit: int = 50) -> list[Job]:
-    return list(
-        db.exec(
-            select(Job).where(Job.repo_id == repo_id).order_by(col(Job.id).desc()).limit(limit)
-        ).all()
-    )
-
-
 def request_cancel(db: Session, job: Job, *, actor: str) -> str:
     """Cancel a queued job outright; flag a running one so its worker stops it."""
     if job.status == JobStatus.QUEUED.value:

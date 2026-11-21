@@ -1,9 +1,20 @@
 """Configured public origins must match exactly."""
 
+from collections.abc import Iterator
+
 import pytest
 from starlette.requests import Request
 
 from mirrorhub.security.csrf import origin_ok
+from mirrorhub.settings import get_settings
+
+
+@pytest.fixture(autouse=True)
+def _fresh_settings() -> Iterator[None]:
+    # origin_ok reads MIRRORHUB_PUBLIC_ORIGIN through the cached settings.
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def _request(origin: str) -> Request:
@@ -34,6 +45,7 @@ def test_configured_origin_accepts_public_https(
         "MIRRORHUB_PUBLIC_ORIGIN",
         "https://localhost:8443",
     )
+    get_settings.cache_clear()
     assert origin_ok(_request("https://localhost:8443"))
 
 
@@ -56,4 +68,5 @@ def test_configured_origin_rejects_other_origins(
         "MIRRORHUB_PUBLIC_ORIGIN",
         "https://localhost:8443",
     )
+    get_settings.cache_clear()
     assert not origin_ok(_request(origin))

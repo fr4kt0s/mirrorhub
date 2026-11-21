@@ -8,12 +8,12 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlmodel import Session, col, select
 
 from mirrorhub.db import get_engine
-from mirrorhub.enums import JobStatus, JobType, Trigger
+from mirrorhub.enums import TERMINAL_JOB_STATUSES, JobStatus, JobType, Trigger
 from mirrorhub.models import Job
 from mirrorhub.services import jobs as jobsvc
 from mirrorhub.services import logs, repos
 from mirrorhub.web import sse
-from mirrorhub.web.deps import CurrentUser, get_db, render, require_user
+from mirrorhub.web.deps import SESSION_COOKIE, CurrentUser, get_db, render, require_user
 
 router = APIRouter()
 
@@ -27,7 +27,9 @@ def list_page(
     db: Session = Depends(get_db),
 ) -> Response:
     statement = select(Job).order_by(col(Job.id).desc()).limit(200)
-    if status in {item.value for item in JobStatus}:
+    if status not in {item.value for item in JobStatus}:
+        status = ""  # unknown filter values are ignored and never echoed into the page
+    if status:
         statement = statement.where(col(Job.status) == status)
     if repo_id:
         statement = statement.where(Job.repo_id == repo_id)
@@ -108,7 +110,7 @@ def detail(
             "repo": repo,
             "lines": lines,
             "log_offset": offset,
-            "is_terminal": job.status in sse.TERMINAL,
+            "is_terminal": job.status in TERMINAL_JOB_STATUSES,
         },
     )
 
@@ -127,11 +129,11 @@ def events(
 
         # A completed job needs no live stream. The detail page already
         # displays its bounded final tail.
-        if job.status in sse.TERMINAL:
+        if job.status in TERMINAL_JOB_STATUSES:
             return Response(status_code=204)
 
     return StreamingResponse(
-        sse.job_events(job_id, request, offset),
+        sse.job_events(job_id, request, offset, request.cookies.get(SESSION_COOKIE, "")),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-store",
@@ -170,7 +172,7 @@ def cleanup(
     jobsvc.delete_finished(
         db,
         actor=user.admin.username,
-        finished=sse.TERMINAL,
+        finished=TERMINAL_JOB_STATUSES,
         status=status,
         repo_id=repo_id,
     )
@@ -189,5 +191,5 @@ def delete(
     job = jobsvc.get(db, job_id)
     if job is None:
         return render(request, "error.html", {"status": 404, "detail": "Job not found"}, 404)
-    jobsvc.delete_job(db, job, actor=user.admin.username, finished=sse.TERMINAL)
+    jobsvc.delete_job(db, job, actor=user.admin.username, finished=TERMINAL_JOB_STATUSES)
     return RedirectResponse("/jobs", status_code=303)

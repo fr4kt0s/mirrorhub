@@ -10,5 +10,12 @@ https://{$MIRRORHUB_HOSTNAME:localhost}:8443 {
 	tls internal
 	encode zstd gzip
 
+	# Upper bound for request bodies, checked before anything reaches the web
+	# container. Must stay above MIRRORHUB_MAX_GPG_UPLOAD_BYTES (default 2 MiB) and
+	# the 1 MiB YAML import limit.
+	request_body {
+		max_size {$MIRRORHUB_MAX_REQUEST_BODY:16MB}
+	}
+
 	reverse_proxy web:8000
 }

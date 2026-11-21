@@ -69,6 +69,14 @@
       }
     });
 
+    source.addEventListener("logout", function () {
+      if (source !== activeSource) {
+        return;
+      }
+      stopStream();
+      window.location.reload();
+    });
+
     source.addEventListener("status", function (event) {
       if (source !== activeSource) {
         return;
@@ -161,11 +169,53 @@
     startStream();
   }
 
-  document.addEventListener("htmx:responseError", function (event) {
-    var status = event.detail.xhr.status;
-    if (status === 401 || status === 403) {
-      window.location.reload();
+  // htmx does not swap 4xx/5xx responses. Show their message above the page
+  // instead of failing silently (e.g. a repository that cannot be deleted yet).
+  function requestErrorText(xhr) {
+    var type = xhr.getResponseHeader("Content-Type") || "";
+    var text = "";
+    if (type.indexOf("text/html") === 0) {
+      // DOMParser builds an inert document: no scripts run, nothing is loaded.
+      var doc = new DOMParser().parseFromString(xhr.responseText, "text/html");
+      var node = doc.querySelector("main .alert-error, main .card p");
+      if (node) {
+        var items = node.querySelectorAll("li");
+        var parts = items.length ? Array.prototype.map.call(items, function (item) {
+          return item.textContent;
+        }) : [node.textContent];
+        text = parts.map(function (part) {
+          return part.replace(/\s+/g, " ").trim();
+        }).filter(Boolean).join("; ");
+      }
+    } else if (type.indexOf("text/plain") === 0) {
+      text = xhr.responseText.trim().slice(0, 500);
     }
+    return text || "Request failed (HTTP " + xhr.status + ").";
+  }
+
+  function showRequestError(message) {
+    var main = document.querySelector("main.container");
+    if (!main) {
+      return;
+    }
+    var box = document.getElementById("request-error");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "request-error";
+      box.className = "alert alert-error";
+      box.setAttribute("role", "alert");
+      main.insertBefore(box, main.firstChild);
+    }
+    box.textContent = message;
+  }
+
+  document.addEventListener("htmx:responseError", function (event) {
+    var xhr = event.detail.xhr;
+    if (xhr.status === 401 || xhr.status === 403) {
+      window.location.reload();
+      return;
+    }
+    showRequestError(requestErrorText(xhr));
   });
 
   document.addEventListener("htmx:afterSwap", initialize);

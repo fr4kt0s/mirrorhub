@@ -186,6 +186,11 @@ def test_disabled_channel_marks_delivery_failed(configured: Settings) -> None:
         ("smtp", {"host": "mail", "port": "abc", "from": "a@x", "to": "b@x"}, "whole number"),
         ("smtp", {"host": "mail", "port": "70000", "from": "a@x", "to": "b@x"}, "between 1"),
         ("smtp", {"host": "", "from": "a@x", "to": "b@x"}, "SMTP host is required"),
+        (
+            "smtp",
+            {"host": "mail", "from": "a@x", "to": "b@x", "username": "u", "password": "p"},
+            "SMTP login needs TLS",
+        ),
         ("file", {"log_mode": "debug"}, "log detail must be one of"),
         ("file", {"log_lines": "0"}, "log_lines must be between 1 and 1000"),
         ("pager", {}, "channel type must be smtp, webhook or file"),
@@ -391,3 +396,22 @@ def test_file_channel_tail_contains_only_the_latest_run(configured: Settings) ->
     tail = json.loads(path.read_text(encoding="utf-8"))["log_tail"]
     assert tail[0].startswith(f"# run job {job_id} attempt 2 ")
     assert tail[1:] == ["second attempt failed"]
+
+
+def test_smtp_login_without_tls_is_refused_for_old_channels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def no_connection(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("must not connect")
+
+    monkeypatch.setattr(notify.smtplib, "SMTP", no_connection)
+    config = {
+        "host": "mail",
+        "port": 25,
+        "username": "u",
+        "password": "p",
+        "to": "b@x",
+        "tls": False,
+    }
+    with pytest.raises(notify.NotifyError, match="without TLS refused"):
+        notify._send_smtp(config, "subject", "body")
