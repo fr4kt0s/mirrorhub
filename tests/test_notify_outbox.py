@@ -404,7 +404,7 @@ def test_smtp_login_without_tls_is_refused_for_old_channels(
     def no_connection(*_args: Any, **_kwargs: Any) -> None:
         raise AssertionError("must not connect")
 
-    monkeypatch.setattr(notify.smtplib, "SMTP", no_connection)
+    monkeypatch.setattr("smtplib.SMTP", no_connection)
     config = {
         "host": "mail",
         "port": 25,

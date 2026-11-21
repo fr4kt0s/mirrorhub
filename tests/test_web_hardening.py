@@ -3,6 +3,7 @@
 import asyncio
 import re
 import threading
+from collections.abc import AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -242,6 +243,7 @@ class _OpenRequest:
 def _first_event(job_id: int, token: str) -> str:
     async def run() -> str:
         stream = sse.job_events(job_id, _OpenRequest(), 0, token)  # type: ignore[arg-type]
+        assert isinstance(stream, AsyncGenerator)
         try:
             return await anext(stream)
         finally:
