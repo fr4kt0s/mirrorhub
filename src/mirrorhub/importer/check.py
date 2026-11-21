@@ -55,8 +55,9 @@ def check_tree(config: Config, slug: str, *, hash_contents: bool = False) -> Che
                 raise ChainError(f"no export has been applied for {slug}; nothing to check")
             inventory = _inventory(config, store, state.last_export_id)
             found = tree.differences(inventory, tree.scan_tree(target))
-            if hash_contents and not found:
-                found = tree.content_differences(inventory, target)
+            if hash_contents:
+                reported = frozenset(line.partition(": ")[2] for line in found)
+                found += tree.content_differences(inventory, target, reported)
     except OSError as exc:
         raise IoFailure(f"I/O error: {exc}") from exc
     return CheckResult(slug, state.last_export_id, len(inventory), hash_contents, found)

@@ -12,6 +12,7 @@ import hashlib
 import os
 import stat
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from mirrorhub.importer.checks import SKIP_DIRECTORIES, Inventory
@@ -68,11 +69,16 @@ def differences(inventory: Inventory, tree: dict[str, TreeEntry]) -> list[str]:
     return found
 
 
-def content_differences(inventory: Inventory, root: Path) -> list[str]:
-    """SHA-256 of every regular file against the inventory (reads the whole tree)."""
+def content_differences(
+    inventory: Inventory, root: Path, skip: frozenset[str] = frozenset()
+) -> list[str]:
+    """SHA-256 of every regular file against the inventory (reads the whole tree).
+
+    Paths in skip (already reported by the quick check) are not read.
+    """
     found: list[str] = []
     for relative, entry in sorted(inventory.items()):
-        if entry["type"] != "file":
+        if entry["type"] != "file" or relative in skip:
             continue
         digest = hashlib.sha256()
         with (root / relative).open("rb") as handle:
@@ -87,3 +93,69 @@ def summary(label: str, found: list[str]) -> str:
     shown = "; ".join(found[:SHOWN_DIFFERENCES])
     more = f"; and {len(found) - SHOWN_DIFFERENCES} more" if len(found) > SHOWN_DIFFERENCES else ""
     return f"tree does not match {label}: {len(found)} differences: {shown}{more}"
+
+
+# One report file per kind of difference; "symlink target" is written as symlink-target.
+REPORT_FILES = {
+    "missing": "missing.txt",
+    "extra": "extra.txt",
+    "type": "type.txt",
+    "size": "size.txt",
+    "mtime": "mtime.txt",
+    "symlink target": "symlink-target.txt",
+    "sha256": "sha256.txt",
+}
+
+
+def _report_line(path: str) -> str:
+    """The path as one line. Names with control characters (a line break in a file
+    name, possible only for extra paths) are written with backslash escapes."""
+    if all(ord(character) >= 32 for character in path):
+        return path
+    return path.encode("unicode_escape", "backslashreplace").decode("ascii")
+
+
+def _write(path: Path, text: str) -> None:
+    temporary = path.with_name(f".{path.name}.tmp")
+    with temporary.open("w", encoding="utf-8", errors="surrogateescape") as handle:
+        handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+
+
+def write_report(
+    directory: Path,
+    slug: str,
+    export_id: str,
+    found: list[str],
+    *,
+    hashed: bool,
+) -> Path:
+    """Write <directory>/<slug>/<kind>.txt (one path per line, sorted) and summary.txt.
+
+    Every file is written, empty when there is nothing of that kind, so scripts can
+    rely on them and count lines. Existing files of the same names are replaced.
+    """
+    target = directory / slug
+    target.mkdir(parents=True, exist_ok=True)
+    by_kind: dict[str, list[str]] = {kind: [] for kind in REPORT_FILES}
+    for line in found:
+        kind, _, path = line.partition(": ")
+        by_kind.setdefault(kind, []).append(path)
+    for kind, name in REPORT_FILES.items():
+        paths = sorted(by_kind.get(kind, []))
+        _write(target / name, "".join(f"{_report_line(path)}\n" for path in paths))
+    counts = "".join(
+        f"{name.removesuffix('.txt')}={len(by_kind.get(kind, []))}\n"
+        for kind, name in REPORT_FILES.items()
+    )
+    _write(
+        target / "summary.txt",
+        f"slug={slug}\n"
+        f"export_id={export_id}\n"
+        f"checked_at={datetime.now(UTC).isoformat(timespec='seconds')}\n"
+        f"check={'quick+sha256' if hashed else 'quick'}\n"
+        f"total={len(found)}\n" + counts,
+    )
+    return target

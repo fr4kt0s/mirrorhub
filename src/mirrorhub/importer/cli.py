@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from mirrorhub import buildinfo
+from mirrorhub.importer import tree
 from mirrorhub.importer.adopt import adopt
 from mirrorhub.importer.apply import Options, Outcome, import_export, skip_jumped
 from mirrorhub.importer.check import check_tree
@@ -52,6 +53,12 @@ def _parser() -> argparse.ArgumentParser:
         help="skip the quick comparison of the whole tree with files.json after importing",
     )
     run.add_argument(
+        "--drift-output",
+        type=Path,
+        metavar="DIR",
+        help="write the differences found after importing to DIR/<slug>/<kind>.txt",
+    )
+    run.add_argument(
         "--discard-staging", action="store_true", help="drop another unfinished import"
     )
 
@@ -68,6 +75,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     check.add_argument(
         "--hash", action="store_true", help="also compare SHA-256 (reads every file once)"
+    )
+    check.add_argument(
+        "--output-dir",
+        type=Path,
+        metavar="DIR",
+        help="write all differences to DIR/<slug>/<kind>.txt plus summary.txt",
     )
 
     take = commands.add_parser(
@@ -172,7 +185,14 @@ def _jumped_by(path: Path, pending: list[Path], last: str | None) -> str | None:
     return None
 
 
-def _import_slug(config: Config, slug: str, options: Options) -> bool:
+def _report(directory: Path | None, slug: str, outcome: Outcome) -> None:
+    if directory is None or not outcome.tree_checked:
+        return
+    written = tree.write_report(directory, slug, outcome.export_id, outcome.drift, hashed=False)
+    print(f"differences written to {written}")
+
+
+def _import_slug(config: Config, slug: str, options: Options, report: Path | None = None) -> bool:
     """Apply all pending exports of one repository; True if the tree differs afterwards.
 
     Exports are taken oldest first. One is skipped as superseded when it is older than
@@ -193,6 +213,7 @@ def _import_slug(config: Config, slug: str, options: Options) -> bool:
         else:
             outcome = import_export(path, config, options)
         _print(outcome, options.dry_run)
+        _report(report, slug, outcome)
         done += 1
         drift = drift or bool(outcome.drift)
         if outcome.status == "superseded":
@@ -210,7 +231,7 @@ def _import_slug(config: Config, slug: str, options: Options) -> bool:
     return drift
 
 
-def _import_all(config: Config, options: Options) -> int:
+def _import_all(config: Config, options: Options, report: Path | None = None) -> int:
     """Process every repository in the inbox; one failing slug does not stop the others."""
     if options.rebase or options.discard_staging:
         raise ConfigError("--rebase and --discard-staging cannot be used with --all")
@@ -220,7 +241,7 @@ def _import_all(config: Config, options: Options) -> int:
     worst = 0
     for slug in slugs:
         try:
-            if _import_slug(config, slug, options):
+            if _import_slug(config, slug, options, report):
                 worst = max(worst, DriftError.exit_code)
         except ImporterError as exc:
             log_event(
@@ -243,13 +264,16 @@ def _run_import(config: Config, arguments: argparse.Namespace) -> int:
         discard_staging=arguments.discard_staging,
         tree_check=not arguments.no_tree_check,
     )
+    report = arguments.drift_output
     if arguments.export is not None:
         outcome = import_export(arguments.export, config, options)
         _print(outcome, options.dry_run)
+        _report(report, Path(os.path.abspath(arguments.export)).parent.name, outcome)
         return DriftError.exit_code if outcome.drift else 0
     if arguments.all_slugs:
-        return _import_all(config, options)
-    return DriftError.exit_code if _import_slug(config, arguments.slug, options) else 0
+        return _import_all(config, options, report)
+    drift = _import_slug(config, arguments.slug, options, report)
+    return DriftError.exit_code if drift else 0
 
 
 def _state_slugs(config: Config) -> list[str]:
@@ -272,6 +296,15 @@ def _check(config: Config, arguments: argparse.Namespace) -> int:
             worst = max(worst, exc.exit_code)
             continue
         kind = "quick check and SHA-256" if result.hashed else "quick check"
+        if arguments.output_dir is not None:
+            written = tree.write_report(
+                arguments.output_dir,
+                slug,
+                result.export_id,
+                result.differences,
+                hashed=result.hashed,
+            )
+            print(f"{slug}: report written to {written}")
         if not result.differences:
             print(f"ok {slug}: {result.entries} entries match {result.export_id} ({kind})")
             continue
