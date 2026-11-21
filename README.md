@@ -617,7 +617,9 @@ footer show the commit, and the importer warns when an export comes from another
 commit. After each import it compares the whole tree with the export's file list
 and exits with 11 if files were deleted, changed or added by hand; run
 `python3 mirrorhub-importer.pyz --config importer.toml check --all` regularly (for
-example weekly from a timer) to find such changes in between. See docs/importer.md.
+example weekly from a timer) to find such changes in between. `--output-dir DIR`
+writes the complete lists, one file per kind (`missing.txt`, `extra.txt`, …). See
+docs/importer.md.
 
 Verify an export:
 

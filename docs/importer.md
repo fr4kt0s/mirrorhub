@@ -47,7 +47,7 @@ All examples use `python -m mirrorhub.importer`; with the archive, write
     python -m mirrorhub.importer --config importer.toml import --slug ubuntu --dry-run
     python -m mirrorhub.importer --config importer.toml import --export /inbox/ubuntu/<id>
     python -m mirrorhub.importer --config importer.toml status
-    python -m mirrorhub.importer --config importer.toml check --slug ubuntu [--hash]
+    python -m mirrorhub.importer --config importer.toml check --slug ubuntu [--hash] [--output-dir DIR]
     python -m mirrorhub.importer --config importer.toml check --all
     python -m mirrorhub.importer --config importer.toml adopt --slug ubuntu --auto [--hash]
     python -m mirrorhub.importer --config importer.toml adopt --slug ubuntu --export-id <id>
@@ -91,9 +91,33 @@ neither needs a return path to the sender:
   inventory"), and the run ends with exit code 11. A full export, or an import with
   `--full-check`, already compares everything and skips this step.
 - **`check`** runs the same comparison on demand against the inventory of the last
-  applied export; `--hash` also compares SHA-256 and finds silent corruption with
-  unchanged size and mtime. It takes the repository lock, changes nothing and exits
-  with 0 (match) or 11 (differences). `--all` checks every repository with a state.
+  applied export; `--hash` also compares SHA-256 of every file the quick check did
+  not already report, and finds silent corruption with unchanged size and mtime. It
+  takes the repository lock, changes nothing and exits with 0 (match) or 11
+  (differences). `--all` checks every repository with a state.
+
+The console shows the first 50 differences. For the complete lists, use
+`check --output-dir DIR` (or `import --drift-output DIR`): it writes one file per
+kind into `DIR/<slug>/`, one path per line, sorted, always all files (empty when
+there is nothing of that kind), replacing the files of an earlier run:
+
+| File | Meaning |
+| --- | --- |
+| `missing.txt` | listed in files.json, not in the tree |
+| `extra.txt` | in the tree, not in files.json |
+| `type.txt` | file where a symlink is expected, or the other way round |
+| `size.txt` | different size |
+| `mtime.txt` | same size, different mtime |
+| `symlink-target.txt` | symlink points elsewhere |
+| `sha256.txt` | different content (only with `--hash`) |
+| `summary.txt` | `slug=`, `export_id=`, `checked_at=`, `check=quick` or `quick+sha256`, `total=` and one count per file |
+
+A path containing a control character (a line break in a file name, only possible
+for extra files) is written with backslash escapes. Examples:
+
+    wc -l reports/ubuntu/*.txt                         # how much differs, per kind
+    grep '^total=' reports/*/summary.txt               # per repository
+    xargs -d '\n' -a reports/ubuntu/extra.txt -I{} echo "/srv/mirror/ubuntu/{}"
 
 Run `check` regularly and let exit code 11 alert your monitoring, for example with
 a weekly systemd timer:

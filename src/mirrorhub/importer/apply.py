@@ -68,6 +68,7 @@ class Outcome:
     # Differences between the tree and files.json found after applying (paths the
     # export did not touch, e.g. deleted by hand). The export itself was applied.
     drift: list[str] = field(default_factory=list)
+    tree_checked: bool = False
 
 
 def _tree_paths(root: Path) -> set[str]:
@@ -326,7 +327,8 @@ def _apply_locked(
         plan = Plan(changes=sorted(export.payload), deletes=list(journal["deletes"]))
     drift: list[str] = []
     full = options.full_check or export.mode == "full"
-    if options.tree_check and not full:  # a full post-check already compared everything
+    checked = options.tree_check and not full  # a full post-check compared everything
+    if checked:
         drift = tree.differences(export.inventory, tree.scan_tree(target))
         if drift:
             log_event(
@@ -337,7 +339,7 @@ def _apply_locked(
                 differences=len(drift),
                 first=drift[: tree.SHOWN_DIFFERENCES],
             )
-    return Outcome(export.export_id, "applied", plan, drift)
+    return Outcome(export.export_id, "applied", plan, drift, checked)
 
 
 def warn_on_version_mismatch(export: Export) -> bool:

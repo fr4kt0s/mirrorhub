@@ -869,3 +869,81 @@ def test_adopt_writes_the_inventory_copy(config: Config) -> None:
     adopt(config, "ubuntu", export_id=ID2)
 
     assert (config.state_dir / "inventories" / "ubuntu" / f"{ID2}.json").is_file()
+
+
+REPORT_NAMES = [
+    "extra.txt",
+    "missing.txt",
+    "mtime.txt",
+    "sha256.txt",
+    "size.txt",
+    "summary.txt",
+    "symlink-target.txt",
+    "type.txt",
+]
+
+
+def test_check_writes_one_file_per_kind(tmp_path: Path) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    reports = tmp_path / "reports"
+
+    assert main([*base, "check", "--slug", "ubuntu", "--output-dir", str(reports)]) == 0
+    written = reports / "ubuntu"
+    assert sorted(path.name for path in written.iterdir()) == REPORT_NAMES
+    lists = [name for name in REPORT_NAMES if name != "summary.txt"]
+    assert all((written / name).read_text() == "" for name in lists)
+    assert "total=0\n" in (written / "summary.txt").read_text()
+
+    root = tmp_path / "out" / "ubuntu"
+    (root / "pool/a.deb").unlink()
+    (root / "pool/c.deb").unlink()
+    (root / "pool/z.deb").write_text("z")
+    (root / "pool/bad\nname.deb").write_text("x")
+    grown = root / "dists/Release"
+    grown.write_text("r2 and more")
+    os.utime(grown, ns=(BASE_MTIME + 5, BASE_MTIME + 5))
+
+    assert main([*base, "check", "--slug", "ubuntu", "--output-dir", str(reports)]) == 11
+    assert (written / "missing.txt").read_text() == "pool/a.deb\npool/c.deb\n"
+    assert (written / "extra.txt").read_text() == "pool/bad\\nname.deb\npool/z.deb\n"
+    assert (written / "size.txt").read_text() == "dists/Release\n"
+    assert (written / "mtime.txt").read_text() == ""
+    summary = (written / "summary.txt").read_text()
+    assert f"export_id={ID2}\n" in summary and "check=quick\n" in summary
+    assert "total=5\n" in summary and "missing=2\n" in summary and "extra=2\n" in summary
+
+
+def test_check_hash_reports_content_besides_quick_differences(tmp_path: Path) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    root = tmp_path / "out" / "ubuntu"
+    (root / "pool/a.deb").unlink()
+    changed = root / "pool/b.deb"
+    changed.write_text("bBb")  # same size and mtime
+    os.utime(changed, ns=(BASE_MTIME, BASE_MTIME))
+    reports = tmp_path / "reports"
+
+    command = [*base, "check", "--slug", "ubuntu", "--hash", "--output-dir", str(reports)]
+    assert main(command) == 11
+
+    assert (reports / "ubuntu" / "missing.txt").read_text() == "pool/a.deb\n"
+    assert (reports / "ubuntu" / "sha256.txt").read_text() == "pool/b.deb\n"
+    assert "check=quick+sha256\n" in (reports / "ubuntu" / "summary.txt").read_text()
+
+
+def test_import_writes_drift_files(tmp_path: Path) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    (tmp_path / "out" / "ubuntu" / "pool/a.deb").unlink()
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    reports = tmp_path / "drift"
+
+    assert main([*base, "import", "--slug", "ubuntu", "--drift-output", str(reports)]) == 11
+
+    assert (reports / "ubuntu" / "missing.txt").read_text() == "pool/a.deb\n"
+    assert f"export_id={ID2}\n" in (reports / "ubuntu" / "summary.txt").read_text()
