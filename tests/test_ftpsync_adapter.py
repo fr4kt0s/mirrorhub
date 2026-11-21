@@ -74,11 +74,26 @@ def test_adapter_rejects_dry_run() -> None:
         adapter.validate_plan(plan)
 
 
-def test_adapter_rejects_empty_architectures() -> None:
+def test_adapter_accepts_all_architectures() -> None:
     adapter = FtpsyncAdapter()
     plan = _plan().model_copy(update={"architectures": ()})
 
-    with pytest.raises(SyncConfigurationError):
+    adapter.validate_plan(plan)
+
+
+def test_adapter_accepts_exclude_only() -> None:
+    adapter = FtpsyncAdapter()
+    plan = _plan().model_copy(update={"architectures": (), "arch_exclude": ("armel",)})
+
+    adapter.validate_plan(plan)
+
+
+def test_adapter_rejects_include_and_exclude() -> None:
+    adapter = FtpsyncAdapter()
+    # model_copy skips validation, so the adapter's own check is exercised.
+    plan = _plan().model_copy(update={"arch_exclude": ("armel",)})
+
+    with pytest.raises(SyncConfigurationError, match="either ARCH_INCLUDE or ARCH_EXCLUDE"):
         adapter.validate_plan(plan)
 
 

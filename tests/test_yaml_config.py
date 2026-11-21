@@ -176,3 +176,26 @@ schedules:
     )
     response = _post(admin, csrf_token, {"yaml_text": text, "apply": "1"})
     assert "chain_export must be true, false or null" in response.text
+
+
+def test_import_ftpsync_without_architectures_mirrors_all(
+    admin: TestClient, csrf_token: str
+) -> None:
+    document = """\
+mirrorhub_config: 1
+repositories:
+  - slug: debian-ftpsync
+    name: Debian FTPsync
+    kind: apt
+    tool: ftpsync
+    method: rsync
+    upstream_host: deb.debian.org
+    upstream_root: /debian
+"""
+    applied = _post(admin, csrf_token, {"yaml_text": document, "apply": "1"})
+    assert applied.status_code == 200
+
+    repos = _repos()
+    assert [repo.slug for repo in repos] == ["debian-ftpsync"]
+    assert repos[0].architectures == []
+    assert repos[0].arch_exclude == []

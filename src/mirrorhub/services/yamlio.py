@@ -190,6 +190,10 @@ def build_plan(
 
         if data["tool"] == "rsync":
             data["method"] = "rsync"
+        if data["tool"] == "ftpsync" and "architectures" not in entry:
+            # The debmirror default ["none"] would become ARCH_INCLUDE=none;
+            # an omitted ARCH_INCLUDE means "all architectures" for ftpsync.
+            data["architectures"] = []
 
         slug = str(data.get("slug") or "")
         if slug in seen:
