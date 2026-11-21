@@ -293,6 +293,16 @@ def validate(data: dict[str, Any]) -> list[str]:
                 "architecture selection: use either ARCH_INCLUDE or ARCH_EXCLUDE, not both"
             )
 
+        # Both empty is valid: ftpsync then mirrors all architectures.
+        if "none" in include or "none" in exclude:
+            errors.append(
+                "architecture selection: 'none' is not an ftpsync architecture; "
+                "leave both fields empty to mirror all architectures"
+            )
+        if include:
+            error = validators.validate_list_field("architectures to include", include)
+            if error:
+                errors.append(error)
         if exclude:
             error = validators.validate_list_field("architectures to exclude", exclude)
             if error:

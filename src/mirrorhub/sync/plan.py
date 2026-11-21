@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from mirrorhub.enums import Tool
 
@@ -31,14 +31,29 @@ class SyncPlan(BaseModel):
 
 
 class FtpsyncPlan(SyncPlan):
-    """Plan for an FTPsync-based Debian archive mirror."""
+    """Plan for an FTPsync-based Debian archive mirror.
+
+    ``architectures`` maps to ARCH_INCLUDE and ``arch_exclude`` to ARCH_EXCLUDE.
+    ftpsync accepts at most one of them; with neither it mirrors all architectures.
+    """
 
     adapter: Literal[Tool.FTPSYNC]
     source_protocol: Literal["rsync"]
-    architectures: tuple[str, ...] = Field(min_length=1)
+    architectures: tuple[str, ...] = ()
+    arch_exclude: tuple[str, ...] = ()
     exclude_patterns: tuple[str, ...] = ()
     bwlimit_kbps: int = Field(default=0, ge=0)
     extra_args: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _check_architecture_selection(self) -> FtpsyncPlan:
+        if self.architectures and self.arch_exclude:
+            raise ValueError("use either ARCH_INCLUDE or ARCH_EXCLUDE, not both")
+        if "none" in self.architectures or "none" in self.arch_exclude:
+            raise ValueError(
+                "'none' is not an ftpsync architecture; leave both empty to mirror all"
+            )
+        return self
 
 
 class RsyncPlan(SyncPlan):

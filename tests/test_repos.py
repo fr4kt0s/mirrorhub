@@ -274,6 +274,52 @@ def test_ftpsync_rejects_include_and_exclude(admin: TestClient, csrf_token: str)
     assert "use either ARCH_INCLUDE or ARCH_EXCLUDE" in response.text
 
 
+@pytest.mark.parametrize(
+    ("include", "exclude"),
+    [("none", ""), ("", "none")],
+)
+def test_ftpsync_rejects_none_architecture(
+    admin: TestClient, csrf_token: str, include: str, exclude: str
+) -> None:
+    form = _form(
+        slug="debian-ftpsync",
+        name="Debian FTPsync",
+        kind="apt",
+        tool="ftpsync",
+        method="rsync",
+        upstream_host="deb.debian.org",
+        upstream_root="/debian",
+        suites="",
+        sections="",
+        architectures=include,
+        arch_exclude=exclude,
+    )
+    response = _post(admin, csrf_token, "/repos", form)
+    assert response.status_code == 400
+    assert "is not an ftpsync architecture" in response.text
+    assert _repos() == []
+
+
+def test_ftpsync_validates_arch_include_entries(admin: TestClient, csrf_token: str) -> None:
+    form = _form(
+        slug="debian-ftpsync",
+        name="Debian FTPsync",
+        kind="apt",
+        tool="ftpsync",
+        method="rsync",
+        upstream_host="deb.debian.org",
+        upstream_root="/debian",
+        suites="",
+        sections="",
+        architectures="amd64 $(id)",
+        arch_exclude="",
+    )
+    response = _post(admin, csrf_token, "/repos", form)
+    assert response.status_code == 400
+    assert "architectures to include: invalid entry" in response.text
+    assert _repos() == []
+
+
 def test_ftpsync_accepts_arch_exclude(admin: TestClient, csrf_token: str) -> None:
     form = _form(
         slug="debian-ftpsync",

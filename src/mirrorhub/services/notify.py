@@ -707,10 +707,12 @@ def _queue_job(db: Session, job: Job) -> list[NotificationDelivery]:
                     },
                 )
     else:
+        # exit_code is None when the job failed before a tool ran (configuration error).
+        reason = f"exit code {job.exit_code}. " if job.exit_code is not None else ""
         queue(
             NotifyEvent.JOB_FAILED.value,
             f"Mirror job {job.id} failed",
-            f"{label}: exit code {job.exit_code}. {job.error_summary}",
+            f"{label}: {reason}{job.error_summary}",
         )
         if job.attempt >= job.max_attempts:
             queue(

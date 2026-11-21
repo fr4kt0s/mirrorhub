@@ -39,6 +39,7 @@ from mirrorhub.sync.adapters import (
     WgetAdapter,
 )
 from mirrorhub.sync.context import SyncExecutionContext
+from mirrorhub.sync.errors import SyncConfigurationError
 from mirrorhub.sync.factory import build_sync_plan
 from mirrorhub.sync.plan import (
     DebmirrorPlan,
@@ -529,6 +530,23 @@ def _execute(
                     status="cancelled",
                     exit_code=None,
                     summary="cancelled before publication",
+                )
+            except (SyncConfigurationError, builders.BuildError) as exc:
+                # The repository configuration cannot produce a runnable plan. Retrying
+                # cannot help, and the operator needs the reason, not a generic message.
+                message = "configuration error: " + " ".join(str(exc).split())
+                log.warning(
+                    "job configuration invalid",
+                    extra={"job_id": claimed.id, "error": message},
+                )
+                with log_path.open("a", encoding="utf-8") as handle:
+                    handle.write(f"# {message}\n")
+                finish(
+                    claimed.id,
+                    worker_id,
+                    status="failed",
+                    exit_code=None,
+                    summary=message,
                 )
             except LeaseLost:
                 raise
