@@ -8,7 +8,9 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tarfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -675,3 +677,48 @@ def test_adopt_refuses_an_existing_state(tmp_path: Path) -> None:
     (tmp_path / "st" / "ubuntu.json").unlink()
     assert main([*base, "adopt", "--slug", "ubuntu", "--auto", "--hash"]) == 0
     assert StateStore(tmp_path / "st", "ubuntu").load().last_export_id == ID1
+
+
+def test_zipapp_runs_with_the_standard_library_alone(tmp_path: Path) -> None:
+    """scripts/build_importer.py: one file, reproducible, no application dependencies."""
+    script = Path(__file__).resolve().parents[1] / "scripts" / "build_importer.py"
+    archive = tmp_path / "mirrorhub-importer.pyz"
+    again = tmp_path / "again.pyz"
+    for target in (archive, again):
+        subprocess.run([sys.executable, str(script), "--output", str(target)], check=True)
+
+    assert archive.read_bytes() == again.read_bytes()
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    sidecar = archive.with_name("mirrorhub-importer.pyz.sha256").read_text(encoding="ascii")
+    assert sidecar == f"{digest}  mirrorhub-importer.pyz\n"
+    with zipfile.ZipFile(archive) as bundle:
+        files = {name for name in bundle.namelist() if not name.endswith("/")}
+    assert {"__main__.py", "mirrorhub/__init__.py", "mirrorhub/verify.py"} <= files
+    assert "mirrorhub/importer/cli.py" in files
+    assert all(
+        name in {"__main__.py", "mirrorhub/__init__.py", "mirrorhub/verify.py"}
+        or name.startswith("mirrorhub/importer/")
+        for name in files
+    )
+
+    inbox = tmp_path / "in"
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    settings = tmp_path / "importer.toml"
+    settings.write_text('export_dir = "in"\nmirror_root = "out"\nstate_dir = "st"\n')
+    # -S: no site-packages, so the installed application cannot be picked up.
+    command = [sys.executable, "-S", "-E", str(archive), "--config", str(settings)]
+    environment = {"PATH": os.environ.get("PATH", "")}
+
+    version = subprocess.run(
+        [*command[:4], "--version"], capture_output=True, text=True, env=environment
+    )
+    assert version.returncode == 0 and "mirrorhub.importer" in version.stdout
+    result = subprocess.run(
+        [*command, "import", "--slug", "ubuntu"],
+        capture_output=True,
+        text=True,
+        env=environment,
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    assert read_tree(tmp_path / "out" / "ubuntu")["pool/a.deb"] == "aaa"

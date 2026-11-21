@@ -1,9 +1,38 @@
 # MirrorHub importer (receiver side)
 
-Status: experimental. Tested only against hand-built fixtures that follow
-`export-contract.md`, not against the real writer or a real data diode.
+Status: experimental. Tested against hand-built fixtures that follow
+`export-contract.md` and in a round trip with the real export writer
+(`tests/test_export_base.py`), not yet against a real data diode.
+
+## Installation on the receiver
+
+The importer needs only the Python standard library (Python 3.12 or newer), plus
+`zstd` for `tar.zst` exports and `gpgv` when a keyring is configured. Database, web
+application and the packages from `requirements.txt` are not needed.
+
+Build it as one file on the sender side (or download the `mirrorhub-importer`
+artifact of the `check` workflow run for the commit you deploy):
+
+    make importer                      # or: python3 scripts/build_importer.py
+    # -> dist/mirrorhub-importer.pyz and dist/mirrorhub-importer.pyz.sha256
+
+Carry both files to the receiver, check and run:
+
+    sha256sum -c mirrorhub-importer.pyz.sha256
+    python3 mirrorhub-importer.pyz --version
+    python3 mirrorhub-importer.pyz --config importer.toml import --slug ubuntu
+
+The build is reproducible: the same commit and Python version give the same bytes,
+so the checksum can be compared with a build made elsewhere. The archive contains
+only `mirrorhub/__init__.py`, `mirrorhub/verify.py` and `mirrorhub/importer/`.
+
+Without the archive, copying those three items into a directory and running
+`python3 -m mirrorhub.importer …` from there works the same way.
 
 ## Usage
+
+All examples use `python -m mirrorhub.importer`; with the archive, write
+`python3 mirrorhub-importer.pyz` instead.
 
     python -m mirrorhub.importer --config importer.toml import --slug ubuntu
     python -m mirrorhub.importer --config importer.toml import --slug ubuntu --dry-run

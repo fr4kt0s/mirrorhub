@@ -46,6 +46,18 @@ jobs:
       - name: Tests
         run: .venv/bin/python -m pytest
 
+      - name: Build receiver importer
+        run: .venv/bin/python scripts/build_importer.py
+
+      - name: Upload receiver importer
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirrorhub-importer
+          path: |
+            dist/mirrorhub-importer.pyz
+            dist/mirrorhub-importer.pyz.sha256
+          if-no-files-found: error
+
       - name: Validate Compose file
         run: |
           cp .env.example .env
