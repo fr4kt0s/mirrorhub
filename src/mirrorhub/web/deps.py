@@ -10,7 +10,7 @@ from fastapi import Depends, HTTPException, Request, Response
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 
-from mirrorhub import __version__
+from mirrorhub import buildinfo
 from mirrorhub.db import get_engine
 from mirrorhub.models import Admin, AuthSession
 from mirrorhub.security import auth, csrf
@@ -176,7 +176,7 @@ def render(
         "csrf_token": csrf.make_token(secret),
         "user": getattr(request.state, "user", None),
         "nav": NAV,
-        "version": __version__,
+        "version": buildinfo.describe(),
     }
     values.update(context or {})
 

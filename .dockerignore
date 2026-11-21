@@ -1,4 +1,9 @@
+# Only HEAD and the branch refs go into the image, so mirrorhub.buildinfo can
+# report the commit it was built from (a few bytes; no objects, no history).
 .git
+!.git/HEAD
+!.git/packed-refs
+!.git/refs/heads
 .env
 .venv
 __pycache__

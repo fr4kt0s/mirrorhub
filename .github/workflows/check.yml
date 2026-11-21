@@ -136,6 +136,15 @@ jobs:
           echo "expected=$expected actual=$actual"
           test "$expected" = "$actual"
 
+      - name: Images report the commit they were built from
+        run: |
+          expected="$(git rev-parse --short=12 HEAD)"
+          for service in web worker worker-export; do
+            actual="$(docker compose exec -T "$service" python -c 'from mirrorhub import buildinfo; print(buildinfo.commit())')"
+            echo "$service: $actual (expected $expected)"
+            test "$actual" = "$expected"
+          done
+
       - name: Web trusts only the proxy
         run: |
           test "$(docker compose exec -T web printenv FORWARDED_ALLOW_IPS)" = "172.31.254.2"

@@ -612,7 +612,9 @@ The receiver needs only the importer, not the application. `make importer` build
 `dist/mirrorhub-importer.pyz` (plus `.sha256`), one file that runs with the Python
 3.12 standard library: `python3 mirrorhub-importer.pyz --config importer.toml import --slug <slug>`.
 The `check` workflow publishes the same file as artifact `mirrorhub-importer`.
-See docs/importer.md.
+Build it from the same checkout that runs the sender: `--version` and the page
+footer show the commit, and the importer warns when an export comes from another
+commit. See docs/importer.md.
 
 Verify an export:
 

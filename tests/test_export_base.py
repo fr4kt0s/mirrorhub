@@ -339,3 +339,20 @@ def test_round_trip_through_the_importer(configured: Settings, tmp_path: Path) -
     assert state.last_export_id == since
     assert state.applied(first) and state.applied(since)
     assert state.superseded(second) and state.superseded(third)
+
+
+def test_manifest_records_the_sender_commit(
+    configured: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mirrorhub import buildinfo
+
+    monkeypatch.setenv("MIRRORHUB_COMMIT", "abc123def456")
+    buildinfo.commit.cache_clear()
+    try:
+        repo = _repository(configured)
+        export_id = _export(repo, configured)
+    finally:
+        buildinfo.commit.cache_clear()
+
+    metadata = verify(configured.export_dir / "files" / export_id)
+    assert metadata["tool_versions"]["mirrorhub_commit"] == "abc123def456"

@@ -11,7 +11,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from mirrorhub import __version__
+from mirrorhub import buildinfo
 from mirrorhub.importer.adopt import adopt
 from mirrorhub.importer.apply import Options, Outcome, import_export, skip_jumped
 from mirrorhub.importer.checks import EXPORT_ID_RE, SLUG_RE
@@ -25,7 +25,7 @@ CONFIG_ENV = "MIRRORHUB_IMPORTER_CONFIG"
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mirrorhub.importer", description=__doc__)
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {buildinfo.describe()}")
     parser.add_argument("--config", type=Path, help=f"TOML file (or set {CONFIG_ENV})")
     parser.add_argument(
         "--log-level", default="info", choices=["debug", "info", "warning", "error"]
