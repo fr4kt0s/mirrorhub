@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from mirrorhub import buildinfo
+from mirrorhub.importer import tree
 from mirrorhub.importer.checks import (
     SKIP_DIRECTORIES,
     Export,
@@ -48,6 +49,8 @@ class Options:
     rebase: bool = False
     full_check: bool = False
     discard_staging: bool = False
+    # Quick comparison of the whole tree with files.json after each import.
+    tree_check: bool = True
 
 
 @dataclass
@@ -62,6 +65,9 @@ class Outcome:
     export_id: str
     status: str
     plan: Plan
+    # Differences between the tree and files.json found after applying (paths the
+    # export did not touch, e.g. deleted by hand). The export itself was applied.
+    drift: list[str] = field(default_factory=list)
 
 
 def _tree_paths(root: Path) -> set[str]:
@@ -301,6 +307,7 @@ def _apply_locked(
         shutil.rmtree(staging, ignore_errors=True)
         raise
 
+    store.save_inventory(export.export_id, export.directory / "files.json")
     state.last_export_id = export.export_id
     state.history.append(
         {
@@ -317,7 +324,20 @@ def _apply_locked(
     log_event(logging.INFO, "applied", slug=export.slug, export_id=export.export_id)
     if resuming:
         plan = Plan(changes=sorted(export.payload), deletes=list(journal["deletes"]))
-    return Outcome(export.export_id, "applied", plan)
+    drift: list[str] = []
+    full = options.full_check or export.mode == "full"
+    if options.tree_check and not full:  # a full post-check already compared everything
+        drift = tree.differences(export.inventory, tree.scan_tree(target))
+        if drift:
+            log_event(
+                logging.WARNING,
+                "tree differs from inventory",
+                slug=export.slug,
+                export_id=export.export_id,
+                differences=len(drift),
+                first=drift[: tree.SHOWN_DIFFERENCES],
+            )
+    return Outcome(export.export_id, "applied", plan, drift)
 
 
 def warn_on_version_mismatch(export: Export) -> bool:

@@ -762,3 +762,110 @@ def test_version_mismatch_is_a_warning(
         assert "different commits" in caplog.text
     finally:
         buildinfo.commit.cache_clear()
+
+
+# Detecting changes in the tree (#43): quick check after import, `check`
+
+
+def test_import_reports_changes_outside_the_export(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    (tmp_path / "out" / "ubuntu" / "pool/a.deb").unlink()  # untouched by the next export
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    capsys.readouterr()
+
+    assert main([*base, "import", "--slug", "ubuntu"]) == 11
+
+    output = capsys.readouterr().out
+    assert "applied 20261102T000000Z-incr" in output
+    assert "missing: pool/a.deb" in output
+    assert StateStore(tmp_path / "st", "ubuntu").load().last_export_id == ID2
+
+
+def test_tree_check_can_be_skipped(config: Config) -> None:
+    full = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    import_export(full, config, Options())
+    (config.mirror_root / "ubuntu" / "pool/a.deb").unlink()
+    incr = build_export(config.export_dir, "20261102T000000Z", "incr", T2, T1, base=ID1)
+
+    outcome = import_export(incr, config, Options(tree_check=False))
+
+    assert outcome.status == "applied" and outcome.drift == []
+
+
+def test_check_finds_deleted_extra_and_changed_files(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    capsys.readouterr()
+
+    assert main([*base, "check", "--slug", "ubuntu"]) == 0
+    assert f"ok ubuntu: 4 entries match {ID2}" in capsys.readouterr().out
+
+    root = tmp_path / "out" / "ubuntu"
+    changed = root / "pool/c.deb"
+    changed.write_text("cCc")  # same size and mtime: only --hash sees it
+    os.utime(changed, ns=(BASE_MTIME, BASE_MTIME))
+    assert main([*base, "check", "--slug", "ubuntu"]) == 0
+    assert main([*base, "check", "--slug", "ubuntu", "--hash"]) == 11
+    assert "sha256: pool/c.deb" in capsys.readouterr().out
+
+    (root / "pool/a.deb").unlink()
+    (root / "pool/stray.deb").write_text("x")
+    assert main([*base, "check", "--slug", "ubuntu"]) == 11
+    output = capsys.readouterr().out
+    assert "missing: pool/a.deb" in output and "extra: pool/stray.deb" in output
+
+
+def test_check_uses_the_local_inventory_copy(tmp_path: Path) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    copies = tmp_path / "st" / "inventories" / "ubuntu"
+    assert sorted(path.name for path in copies.iterdir()) == [f"{ID2}.json"]
+
+    shutil.rmtree(inbox / "ubuntu")  # the exports have left the inbox
+    assert main([*base, "check", "--slug", "ubuntu"]) == 0
+
+
+def test_check_falls_back_to_the_inbox_for_older_states(tmp_path: Path) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    copies = tmp_path / "st" / "inventories"
+    shutil.rmtree(copies)  # as written by an importer before inventory copies
+
+    assert main([*base, "check", "--slug", "ubuntu"]) == 0
+    assert (copies / "ubuntu" / f"{ID1}.json").is_file()
+
+    shutil.rmtree(copies)
+    shutil.rmtree(inbox / "ubuntu")
+    assert main([*base, "check", "--slug", "ubuntu"]) == 2
+
+
+def test_check_all_and_missing_state(tmp_path: Path) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1, slug="arch")
+    build_export(inbox, "20261101T000000Z", "full", T1, slug="ubuntu")
+    assert main([*base, "import", "--all"]) == 0
+    assert main([*base, "check", "--slug", "debian"]) == 5
+
+    assert main([*base, "check", "--all"]) == 0
+    (tmp_path / "out" / "arch" / "pool/b.deb").unlink()
+    assert main([*base, "check", "--all"]) == 11
+
+
+def test_adopt_writes_the_inventory_copy(config: Config) -> None:
+    _applied_then_state_lost(config)
+    shutil.rmtree(config.state_dir / "inventories")
+
+    adopt(config, "ubuntu", export_id=ID2)
+
+    assert (config.state_dir / "inventories" / "ubuntu" / f"{ID2}.json").is_file()

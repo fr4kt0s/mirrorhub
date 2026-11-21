@@ -47,6 +47,8 @@ All examples use `python -m mirrorhub.importer`; with the archive, write
     python -m mirrorhub.importer --config importer.toml import --slug ubuntu --dry-run
     python -m mirrorhub.importer --config importer.toml import --export /inbox/ubuntu/<id>
     python -m mirrorhub.importer --config importer.toml status
+    python -m mirrorhub.importer --config importer.toml check --slug ubuntu [--hash]
+    python -m mirrorhub.importer --config importer.toml check --all
     python -m mirrorhub.importer --config importer.toml adopt --slug ubuntu --auto [--hash]
     python -m mirrorhub.importer --config importer.toml adopt --slug ubuntu --export-id <id>
 
@@ -67,8 +69,49 @@ The config path can also be set with `MIRRORHUB_IMPORTER_CONFIG`. See
 5. A journal is written, deletions run, files are moved with `os.replace`, the tree is
    checked against `files.json`, then the state is updated. An interrupted run is
    continued by running the same import again.
+6. A copy of the export's `files.json` is kept in `<state_dir>/inventories/<slug>/`
+   (only the one for the current state), so `check` works after the export has left
+   the inbox.
+7. Quick comparison of the whole tree with `files.json` (see below); skip it with
+   `--no-tree-check`.
 
 The export directory is never modified. File modes are 0644 as written by the sender.
+
+## Detecting changes in the tree
+
+After an incremental import, the post-check covers only the paths the export
+touched, and the sender never resends files that did not change. A file deleted or
+damaged by hand on the receiver would otherwise go unnoticed. Two checks find it;
+neither needs a return path to the sender:
+
+- **After every import** the importer compares the whole tree with the applied
+  `files.json`: every path present, same type, size, mtime (nanoseconds) and symlink
+  target, no extra paths. No contents are read. The export is applied and the state
+  updated anyway; differences are printed and logged ("tree differs from
+  inventory"), and the run ends with exit code 11. A full export, or an import with
+  `--full-check`, already compares everything and skips this step.
+- **`check`** runs the same comparison on demand against the inventory of the last
+  applied export; `--hash` also compares SHA-256 and finds silent corruption with
+  unchanged size and mtime. It takes the repository lock, changes nothing and exits
+  with 0 (match) or 11 (differences). `--all` checks every repository with a state.
+
+Run `check` regularly and let exit code 11 alert your monitoring, for example with
+a weekly systemd timer:
+
+    # /etc/systemd/system/mirrorhub-check.service
+    [Service]
+    Type=oneshot
+    ExecStart=/usr/bin/python3 /opt/mirrorhub/mirrorhub-importer.pyz --config /etc/mirrorhub/importer.toml check --all
+
+    # /etc/systemd/system/mirrorhub-check.timer
+    [Timer]
+    OnCalendar=weekly
+    Persistent=true
+    [Install]
+    WantedBy=timers.target
+
+and a monthly run with `--hash`. To repair, import a full export with `--rebase`
+(a repair export that transfers only the differences is planned in #43).
 
 ## Superseded exports
 
@@ -108,4 +151,5 @@ If the state file of a repository is lost but the mirror tree is intact,
 
 0 ok or no-op, 2 usage/config, 3 verification, 4 signature, 5 chain/base/gap,
 6 unsafe archive, 7 lock held, 8 tool missing (zstd, gpgv), 9 I/O or resume needed,
-10 post-check failed.
+10 post-check failed, 11 tree differs from the inventory (after an import: the export
+was applied anyway).

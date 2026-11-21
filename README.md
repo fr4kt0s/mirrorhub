@@ -614,7 +614,10 @@ The receiver needs only the importer, not the application. `make importer` build
 The `check` workflow publishes the same file as artifact `mirrorhub-importer`.
 Build it from the same checkout that runs the sender: `--version` and the page
 footer show the commit, and the importer warns when an export comes from another
-commit. See docs/importer.md.
+commit. After each import it compares the whole tree with the export's file list
+and exits with 11 if files were deleted, changed or added by hand; run
+`python3 mirrorhub-importer.pyz --config importer.toml check --all` regularly (for
+example weekly from a timer) to find such changes in between. See docs/importer.md.
 
 Verify an export:
 
