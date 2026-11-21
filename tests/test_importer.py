@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from mirrorhub.importer.adopt import adopt
 from mirrorhub.importer.apply import Options, import_export
 from mirrorhub.importer.cli import main
 from mirrorhub.importer.config import Config, load_config
@@ -23,6 +24,7 @@ from mirrorhub.importer.errors import (
     ConfigError,
     IoFailure,
     LockError,
+    PostCheckError,
     ToolMissingError,
     UnsafeArchiveError,
     VerificationFailed,
@@ -524,3 +526,152 @@ def test_import_all_continues_after_a_failing_slug(tmp_path: Path) -> None:
     assert read_tree(tmp_path / "out" / "ubuntu")["pool/b.deb"] == "bbb"
     assert StateStore(tmp_path / "st", "broken").load().last_export_id is None
     assert main([*base, "import", "--all", "--rebase"]) == 2
+
+
+# Superseded exports ("incremental since" on the sender) and adopt
+
+
+T3: Tree = {
+    "dists/Release": fnode("r3", BASE_MTIME + 9),
+    "pool/a.deb": fnode("aaa"),
+    "pool/d.deb": fnode("ddd"),
+    "latest": lnode("pool/d.deb"),
+}
+SINCE = "20261104T000000Z-incr"
+
+
+def _inbox_cli(tmp_path: Path) -> tuple[Path, list[str]]:
+    settings = tmp_path / "importer.toml"
+    settings.write_text('export_dir = "in"\nmirror_root = "out"\nstate_dir = "st"\n')
+    return tmp_path / "in", ["--config", str(settings)]
+
+
+def test_export_since_skips_the_one_it_replaces(tmp_path: Path) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    build_export(inbox, "20261104T000000Z", "incr", T3, T1, base=ID1)
+
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+
+    tree = read_tree(tmp_path / "out" / "ubuntu")
+    assert tree["pool/d.deb"] == "ddd" and "pool/c.deb" not in tree
+    state = StateStore(tmp_path / "st", "ubuntu").load()
+    assert state.last_export_id == SINCE
+    assert [(item["export_id"], item.get("status")) for item in state.history] == [
+        (ID1, None),
+        (ID2, "superseded"),
+        (SINCE, None),
+    ]
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0  # nothing left, no error
+
+
+def test_late_export_is_skipped_as_superseded(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    build_export(inbox, "20261104T000000Z", "incr", T3, T1, base=ID1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+
+    late = build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    assert main([*base, "import", "--slug", "ubuntu", "--dry-run"]) == 0
+    assert not StateStore(tmp_path / "st", "ubuntu").load().superseded(ID2)
+
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    assert main([*base, "import", "--export", str(late)]) == 0
+    state = StateStore(tmp_path / "st", "ubuntu").load()
+    assert state.last_export_id == SINCE
+    assert state.superseded(ID2) and not state.applied(ID2)
+    assert sum(1 for item in state.history if item["export_id"] == ID2) == 1
+    assert read_tree(tmp_path / "out" / "ubuntu")["pool/d.deb"] == "ddd"
+
+    capsys.readouterr()
+    assert main([*base, "status", "--slug", "ubuntu"]) == 0
+    assert "applied=2 superseded=1" in capsys.readouterr().out
+
+
+def test_explicit_rebase_of_an_older_full_is_not_superseded(config: Config) -> None:
+    full = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    newer = build_export(config.export_dir, "20261105T000000Z", "full", T2)
+    import_export(newer, config, Options())
+
+    outcome = import_export(full, config, Options(rebase=True))
+
+    assert outcome.status == "applied"
+    assert StateStore(config.state_dir, "ubuntu").load().last_export_id == ID1
+
+
+def _applied_then_state_lost(config: Config) -> Path:
+    full = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    incr = build_export(config.export_dir, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    import_export(full, config, Options())
+    import_export(incr, config, Options())
+    (config.state_dir / "ubuntu.json").unlink()
+    return incr
+
+
+def test_adopt_restores_a_lost_state_file(config: Config) -> None:
+    _applied_then_state_lost(config)
+
+    result = adopt(config, "ubuntu", export_id=ID2)
+
+    assert result.export_id == ID2 and not result.hashed
+    state = StateStore(config.state_dir, "ubuntu").load()
+    assert state.last_export_id == ID2
+    assert state.history[-1]["status"] == "adopted"
+    nxt = build_export(config.export_dir, "20261103T000000Z", "incr", T3, T2, base=ID2)
+    assert import_export(nxt, config, Options()).status == "applied"
+
+
+def test_adopt_auto_picks_the_newest_matching_export(config: Config) -> None:
+    full = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    import_export(full, config, Options())
+    build_export(config.export_dir, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    (config.state_dir / "ubuntu.json").unlink()
+
+    assert adopt(config, "ubuntu").export_id == ID1  # the tree is at T1, not T2
+
+
+def test_adopt_needs_only_the_metadata(config: Config) -> None:
+    incr = _applied_then_state_lost(config)
+    (incr / "data.tar").unlink()
+
+    assert adopt(config, "ubuntu", export_id=ID2).export_id == ID2
+
+
+def test_adopt_lists_differences_and_writes_nothing(config: Config) -> None:
+    _applied_then_state_lost(config)
+    root = config.mirror_root / "ubuntu"
+    (root / "pool/a.deb").unlink()
+    (root / "pool/extra.deb").write_text("x")
+
+    with pytest.raises(PostCheckError) as caught:
+        adopt(config, "ubuntu", export_id=ID2)
+
+    assert "missing: pool/a.deb" in str(caught.value)
+    assert "extra: pool/extra.deb" in str(caught.value)
+    assert not (config.state_dir / "ubuntu.json").exists()
+
+
+def test_adopt_hash_finds_changed_content(config: Config) -> None:
+    _applied_then_state_lost(config)
+    path = config.mirror_root / "ubuntu" / "pool/c.deb"
+    path.write_text("cCc")  # same size
+    os.utime(path, ns=(BASE_MTIME, BASE_MTIME))
+
+    assert adopt(config, "ubuntu", export_id=ID2).export_id == ID2  # quick check passes
+    (config.state_dir / "ubuntu.json").unlink()
+    with pytest.raises(PostCheckError, match=r"sha256: pool/c\.deb"):
+        adopt(config, "ubuntu", export_id=ID2, hash_contents=True)
+
+
+def test_adopt_refuses_an_existing_state(tmp_path: Path) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+
+    assert main([*base, "adopt", "--slug", "ubuntu", "--export-id", ID1]) == 5
+    (tmp_path / "st" / "ubuntu.json").unlink()
+    assert main([*base, "adopt", "--slug", "ubuntu", "--auto", "--hash"]) == 0
+    assert StateStore(tmp_path / "st", "ubuntu").load().last_export_id == ID1

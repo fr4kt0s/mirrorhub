@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     heartbeat_interval_s: int = Field(default=10, ge=1)
     heartbeat_stale_s: int = Field(default=60, ge=5)
     log_retention_days: int = Field(default=30, ge=1)
+    # Metadata copies kept per repository on the state volume; each one can serve as
+    # the base of an "incremental since" export.
+    export_meta_keep: int = Field(default=30, ge=1, le=10000)
 
     session_ttl_s: int = Field(default=8 * 3600, ge=300)
     login_max_attempts: int = Field(default=5, ge=1)
