@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any, cast
 
@@ -124,6 +126,8 @@ def tick() -> dict[str, int]:
         "event_files_removed": 0,
         "sessions_purged": 0,
         "login_throttles_purged": 0,
+        "jobs_purged": 0,
+        "exports_retention_removed": 0,
     }
     with Session(get_engine()) as db:
         ensure_next_fire(db)
@@ -147,6 +151,14 @@ def tick() -> dict[str, int]:
         # periodic sweep they would only disappear on the next restart.
         summary["sessions_purged"] = auth.purge_expired_sessions(db)
         summary["login_throttles_purged"] = auth.purge_stale_throttles(db)
+        if _retention_due():
+            summary["jobs_purged"] = jobsvc.purge_old(db, retention)
+            try:
+                # Off while "keep chains" is 0 (the default); then a no-op.
+                removed, _freed = export_jobs.apply_retention(db, get_settings(), actor="scheduler")
+                summary["exports_retention_removed"] = len(removed)
+            except OSError:
+                log.exception("export retention failed")
         try:
             summary["event_files_removed"] = notify.purge_event_files(db, get_settings())
         except OSError:
@@ -157,6 +169,20 @@ def tick() -> dict[str, int]:
             log.exception("disk check failed")
     summary["logs_removed"] = logs.retention_sweep(days=retention)
     return summary
+
+
+# Job and export retention delete rows and directories; once an hour is enough.
+RETENTION_INTERVAL_S = 3600.0
+_last_retention: float | None = None
+
+
+def _retention_due(clock: Callable[[], float] = time.monotonic) -> bool:
+    global _last_retention
+    now = clock()
+    if _last_retention is not None and now - _last_retention < RETENTION_INTERVAL_S:
+        return False
+    _last_retention = now
+    return True
 
 
 async def run_forever() -> None:

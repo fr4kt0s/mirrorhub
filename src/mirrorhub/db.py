@@ -4,11 +4,15 @@ Transactions are explicit: the driver is put in autocommit mode and we emit BEGI
 `immediate_session()` uses BEGIN IMMEDIATE, which the queue needs for atomic job claiming.
 """
 
+import contextlib
+import os
+import sqlite3
 import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from alembic import command
@@ -110,9 +114,45 @@ def wait_for_schema(timeout_s: float = 120.0) -> None:
         time.sleep(2)
 
 
-if __name__ == "__main__":
-    if sys.argv[1:] == ["migrate"]:
+def _file_bytes(path: Path) -> int:
+    return sum(
+        candidate.stat().st_size
+        for candidate in (path, path.with_name(path.name + "-wal"))
+        if candidate.exists()
+    )
+
+
+def vacuum() -> tuple[int, int]:
+    """Rebuild the database file so space freed by deletions goes back to the disk.
+
+    Run with web and workers stopped: VACUUM needs the write lock for its whole run.
+    Temporary files go next to the database instead of the small /tmp tmpfs.
+    Returns the size of database + WAL before and after, in bytes.
+    """
+    path = get_settings().db_path
+    os.environ.setdefault("SQLITE_TMPDIR", str(path.parent))
+    before = _file_bytes(path)
+    with contextlib.closing(sqlite3.connect(path, timeout=30, isolation_level=None)) as conn:
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("VACUUM")
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        result = conn.execute("PRAGMA integrity_check").fetchone()
+        if result != ("ok",):
+            raise RuntimeError(f"integrity check after VACUUM failed: {result}")
+    return before, _file_bytes(path)
+
+
+def _main(arguments: list[str]) -> int:
+    if arguments == ["migrate"]:
         run_migrations()
-    else:
-        print("usage: python -m mirrorhub.db migrate", file=sys.stderr)
-        sys.exit(2)
+        return 0
+    if arguments == ["vacuum"]:
+        before, after = vacuum()
+        print(f"vacuum ok: {before / 1e6:.1f} MB -> {after / 1e6:.1f} MB")
+        return 0
+    print("usage: python -m mirrorhub.db migrate|vacuum", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(_main(sys.argv[1:]))

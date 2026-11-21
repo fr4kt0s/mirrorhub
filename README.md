@@ -67,7 +67,7 @@ uses it for variable substitution.
 | MIRRORHUB_GLOBAL_CONCURRENCY | 2 | Initial global limit of parallel jobs; later changed on the Settings page. |
 | MIRRORHUB_HEARTBEAT_INTERVAL_S | 10 | Initial worker heartbeat interval; Settings page afterwards. |
 | MIRRORHUB_HEARTBEAT_STALE_S | 60 | Initial stale-job threshold; Settings page afterwards. |
-| MIRRORHUB_LOG_RETENTION_DAYS | 30 | Initial job-log retention; Settings page afterwards. |
+| MIRRORHUB_LOG_RETENTION_DAYS | 30 | Initial retention of job logs and finished jobs; Settings page afterwards. |
 | MIRRORHUB_EXPORT_META_KEEP | 30 | Export metadata copies kept per repository on the state volume (minimum 1). Each can be the base of an "incremental since" export. |
 | MIRRORHUB_SESSION_TTL_S | 28800 | Login session lifetime (minimum 300). |
 | MIRRORHUB_LOGIN_MAX_ATTEMPTS | 5 | Failed logins per username and client IP before a lockout. |
@@ -457,8 +457,11 @@ Stopping a subprocess sends SIGTERM, followed by SIGKILL after its grace period.
 
 Exports cancel cooperatively until publication begins.
 
-Job history is retained independently of log-file retention. Deleting a job
-also deletes its log file.
+Finished jobs are deleted together with their logs after the job and log
+retention from the Settings page (default 30 days; checked once an hour). The
+newest finished job of each repository and job type is always kept, and so is
+any job whose notification has not been queued yet. Deleting a job by hand also
+deletes its log file.
 
 Job ids are never reused (SQLite `AUTOINCREMENT`, migration 0006), and each job
 log is `<state>/logs/jobs/<id>.log`. Every run starts with a header line such as
@@ -606,7 +609,9 @@ Automatic cleanup in the drop folder (scheduler, about every 30 seconds):
 shows for each export whether it is `present`, `partial` or `picked up`.
 
 Exports that still contain archive parts are deleted only by the retention rule
-on the Exports page, which also removes their metadata copies.
+on the Exports page, which also removes their metadata copies. With "chains to
+keep" above 0 the scheduler applies the rule once an hour (audit
+`exports.retention`, actor `scheduler`); 0 keeps everything.
 
 ### Incremental export since an earlier export
 
@@ -698,6 +703,25 @@ a consistent application snapshot. For a coordinated recovery point, stop jobs
 and services before taking the complete volume/filesystem backup.
 
 Keep signing keys and application secrets encrypted in backup storage.
+
+### Database size and VACUUM
+
+Removed rows (finished jobs, exports, notification deliveries, sessions, login
+lockouts) free space inside mirrorhub.sqlite3, which SQLite reuses for new rows;
+the file itself does not shrink. The audit log is append-only and is never
+pruned. To give freed space back to the disk, back up the database, then run
+VACUUM with the services stopped:
+
+```sh
+docker compose stop worker worker-export web
+docker compose run --rm --no-deps web python -m mirrorhub.db vacuum
+docker compose up -d
+```
+
+It prints the size before and after and runs an integrity check. VACUUM needs
+free space of about the database size next to the database (temporary files go
+there, not to the small /tmp). Usually only worth it after deleting a lot, for
+example many jobs at once.
 
 ## Restore
 
