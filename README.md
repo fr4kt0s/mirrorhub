@@ -68,6 +68,7 @@ uses it for variable substitution.
 | MIRRORHUB_HEARTBEAT_INTERVAL_S | 10 | Initial worker heartbeat interval; Settings page afterwards. |
 | MIRRORHUB_HEARTBEAT_STALE_S | 60 | Initial stale-job threshold; Settings page afterwards. |
 | MIRRORHUB_LOG_RETENTION_DAYS | 30 | Initial job-log retention; Settings page afterwards. |
+| MIRRORHUB_EXPORT_META_KEEP | 30 | Export metadata copies kept per repository on the state volume (minimum 1). Each can be the base of an "incremental since" export. |
 | MIRRORHUB_SESSION_TTL_S | 28800 | Login session lifetime (minimum 300). |
 | MIRRORHUB_LOGIN_MAX_ATTEMPTS | 5 | Failed logins per username and client IP before a lockout. |
 | MIRRORHUB_LOGIN_LOCKOUT_S | 300 | First lockout; doubles with each further failure, capped at one hour. |
@@ -557,10 +558,16 @@ timestamp-only filter.
 What MirrorHub keeps on the local state volume:
 
 - `export-meta/<slug>/<export-id>/`: files.json, manifest.json,
-  MANIFEST.sha256(.sig) and deleted.txt of each export, written before .done.
-  The next incremental export reads its base from here and does not need or
-  hash the previous archive. The newest 30 copies per repository and the newest
-  published one are kept.
+  MANIFEST.sha256(.sig) and deleted.txt of each export, written before .done,
+  plus a `.published` marker written after .done. The next incremental export
+  reads its base from the newest marked copy and does not need or hash the
+  previous archive. The newest `MIRRORHUB_EXPORT_META_KEEP` copies (default 30)
+  per repository and the newest published one are kept.
+- The export history in the database is restored from the marked copies when
+  rows are missing (scheduler, before each incremental export, or by hand with
+  `docker compose exec web python -m mirrorhub.export.reconcile [--slug <slug>] [--dry-run]`).
+  A lost database therefore does not force a full export as long as the state
+  volume with export-meta/ is intact.
 - `manifests/hashcache-<slug>.json`: SHA-256 cache for unchanged files (same
   inode, size, mtime and ctime). Incremental exports use it; full exports
   rehash every file and rebuild it.
@@ -578,9 +585,26 @@ shows for each export whether it is `present`, `partial` or `picked up`.
 Exports that still contain archive parts are deleted only by the retention rule
 on the Exports page, which also removes their metadata copies.
 
+### Incremental export since an earlier export
+
+If an export was lost on the way to the receiver, do not start over with a full
+export:
+
+1. On the receiver, `python -m mirrorhub.importer status --slug <slug>` shows the
+   last applied export.
+2. On the Exports page, open *Incremental since* for the repository and select
+   that export. The new export contains everything that changed since then and
+   the deletions.
+3. The receiver applies it; exports published in between are skipped as
+   superseded when they arrive later.
+
+Only exports whose metadata copy is still kept can be selected. If the
+receiver's state is older, run a full export and import it with `--rebase`.
+
 If the base of an incremental export is gone (no metadata copy and no export
 directory), the export fails with "run a full export". Run a full export and
-import it on the receiver with `--rebase`.
+import it on the receiver with `--rebase`, or an incremental export since an
+export the receiver has applied.
 
 Verify an export:
 
@@ -626,8 +650,10 @@ Also preserve:
 - Mirror data according to your retention policy.
 
 The state volume also holds export metadata copies (export-meta/) and the hash
-cache. Back up export-meta/ together with the database, otherwise the next
-incremental export after a restore needs a full export first.
+cache (manifests/). Back up export-meta/ together with the database, to a place
+outside the project directory and outside the state volume. export-meta/ alone
+is enough to restore the export history; without it the next export after a
+restore needs a full export first. A missing hash cache only costs time.
 
 Database and filesystem backups taken at different times are not automatically
 a consistent application snapshot. For a coordinated recovery point, stop jobs
@@ -814,8 +840,24 @@ exists.
 ### Incremental export fails with "run a full export"
 
 Neither the metadata copy on the state volume nor the previous export directory
-exists, for example after restoring the database without export-meta/. Start a
+exists, for example after restoring the database without export-meta/, while the
+database still lists that export as published. Use *Incremental since* with the
+last export the receiver has applied, if its copy is kept; otherwise start a
 full export and import it on the receiver with --rebase.
+
+### Receiver lost its state file
+
+If the importer's state file is gone but the mirror tree is intact, do not import
+a full export again. On the receiver:
+
+```sh
+python -m mirrorhub.importer --config importer.toml adopt --slug <slug> --auto
+```
+
+`adopt` compares the tree with the newest published export in the inbox whose
+files.json it matches exactly (paths, types, sizes, mtimes, symlink targets;
+`--hash` also compares SHA-256) and writes the state. Only the export's metadata
+files are needed, not its archive. See docs/importer.md.
 
 ### Login or forms fail with 403 "CSRF validation failed"
 

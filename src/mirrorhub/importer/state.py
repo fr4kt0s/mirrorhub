@@ -22,7 +22,26 @@ class RepoState:
     history: list[dict[str, Any]] = field(default_factory=list)
 
     def applied(self, export_id: str) -> bool:
-        return any(item.get("export_id") == export_id for item in self.history)
+        """True if the export was applied (or its state adopted); skipped ones are not."""
+        return any(
+            item.get("export_id") == export_id and item.get("status") != "superseded"
+            for item in self.history
+        )
+
+    def superseded(self, export_id: str) -> bool:
+        return any(
+            item.get("export_id") == export_id and item.get("status") == "superseded"
+            for item in self.history
+        )
+
+    def is_superseded_by_state(self, export_id: str) -> bool:
+        """An unapplied export older than the last applied one was skipped by a later
+        export with an earlier base (or a full with --rebase). Export ids sort by time."""
+        return (
+            self.last_export_id is not None
+            and export_id < self.last_export_id
+            and not self.applied(export_id)
+        )
 
 
 class StateStore:

@@ -29,12 +29,26 @@ def page(
         for row in exports
         if row.status == "published" and row.repo_id in names
     }
+    base_choices = {
+        repo.id: [
+            {
+                "export_id": copy.export_id,
+                "mode": copy.mode,
+                "drop_folder": export_jobs.drop_folder_state(settings, repo.slug, copy.export_id),
+            }
+            for copy in export_jobs.base_choices(settings, repo.slug)
+        ]
+        for repo in repositories
+    }
     return render(
         request,
         "exports.html",
         {
             "exports": exports,
             "drop_folder": drop_folder,
+            "superseded": export_jobs.superseded(exports),
+            "base_choices": base_choices,
+            "meta_keep": settings.export_meta_keep,
             "repositories": repositories,
             "repo_names": names,
             "failed_count": len(export_jobs.failed_exports(db)),
@@ -57,6 +71,13 @@ async def start(
     mode = str(form.get("mode") or "")
     if mode not in ("full", "incr"):
         return Response("mode must be full or incr", status_code=400)
+    base = str(form.get("base") or "").strip() or None
+    if base is not None and mode != "incr":
+        return Response(
+            "an export since an earlier export is always incremental",
+            status_code=400,
+            media_type="text/plain",
+        )
 
     try:
         job_id = export_jobs.enqueue(
@@ -64,6 +85,7 @@ async def start(
             mode=mode,
             actor=user.admin.username,
             ip=client_ip(request),
+            base_export_id=base,
         )
     except ExportError as exc:
         return Response(str(exc), status_code=400, media_type="text/plain")

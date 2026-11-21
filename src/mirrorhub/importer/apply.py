@@ -24,6 +24,7 @@ from mirrorhub.importer.checks import (
     Export,
     check_signature,
     load_export,
+    load_metadata,
     safe_relative,
 )
 from mirrorhub.importer.config import Config
@@ -318,8 +319,82 @@ def _apply_locked(
     return Outcome(export.export_id, "applied", plan)
 
 
+def _superseded(export: Export, state: RepoState, options: Options) -> bool:
+    """Skip an unapplied export older than the last applied one, unless it is a full
+    export the operator explicitly applies with --rebase."""
+    if options.rebase and export.mode == "full":
+        return False
+    return state.is_superseded_by_state(export.export_id)
+
+
+def _record_superseded(export: Export, store: StateStore, state: RepoState) -> None:
+    state.history.append(
+        {
+            "export_id": export.export_id,
+            "status": "superseded",
+            "mode": export.mode,
+            "base_export_id": export.base_export_id,
+            "skipped_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "last_applied": state.last_export_id,
+        }
+    )
+    store.save(state)
+    log_event(
+        logging.WARNING,
+        "skipped superseded export",
+        slug=export.slug,
+        export_id=export.export_id,
+        last_applied=state.last_export_id,
+    )
+
+
+def skip_jumped(export_dir: Path, config: Config, options: Options, jumped_by: str) -> Outcome:
+    """Record an export as superseded because a later pending export starts at the
+    receiver's current state (an "incremental since" export). Only the export's
+    metadata is checked; nothing in the tree changes."""
+    directory = Path(os.path.abspath(export_dir))
+    try:
+        metadata = load_metadata(directory)
+        store = StateStore(config.state_dir, metadata.slug)
+        if options.dry_run:
+            return Outcome(metadata.export_id, "superseded", Plan())
+        with store.locked():
+            state = store.load()
+            if state.applied(metadata.export_id) or state.superseded(metadata.export_id):
+                return Outcome(metadata.export_id, "superseded", Plan())
+            state.history.append(
+                {
+                    "export_id": metadata.export_id,
+                    "status": "superseded",
+                    "mode": metadata.mode,
+                    "base_export_id": metadata.base_export_id,
+                    "skipped_at": datetime.now(UTC).isoformat(timespec="seconds"),
+                    "last_applied": state.last_export_id,
+                    "superseded_by": jumped_by,
+                }
+            )
+            store.save(state)
+    except ImporterError:
+        raise
+    except OSError as exc:
+        raise IoFailure(f"I/O error: {exc}") from exc
+    log_event(
+        logging.WARNING,
+        "skipped superseded export",
+        slug=metadata.slug,
+        export_id=metadata.export_id,
+        superseded_by=jumped_by,
+    )
+    return Outcome(metadata.export_id, "superseded", Plan())
+
+
 def import_export(export_dir: Path, config: Config, options: Options) -> Outcome:
-    """Import one export directory. Importing an already applied export is a no-op."""
+    """Import one export directory. Importing an already applied export is a no-op.
+
+    An unapplied export older than the last applied one is superseded: a later export
+    built on an earlier base (or a full with --rebase) already covers it. It is skipped
+    and recorded in the history instead of failing the chain check.
+    """
     directory = Path(os.path.abspath(export_dir))
     try:
         export = load_export(directory)
@@ -331,6 +406,8 @@ def import_export(export_dir: Path, config: Config, options: Options) -> Outcome
             state = store.load()
             if state.applied(export.export_id):
                 return Outcome(export.export_id, "noop", Plan())
+            if state.superseded(export.export_id) or _superseded(export, state, options):
+                return Outcome(export.export_id, "superseded", Plan())
             check_chain(state, export, bool(_tree_paths(target)), options.rebase)
             replace = options.rebase and export.mode == "full"
             return Outcome(export.export_id, "dry-run", build_plan(export, target, replace))
@@ -346,6 +423,11 @@ def import_export(export_dir: Path, config: Config, options: Options) -> Outcome
                     export_id=export.export_id,
                 )
                 return Outcome(export.export_id, "noop", Plan())
+            if state.superseded(export.export_id):
+                return Outcome(export.export_id, "superseded", Plan())
+            if _superseded(export, state, options):
+                _record_superseded(export, store, state)
+                return Outcome(export.export_id, "superseded", Plan())
             return _apply_locked(export, config, options, store, state)
     except ImporterError:
         raise

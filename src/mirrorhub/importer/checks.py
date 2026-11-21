@@ -106,7 +106,24 @@ def load_export(directory: Path) -> Export:
     part_names, compressed = _expected_parts(
         metadata.get("archive_format"), list(metadata["archive_parts"])
     )
+    _check_inventory(inventory)
 
+    return Export(
+        directory=directory,
+        slug=slug,
+        export_id=export_id,
+        mode=str(metadata["mode"]),
+        base_export_id=metadata.get("base_export_id"),
+        parts=tuple(directory / name for name in part_names),
+        part_digests=tuple(digests[name] for name in part_names),
+        compressed=compressed,
+        inventory=inventory,
+        payload=frozenset(metadata["payload_paths"]),
+        deleted=deleted,
+    )
+
+
+def _check_inventory(inventory: Inventory) -> None:
     for relative, entry in inventory.items():
         if entry["type"] == "symlink":
             target = entry.get("target")
@@ -121,18 +138,90 @@ def load_export(directory: Path) -> Export:
                 raise VerificationFailed(f"inventory path conflict: {relative!r} under {parent!r}")
             parent = posixpath.dirname(parent)
 
-    return Export(
+
+@dataclass(frozen=True)
+class ExportMetadata:
+    """Identity and inventory of an export, checked without its archive."""
+
+    directory: Path
+    slug: str
+    export_id: str
+    mode: str
+    base_export_id: str | None
+    inventory: Inventory
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_metadata(directory: Path) -> ExportMetadata:
+    """Check files.json and manifest.json against MANIFEST.sha256; archive parts are
+    neither required nor hashed. The detached signature, if checked, covers
+    MANIFEST.sha256 and therefore these two files."""
+    try:
+        done = (directory / ".done").read_text(encoding="ascii").strip()
+        digests: dict[str, str] = {}
+        for line in (directory / "MANIFEST.sha256").read_text(encoding="ascii").splitlines():
+            digest, _, name = line.strip().partition("  ")
+            if name:
+                digests[name.strip()] = digest.lower()
+        for name in ("files.json", "manifest.json"):
+            if name not in digests:
+                raise VerificationFailed(f"{name} is not covered by MANIFEST.sha256")
+            if _sha256_file(directory / name) != digests[name]:
+                raise VerificationFailed(f"checksum mismatch for {name}")
+        metadata: dict[str, Any] = json.loads((directory / "manifest.json").read_text("utf-8"))
+        inventory: Inventory = json.loads((directory / "files.json").read_text("utf-8"))
+    except VerificationFailed:
+        raise
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
+        raise VerificationFailed(f"verification failed: {exc}") from exc
+
+    slug = directory.parent.name
+    export_id = str(metadata.get("export_id"))
+    match = EXPORT_ID_RE.fullmatch(export_id)
+    if not SLUG_RE.fullmatch(slug):
+        raise VerificationFailed(f"invalid repository slug: {slug!r}")
+    if metadata.get("format_version") != 1:
+        raise VerificationFailed("unsupported export format version")
+    if directory.name != export_id or match is None or done != export_id:
+        raise VerificationFailed("export directory name, .done and export_id do not match")
+    if match.group(1) != metadata.get("mode"):
+        raise VerificationFailed("export_id suffix does not match mode")
+    if metadata.get("repo") != slug:
+        raise VerificationFailed("manifest repo does not match directory slug")
+    if not isinstance(inventory, dict):
+        raise VerificationFailed("files.json must contain an object")
+    expected = (metadata.get("counts") or {}).get("inventory")
+    if expected is not None and expected != len(inventory):
+        raise VerificationFailed("inventory count does not match manifest")
+    try:
+        for relative, entry in inventory.items():
+            if (
+                not safe_relative(relative)
+                or entry["type"] not in ("file", "symlink")
+                or not isinstance(entry["size"], int)
+                or not isinstance(entry["mtime_ns"], int)
+                or not isinstance(entry["sha256"], str)
+            ):
+                raise VerificationFailed(f"invalid inventory entry: {relative!r}")
+        _check_inventory(inventory)
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise VerificationFailed(f"invalid inventory: {exc}") from exc
+
+    base = metadata.get("base_export_id")
+    return ExportMetadata(
         directory=directory,
         slug=slug,
         export_id=export_id,
         mode=str(metadata["mode"]),
-        base_export_id=metadata.get("base_export_id"),
-        parts=tuple(directory / name for name in part_names),
-        part_digests=tuple(digests[name] for name in part_names),
-        compressed=compressed,
+        base_export_id=base if isinstance(base, str) and base else None,
         inventory=inventory,
-        payload=frozenset(metadata["payload_paths"]),
-        deleted=deleted,
     )
 
 

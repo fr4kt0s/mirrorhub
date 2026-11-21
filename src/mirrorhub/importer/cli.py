@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import logging
 import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from mirrorhub.importer.apply import Options, Outcome, import_export
+from mirrorhub.importer.adopt import adopt
+from mirrorhub.importer.apply import Options, Outcome, import_export, skip_jumped
 from mirrorhub.importer.checks import EXPORT_ID_RE, SLUG_RE
 from mirrorhub.importer.config import Config, load_config
 from mirrorhub.importer.errors import ConfigError, ImporterError
@@ -47,6 +49,20 @@ def _parser() -> argparse.ArgumentParser:
 
     status = commands.add_parser("status", help="show receiver state")
     status.add_argument("--slug", help="repository slug (default: all)")
+
+    take = commands.add_parser(
+        "adopt",
+        help="write a lost state file for a tree that matches an export exactly",
+    )
+    take.add_argument("--slug", required=True, help="repository slug")
+    which = take.add_mutually_exclusive_group(required=True)
+    which.add_argument("--export-id", help="export in the inbox whose files.json the tree matches")
+    which.add_argument(
+        "--auto", action="store_true", help="try the published exports in the inbox, newest first"
+    )
+    take.add_argument(
+        "--hash", action="store_true", help="also compare SHA-256 (reads every file once)"
+    )
     return parser
 
 
@@ -100,24 +116,49 @@ def _print(outcome: Outcome, dry_run: bool) -> None:
     )
 
 
+def _base_of(path: Path) -> str | None:
+    """base_export_id from manifest.json, or None if it cannot be read."""
+    try:
+        value = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    base = value.get("base_export_id") if isinstance(value, dict) else None
+    return base if isinstance(base, str) and base else None
+
+
+def _jumped_by(path: Path, pending: list[Path], last: str | None) -> str | None:
+    """A later pending export that starts at the current state skips this one."""
+    if last is None:
+        return None
+    for later in pending:
+        if later.name > path.name and _base_of(later) == last:
+            return later.name
+    return None
+
+
 def _import_slug(config: Config, slug: str, options: Options) -> int:
-    """Apply all pending exports of one repository; returns how many were processed."""
+    """Apply all pending exports of one repository; returns how many were processed.
+
+    Exports are taken oldest first. One is skipped as superseded when it is older than
+    the last applied export, or when a later pending export starts at the current state
+    (an "incremental since" export that replaces it).
+    """
     store = StateStore(config.state_dir, slug)
     done = 0
-    for path in pending_exports(config, slug):
+    pending = pending_exports(config, slug)
+    for path in pending:
         state = store.load()
-        if state.applied(path.name):
+        if state.applied(path.name) or state.superseded(path.name):
             continue
-        if state.last_export_id is not None and path.name < state.last_export_id:
-            log_event(
-                logging.WARNING,
-                "skipping older unapplied export",
-                slug=slug,
-                export_id=path.name,
-            )
-            continue
-        _print(import_export(path, config, options), options.dry_run)
+        jumped_by = _jumped_by(path, pending, state.last_export_id)
+        if jumped_by is not None:
+            outcome = skip_jumped(path, config, options, jumped_by)
+        else:
+            outcome = import_export(path, config, options)
+        _print(outcome, options.dry_run)
         done += 1
+        if outcome.status == "superseded":
+            continue  # recorded (or, in a dry run, reported) and skipped
         if options.dry_run:
             log_event(
                 logging.INFO,
@@ -175,7 +216,11 @@ def _status(config: Config, slug: str | None) -> int:
     slugs = [slug] if slug else sorted(p.stem for p in config.state_dir.glob("*.json"))
     for name in slugs:
         state = StateStore(config.state_dir, name).load()
-        print(f"{name}: last={state.last_export_id} applied={len(state.history)}")
+        skipped = sum(1 for item in state.history if item.get("status") == "superseded")
+        print(
+            f"{name}: last={state.last_export_id} "
+            f"applied={len(state.history) - skipped} superseded={skipped}"
+        )
     return 0
 
 
@@ -200,6 +245,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         config = load_config(Path(location))
         if arguments.command == "status":
             return _status(config, arguments.slug)
+        if arguments.command == "adopt":
+            result = adopt(
+                config,
+                arguments.slug,
+                export_id=arguments.export_id,
+                hash_contents=arguments.hash,
+            )
+            check = "quick check and SHA-256" if result.hashed else "quick check"
+            print(
+                f"adopted {result.export_id} for {result.slug}: "
+                f"{result.entries} entries match ({check})"
+            )
+            return 0
         return _run_import(config, arguments)
     except ImporterError as exc:
         slug = _slug_of(arguments)

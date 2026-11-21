@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import time
@@ -11,12 +12,14 @@ from pathlib import Path
 from sqlmodel import Session, col, select
 
 from mirrorhub.db import get_engine, immediate_session
-from mirrorhub.export import metadata_store
+from mirrorhub.export import metadata_store, reconcile
 from mirrorhub.export.manifest import ExportError
 from mirrorhub.models import Export, Job, Repository
 from mirrorhub.services import appsettings, audit
-from mirrorhub.settings import Settings
+from mirrorhub.settings import Settings, get_settings
 from mirrorhub.verify import verify
+
+log = logging.getLogger(__name__)
 
 ACTIVE = ("queued", "running", "cancelling")
 
@@ -84,15 +87,46 @@ def purge_sync_inventories(
     return removed
 
 
+def check_base(settings: Settings, slug: str, base_export_id: str) -> None:
+    """Raise unless base_export_id is a published export with a usable metadata copy."""
+    if not metadata_store.EXPORT_ID_RE.fullmatch(base_export_id):
+        raise ExportError("invalid base export id")
+    marked = {copy.export_id for copy in metadata_store.published_copies(settings, slug)}
+    if base_export_id not in marked:
+        raise ExportError(
+            f"no published metadata copy of {base_export_id} is kept; "
+            "run a full export and import it with --rebase"
+        )
+    metadata_store.load_base(settings, slug, base_export_id)
+
+
 def enqueue(
     repo_id: int,
     *,
     mode: str | None,
     actor: str,
     ip: str = "",
+    base_export_id: str | None = None,
 ) -> int:
+    """Queue an export. With base_export_id: an incremental export since that export.
+
+    Without a base, an already queued or running export of the repository is returned
+    instead of queueing a second one; with a base that is refused, because the running
+    export would not use it.
+    """
     if mode is not None and mode not in ("full", "incr"):
         raise ExportError("export mode must be full or incr")
+    if base_export_id is not None and mode not in (None, "incr"):
+        raise ExportError("an export since an earlier export is always incremental")
+
+    if base_export_id is not None:
+        # Outside the write transaction: checking the copy hashes files.json.
+        with Session(get_engine()) as db:
+            found = db.get(Repository, repo_id)
+            slug = found.slug if found is not None else None
+        if slug is None:
+            raise ExportError("repository not found")
+        check_base(get_settings(), slug, base_export_id)
 
     with immediate_session() as db:
         repo = db.get(Repository, repo_id)
@@ -109,14 +143,24 @@ def enqueue(
             .order_by(col(Job.id).desc())
         ).first()
         if existing is not None:
+            if base_export_id is not None:
+                raise ExportError(
+                    f"export job {existing.id} of this repository is already queued or running"
+                )
             return existing.id or 0
+
+        params: dict[str, str] = {"mode": mode or repo.export_mode}
+        detail: dict[str, str] = {"repo": repo.slug, "mode": mode or repo.export_mode}
+        if base_export_id is not None:
+            params = {"mode": "incr", "base": base_export_id}
+            detail = {"repo": repo.slug, "mode": "incr", "base_export_id": base_export_id}
 
         job = Job(
             repo_id=repo_id,
             type="export",
             tool="export",
             trigger="manual",
-            params={"mode": mode or repo.export_mode},
+            params=params,
             max_attempts=int(repo.retry_policy.get("max_attempts", 1)),
             requested_by=actor,
         )
@@ -129,7 +173,7 @@ def enqueue(
             action="export.enqueue",
             target_type="job",
             target_id=str(job.id),
-            detail={"repo": repo.slug, "mode": mode or repo.export_mode},
+            detail=detail,
             commit=False,
         )
         return job.id or 0
@@ -157,6 +201,10 @@ def published_for_job(job_id: int, settings: Settings) -> str | None:
         metadata = verify(directory)
         if metadata["export_id"] != export_id or metadata["repo"] != slug:
             raise ExportError("published export identity does not match database")
+        if metadata_store.directory(settings, slug, export_id).is_dir():
+            metadata_store.mark_published(
+                settings, slug, export_id, metadata=metadata, job_id=job_id
+            )
 
         with immediate_session() as db:
             row = db.get(Export, row_id)
@@ -187,6 +235,35 @@ def published_for_job(job_id: int, settings: Settings) -> str | None:
 
 def list_exports(db: Session, limit: int = 200) -> list[Export]:
     return list(db.exec(select(Export).order_by(col(Export.id).desc()).limit(limit)).all())
+
+
+def superseded(rows: list[Export]) -> set[int]:
+    """Row ids of published exports a later export skipped by building on an older base.
+
+    Example: E6 with base E3 supersedes E4 and E5. Export ids sort by time.
+    """
+    published: dict[int, list[Export]] = {}
+    for row in rows:
+        if row.status == "published":
+            published.setdefault(row.repo_id, []).append(row)
+    skipped: set[int] = set()
+    for per_repo in published.values():
+        for later in per_repo:
+            base = later.base_export_id
+            if later.mode != "incr" or not base:
+                continue
+            for row in per_repo:
+                if base < row.export_id < later.export_id and row.id is not None:
+                    skipped.add(row.id)
+    return skipped
+
+
+def base_choices(settings: Settings, slug: str) -> list[metadata_store.PublishedCopy]:
+    """Kept, published metadata copies of a repository, newest first."""
+    try:
+        return list(reversed(metadata_store.published_copies(settings, slug)))
+    except ExportError:
+        return []
 
 
 def publication_directory(settings: Settings, slug: str, export_id: str) -> Path:
@@ -425,9 +502,28 @@ def clean_drop_folder(db: Session, settings: Settings, *, now: float | None = No
     return removed
 
 
+def protected_bases(db: Session, settings: Settings) -> dict[str, set[str]]:
+    """Per slug, the newest published export by database and by markers."""
+    protected: dict[str, set[str]] = {}
+    for slug, export_id in _latest_published(db).items():
+        protected.setdefault(slug, set()).add(export_id)
+    for slug in metadata_store.slugs(settings):
+        latest = metadata_store.latest_published(settings, slug)
+        if latest is not None:
+            protected.setdefault(slug, set()).add(latest)
+    return protected
+
+
 def housekeeping(db: Session, settings: Settings) -> dict[str, int]:
     """Periodic export cleanup run by the scheduler."""
-    pruned = metadata_store.prune(settings, _latest_published(db))
+    restored = 0
+    try:
+        restored = len(reconcile.reconcile(db, settings, actor="scheduler"))
+    except (ExportError, ValueError):
+        log.exception("export history reconcile failed")
+    pruned = metadata_store.prune(
+        settings, protected_bases(db, settings), keep=settings.export_meta_keep
+    )
     cleaned = clean_drop_folder(db, settings)
     if cleaned:
         audit.record(
@@ -438,4 +534,8 @@ def housekeeping(db: Session, settings: Settings) -> dict[str, int]:
             target_id="*",
             detail={"removed": cleaned},
         )
-    return {"metadata_pruned": pruned, "drop_folder_removed": len(cleaned)}
+    return {
+        "metadata_pruned": pruned,
+        "drop_folder_removed": len(cleaned),
+        "export_rows_restored": restored,
+    }
