@@ -708,8 +708,8 @@ Keep signing keys and application secrets encrypted in backup storage.
 
 Removed rows (finished jobs, exports, notification deliveries, sessions, login
 lockouts) free space inside mirrorhub.sqlite3, which SQLite reuses for new rows;
-the file itself does not shrink. The audit log is append-only and is never
-pruned. To give freed space back to the disk, back up the database, then run
+the file itself does not shrink. The audit log is append-only; only the operator
+command below prunes it. To give freed space back to the disk, back up the database, then run
 VACUUM with the services stopped:
 
 ```sh
@@ -722,6 +722,29 @@ It prints the size before and after and runs an integrity check. VACUUM needs
 free space of about the database size next to the database (temporary files go
 there, not to the small /tmp). Usually only worth it after deleting a lot, for
 example many jobs at once.
+
+### Pruning the audit log
+
+Database triggers reject every UPDATE and DELETE on audit_log, so neither the web
+interface nor the application can remove entries. An operator with access to the
+Docker host can prune entries older than N days (at least 90):
+
+```sh
+docker compose stop worker worker-export web
+docker compose run --rm --no-deps web python -m mirrorhub.audit purge --older-than-days 365 --dry-run
+docker compose run --rm --no-deps web python -m mirrorhub.audit purge --older-than-days 365
+docker compose up -d
+```
+
+In one transaction the command writes the removed entries to a JSON Lines
+archive (default `/var/lib/mirrorhub/backups/audit-archive-<UTC time>.jsonl`,
+mode 0600; `--archive PATH` to choose another file, which must not exist), drops
+the delete trigger, deletes the entries, creates the trigger again and records
+`audit.purge` (actor `cli`) with the cut-off, the count, the id range and the
+archive path. If any step fails, nothing is deleted and the trigger stays. It
+refuses to run when the trigger is missing. Copy the archive off the host like a
+database backup and check it against your retention obligations. Run VACUUM
+afterwards to shrink the file.
 
 ## Restore
 
