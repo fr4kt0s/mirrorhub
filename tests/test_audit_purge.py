@@ -117,7 +117,7 @@ def test_failure_after_drop_rolls_back_and_keeps_trigger(
     def broken(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(auditcli.audit, "record", broken)
+    monkeypatch.setattr("mirrorhub.services.audit.record", broken)
     with pytest.raises(RuntimeError, match="boom"):
         auditcli.purge(90, tmp_path / "a.jsonl")
     assert len(_actions()) == 3
