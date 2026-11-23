@@ -12,6 +12,10 @@ consistency, secure deployment, or compliance with all project requirements.
 
 Review docs/release-checklist.md before deployment.
 
+Operations (deployment, updates, tests to tick off, key commands, what to do
+when something goes wrong): docs/operations-handbook.md. The P1 tests alone, as
+a sign-off sheet: docs/acceptance-p1.md.
+
 ## Stack
 
 - Python 3.12.
@@ -814,6 +818,9 @@ It does not sync a repository, publish an export, send a notification, or prove
 upstream mirror correctness.
 
 ### Acceptance checks after deployment or upgrade
+
+The full test catalogue (P1–P3) is in docs/operations-handbook.md, section 3;
+the P1 sign-off sheet in docs/acceptance-p1.md.
 
 Container health and restarts:
 
