@@ -40,7 +40,7 @@ def test_migration_installs_append_only_audit_triggers(
 
     with get_engine().connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert version == "0008"
+        assert version == "0009"
 
     command.upgrade(config, "head")
 
@@ -221,3 +221,30 @@ def test_0008_drops_unused_admin_columns_and_keeps_rows(configured: Settings) ->
         assert connection.execute(text("SELECT username FROM admin")).scalar_one() == "admin"
         assert connection.execute(text("SELECT admin_id FROM session")).scalar_one() == 1
         assert connection.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+
+
+def test_0009_adds_wget_keep_arches_and_keeps_rows(configured: Settings) -> None:
+    from sqlmodel import Session
+
+    from mirrorhub.models import Repository
+
+    config = _alembic_config()
+    command.upgrade(config, "head")
+    with Session(get_engine()) as db:
+        db.add(
+            Repository(slug="w", name="W", kind="generic", tool="wget", wget_keep_arches=["amd64"])
+        )
+        db.commit()
+
+    def repo_columns() -> set[str]:
+        with get_engine().connect() as connection:
+            return {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(repository)")}
+
+    assert "wget_keep_arches" in repo_columns()
+    command.downgrade(config, "0008")
+    assert "wget_keep_arches" not in repo_columns()
+
+    command.upgrade(config, "head")
+    with get_engine().connect() as connection:
+        row = connection.exec_driver_sql("SELECT slug, wget_keep_arches FROM repository").one()
+    assert tuple(row) == ("w", "[]")

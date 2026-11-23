@@ -14,7 +14,7 @@ Accepted by: ______________________  Date: ____________  Commit: ____________
 ## A. Sender: deployment, login, security
 
 - [ ] **A1** `docker compose ps` → all services `healthy`, `init-volumes` `exited (0)`.
-- [ ] **A2** Database revision (1.1 step 5) → `0008`.
+- [ ] **A2** Database revision (1.1 step 5) → `0009`.
 - [ ] **A3** Smoke test → 8/8.
 - [ ] **A4** Commit in the footer and in `web`, `worker` and `worker-export` equals `git rev-parse --short=12 HEAD`:
   `for s in web worker worker-export; do docker compose exec $s python -c "from mirrorhub import buildinfo; print('$s', buildinfo.describe())"; done`

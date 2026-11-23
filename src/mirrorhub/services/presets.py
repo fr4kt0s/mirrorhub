@@ -75,6 +75,38 @@ SEED_PRESETS: list[dict[str, Any]] = [
         },
     },
     {
+        # Docker's APT repository: one component per channel (stable, test), packages
+        # under dists/<suite>/pool/. Import https://download.docker.com/linux/ubuntu/gpg
+        # on the Keys page before the first sync. Adjust the suites to your Ubuntu releases.
+        "name": "Docker CE (Ubuntu)",
+        "kind": "apt",
+        "config": {
+            "kind": "apt",
+            "tool": "debmirror",
+            "method": "https",
+            "upstream_host": "download.docker.com",
+            "upstream_root": "/linux/ubuntu",
+            "suites": ["noble"],
+            "sections": ["stable"],
+            "architectures": ["amd64"],
+            "arch_exclude": [],
+            "include_source": False,
+            "diff_mode": "none",
+            "cleanup_mode": "post",
+            "verify_signatures": True,
+            "rsync_extra": [],
+            "include_patterns": [],
+            "exclude_patterns": [],
+            "extra_args": [],
+            "bwlimit_kbps": 0,
+            "export_mode": "incr",
+            "export_format": "tar.zst",
+            "export_split_mb": 0,
+            "chain_export": False,
+            "enabled": True,
+        },
+    },
+    {
         "name": "Arch Linux (x86_64)",
         "kind": "arch",
         "config": {
@@ -164,6 +196,9 @@ def config_for_repo(repo: Repository) -> dict[str, Any]:
         "rsync_extra": repo.rsync_extra,
         "include_patterns": repo.include_patterns,
         "exclude_patterns": repo.exclude_patterns,
+        "include_regex": repo.include_regex,
+        "exclude_regex": repo.exclude_regex,
+        "wget_keep_arches": repo.wget_keep_arches,
         "extra_args": repo.extra_args,
         "extra_files": repo.extra_files,
         "bwlimit_kbps": repo.bwlimit_kbps,

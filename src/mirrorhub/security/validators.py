@@ -9,7 +9,7 @@ from typing import Any
 from croniter import croniter
 
 MAX_LIST_ITEMS = 64
-MAX_EXTRA_FILES = 32
+MAX_EXTRA_FILES = 500
 
 SLUG_RE = re.compile(
     r"(?=.{1,253}$)"
