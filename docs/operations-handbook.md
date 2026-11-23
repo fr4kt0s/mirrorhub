@@ -1,6 +1,6 @@
 # MirrorHub – Operations Handbook
 
-As of 23 Nov 2026 (PR #50). Repository: https://github.com/fr4kt0s/mirrorhub. This handbook lives in the repository (`docs/operations-handbook.md`) and describes the code of the same commit.
+As of 23 Nov 2026 (PR #51). Repository: https://github.com/fr4kt0s/mirrorhub. This handbook lives in the repository (`docs/operations-handbook.md`) and describes the code of the same commit.
 
 MirrorHub has two parts:
 
@@ -324,7 +324,7 @@ The practical tests 3.1–3.4 are referenced here, not repeated. The P1 tests al
 - [ ] **C6** (P2) ftpsync with `none` as architecture → form error.
 - [ ] **C7** (P1) Log of an ftpsync job → no debmirror entries (original finding).
 - [ ] **C8** (P2) rsync repository → sync succeeds, tree complete.
-- [ ] **C9** (P2) wget repository → sync succeeds.
+- [ ] **C9** (P2) wget repository, mode *Whole directory tree* → saves without a file list (#51), sync succeeds, tree below the upstream root complete.
 - [ ] **C10** (P1) Configuration error (e.g. invalid option) → job `failed` at once, no retry, the message names the cause and does not contain "exit code None".
 - [ ] **C11** (P2) Unreachable host → retries as configured, then `failed` and a `retry_exhausted` notification.
 - [ ] **C12** (P2) Cancel a running sync → job `cancelled`, no sync process left (`docker compose exec worker ps aux`).
@@ -339,6 +339,8 @@ The practical tests 3.1–3.4 are referenced here, not repeated. The P1 tests al
 - [ ] **C21** (P2) Schedule with a following export → export starts only after a successful sync; no export after a failed sync.
 - [ ] **C22** (P2) Edit and delete a schedule → takes effect at the next run time.
 - [ ] **C23** (P3) Schedule becomes due while the same sync is still running → no second run.
+- [ ] **C24** (P2) wget repository, mode *File list* with plain URLs from two different hosts and one `URL -> path` line → sync succeeds, files under the expected paths in `/data/<slug>/` (4.6).
+- [ ] **C25** (P3) wget *File list*: empty list, 501 lines, two lines with the same target path, URL ending in `/`, URL with `?` → form error each time, nothing saved.
 
 #### D. Jobs and logs
 
@@ -650,6 +652,34 @@ Procedure:
 
 Read an archive: one JSON object per line (`id`, `ts`, `actor`, `ip`, `action`, `target_type`, `target_id`, `detail`), for example `grep '"action": "login.failure"' <archive>.jsonl | wc -l`.
 
+### 4.6 wget repositories (sender, from PR #51)
+
+The wget form has a switch *Download* with two modes.
+
+**Whole directory tree** mirrors everything below *Root path* on *Host* recursively (`wget --recursive --no-parent`). The optional include/exclude regex filters are POSIX regular expressions matched against the complete URL. A root of `/` mirrors the whole host.
+
+**File list** downloads only the listed files, one per line, into `/data/<slug>/`:
+
+```text
+https://download.example.org/iso/image.iso
+https://keys.other-site.net/release.asc -> keys/release.asc
+```
+
+- A plain URL is stored under its URL path: `https://download.example.org/iso/image.iso` → `iso/image.iso`. With `URL -> relative/path` you choose the target path yourself.
+- Files may come from different hosts. *Host* and *Root path* are still required by the form, but in this mode they only describe the repository; enter the main host.
+- At most **500 files** per repository (`MAX_EXTRA_FILES` in `src/mirrorhub/security/validators.py`; the form hint follows the constant).
+- Rejected by the form: an empty list, two lines with the same target path, a URL ending in `/` without `URL -> path`, a target path that is absolute or contains `..`.
+- URLs: `http` and `https` only, at most 500 characters. Not allowed: query strings and fragments (`?…`, `#…`, e.g. `getfile.php?id=4711` or signed cloud links), credentials in the URL (`user:pass@host`), IPv6 addresses. Tokens in a URL would end up in the job log and the database.
+
+How a file-list sync runs, and what follows from it:
+
+- One `wget` call per file, one after the other; each call opens a new connection.
+- The first file that fails (404, timeout) stops the job; the remaining files are not tried. The retry policy then starts the whole job again. Check the job log for the last `$ wget …` line to find the file.
+- Every sync downloads all files again (`wget -O` cannot compare timestamps). For large files or long lists, schedule the sync accordingly.
+- Switching a repository from *File list* to *Whole directory tree* clears the stored list; files already in `/data/<slug>/` stay.
+
+In the YAML configuration there is no mode field: an empty or missing `extra_files` means the whole tree, entries mean only those files (`extra_files: [{url: …, path: …}]`, path always explicit).
+
 ---
 
 ## 5. What to do when …
@@ -666,6 +696,7 @@ Read an archive: one JSON object per line (`id`, `ts`, `actor`, `ip`, `action`, 
 | Sender state volume lost, backup available | restore the backup (database and `export-meta`), then as "export lost in transit" | no |
 | State volume lost, no backup | full export, `--rebase` on the receiver | yes |
 | Database file is large although a lot was deleted | check size and free share, then VACUUM (4.4) | no |
+| wget file-list sync fails | job log: the last `$ wget …` line names the file; fix or remove the URL, sync again (4.6) | no |
 
 ---
 
