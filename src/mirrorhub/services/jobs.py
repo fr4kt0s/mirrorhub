@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Collection
+from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, update
+from sqlalchemy import delete, or_, update
 from sqlmodel import Session, col, select
 
-from mirrorhub.enums import JobStatus, JobType, Tool, Trigger
+from mirrorhub.enums import TERMINAL_JOB_STATUSES, JobStatus, JobType, Tool, Trigger
 from mirrorhub.models import Export, Job, ManifestSnapshot, RepoLock, Repository, utcnow
 from mirrorhub.services import audit, logs
 
@@ -85,14 +86,6 @@ def get(db: Session, job_id: int) -> Job | None:
 
 def recent(db: Session, limit: int = 100) -> list[Job]:
     return list(db.exec(select(Job).order_by(col(Job.id).desc()).limit(limit)).all())
-
-
-def for_repo(db: Session, repo_id: int, limit: int = 50) -> list[Job]:
-    return list(
-        db.exec(
-            select(Job).where(Job.repo_id == repo_id).order_by(col(Job.id).desc()).limit(limit)
-        ).all()
-    )
 
 
 def request_cancel(db: Session, job: Job, *, actor: str) -> str:
@@ -188,6 +181,61 @@ def delete_finished(
         target_type="job",
         target_id="*",
         detail={"count": len(ids), "status": status or "all finished", "repo_id": repo_id},
+        commit=False,
+    )
+    db.commit()
+    logs.remove_job_logs(ids)
+    return len(ids)
+
+
+def purge_old(db: Session, days: int, now: datetime | None = None) -> int:
+    """Delete finished jobs older than ``days`` (the job-log retention).
+
+    Kept: the newest finished job per repository and job type, so the last result
+    of a rarely run sync or export stays visible, and jobs whose notification is
+    still pending. Logs of these jobs are already gone after the same period.
+    """
+    if days < 1:
+        return 0
+    cutoff = (now or utcnow()) - timedelta(days=days)
+    finished = list(TERMINAL_JOB_STATUSES)
+    latest: dict[tuple[int, str], int] = {}
+    for repo_id, job_type, job_id in db.exec(
+        select(Job.repo_id, Job.type, Job.id).where(col(Job.status).in_(finished))
+    ).all():
+        key = (repo_id, job_type)
+        if job_id is not None and job_id > latest.get(key, 0):
+            latest[key] = job_id
+    newest = set(latest.values())
+    rows = [
+        row
+        for row in db.exec(
+            select(Job).where(
+                col(Job.status).in_(finished),
+                col(Job.finished_at).is_not(None),
+                col(Job.finished_at) < cutoff,
+                # cancelled jobs are never notified; the others only after sweep_finished
+                or_(
+                    col(Job.notified_at).is_not(None),
+                    col(Job.status) == JobStatus.CANCELLED.value,
+                ),
+            )
+        ).all()
+        if row.id is not None and row.id not in newest
+    ]
+    if not rows:
+        return 0
+    ids = [row.id for row in rows if row.id is not None]
+    _release_references(db, ids)
+    for row in rows:
+        db.delete(row)
+    audit.record(
+        db,
+        actor="scheduler",
+        action="jobs.retention",
+        target_type="job",
+        target_id="*",
+        detail={"count": len(ids), "older_than_days": days},
         commit=False,
     )
     db.commit()

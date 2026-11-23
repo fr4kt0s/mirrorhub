@@ -113,7 +113,8 @@ def test_gotify_url_gets_message_endpoint(
             db, channel_id=channel_id, event="job_succeeded", repo_id=None, actor="test"
         )
         notify.dispatch(db, "job_succeeded", title="ok", message="done")
-    assert captured[0]["url"] == "https://gotify.example/message?token=tok"
+    assert captured[0]["url"] == "https://gotify.example/message"
+    assert captured[0]["headers"]["X-Gotify-Key"] == "tok"
     payload = json.loads(captured[0]["payload"])
     assert payload["title"] == "ok"
 

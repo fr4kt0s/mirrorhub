@@ -12,6 +12,10 @@ consistency, secure deployment, or compliance with all project requirements.
 
 Review docs/release-checklist.md before deployment.
 
+Operations (deployment, updates, tests to tick off, key commands, what to do
+when something goes wrong): docs/operations-handbook.md. The P1 tests alone, as
+a sign-off sheet: docs/acceptance-p1.md.
+
 ## Stack
 
 - Python 3.12.
@@ -67,12 +71,13 @@ uses it for variable substitution.
 | MIRRORHUB_GLOBAL_CONCURRENCY | 2 | Initial global limit of parallel jobs; later changed on the Settings page. |
 | MIRRORHUB_HEARTBEAT_INTERVAL_S | 10 | Initial worker heartbeat interval; Settings page afterwards. |
 | MIRRORHUB_HEARTBEAT_STALE_S | 60 | Initial stale-job threshold; Settings page afterwards. |
-| MIRRORHUB_LOG_RETENTION_DAYS | 30 | Initial job-log retention; Settings page afterwards. |
+| MIRRORHUB_LOG_RETENTION_DAYS | 30 | Initial retention of job logs and finished jobs; Settings page afterwards. |
 | MIRRORHUB_EXPORT_META_KEEP | 30 | Export metadata copies kept per repository on the state volume (minimum 1). Each can be the base of an "incremental since" export. |
 | MIRRORHUB_SESSION_TTL_S | 28800 | Login session lifetime (minimum 300). |
 | MIRRORHUB_LOGIN_MAX_ATTEMPTS | 5 | Failed logins per username and client IP before a lockout. |
 | MIRRORHUB_LOGIN_LOCKOUT_S | 300 | First lockout; doubles with each further failure, capped at one hour. |
 | MIRRORHUB_MAX_GPG_UPLOAD_BYTES | 2097152 | Maximum size of an uploaded key file. |
+| MIRRORHUB_MAX_REQUEST_BODY | 16MB | Largest request body Caddy passes to the web container (Caddy size syntax). Keep it above MIRRORHUB_MAX_GPG_UPLOAD_BYTES and the 1 MiB YAML import limit. |
 | MIRRORHUB_TAG | dev | Image tag. |
 
 ### Proxy network
@@ -307,6 +312,21 @@ Changing the Caddy CA volume changes the CA identity. Back up that volume.
   (MIRRORHUB_PROXY_IP). Browsers on the Docker host itself appear as the
   network gateway, for example 172.31.254.1; remote clients appear with their
   own address.
+- Each client IP gets at most 10 login attempts per minute. Further attempts are
+  rejected without a password check, and only the first rejection per address and
+  minute is written to the audit log. At most four password checks (argon2,
+  64 MiB each) run at the same time.
+- Caddy rejects request bodies larger than MIRRORHUB_MAX_REQUEST_BODY before they
+  reach the web container.
+- Only the web container receives MIRRORHUB_ADMIN_PASSWORD and
+  MIRRORHUB_SECRET_KEY; docker-compose.yml blanks both for the workers, which
+  process data from foreign upstreams. Remove MIRRORHUB_ADMIN_PASSWORD from
+  `.env` after the first start.
+- Expired sessions and login lockout entries older than 24 hours are removed by
+  the scheduler every 30 seconds. A live job log stops streaming when the
+  session ends.
+- `scripts/reset_password.sh` sets a new password, ends all sessions and lifts
+  all login lockouts.
 
 ## UID/GID and NFS
 
@@ -370,7 +390,9 @@ rules.
 
 ## Repository setup
 
-Create a repository directly or clone an editable preset.
+Create a repository directly or clone an editable preset. Deleted seed presets
+stay deleted, also across restarts; *Restore missing seed presets* on the Presets
+page brings them back.
 
 For APT, configure suites, components and architectures explicitly.
 
@@ -439,8 +461,11 @@ Stopping a subprocess sends SIGTERM, followed by SIGKILL after its grace period.
 
 Exports cancel cooperatively until publication begins.
 
-Job history is retained independently of log-file retention. Deleting a job
-also deletes its log file.
+Finished jobs are deleted together with their logs after the job and log
+retention from the Settings page (default 30 days; checked once an hour). The
+newest finished job of each repository and job type is always kept, and so is
+any job whose notification has not been queued yet. Deleting a job by hand also
+deletes its log file.
 
 Job ids are never reused (SQLite `AUTOINCREMENT`, migration 0006), and each job
 log is `<state>/logs/jobs/<id>.log`. Every run starts with a header line such as
@@ -463,6 +488,11 @@ the export succeeded. Leftovers older than seven days are removed automatically.
 ## Notifications
 
 1. Create a channel: SMTP, webhook (generic JSON, ntfy, Gotify, Slack) or file.
+   An SMTP channel with a username requires TLS (STARTTLS, or implicit TLS on port
+   465); without it the password would travel in clear text. Older channels saved
+   with a username but without TLS now fail with "smtp login without TLS refused"
+   until TLS is enabled. Gotify tokens are sent in the `X-Gotify-Key` header, not
+   in the URL.
 2. Send a channel test.
 3. Create event rules for the events that should use the channel, optionally for
    one repository only.
@@ -583,7 +613,9 @@ Automatic cleanup in the drop folder (scheduler, about every 30 seconds):
 shows for each export whether it is `present`, `partial` or `picked up`.
 
 Exports that still contain archive parts are deleted only by the retention rule
-on the Exports page, which also removes their metadata copies.
+on the Exports page, which also removes their metadata copies. With "chains to
+keep" above 0 the scheduler applies the rule once an hour (audit
+`exports.retention`, actor `scheduler`); 0 keeps everything.
 
 ### Incremental export since an earlier export
 
@@ -676,6 +708,48 @@ and services before taking the complete volume/filesystem backup.
 
 Keep signing keys and application secrets encrypted in backup storage.
 
+### Database size and VACUUM
+
+Removed rows (finished jobs, exports, notification deliveries, sessions, login
+lockouts) free space inside mirrorhub.sqlite3, which SQLite reuses for new rows;
+the file itself does not shrink. The audit log is append-only; only the operator
+command below prunes it. To give freed space back to the disk, back up the database, then run
+VACUUM with the services stopped:
+
+```sh
+docker compose stop worker worker-export web
+docker compose run --rm --no-deps web python -m mirrorhub.db vacuum
+docker compose up -d
+```
+
+It prints the size before and after and runs an integrity check. VACUUM needs
+free space of about the database size next to the database (temporary files go
+there, not to the small /tmp). Usually only worth it after deleting a lot, for
+example many jobs at once.
+
+### Pruning the audit log
+
+Database triggers reject every UPDATE and DELETE on audit_log, so neither the web
+interface nor the application can remove entries. An operator with access to the
+Docker host can prune entries older than N days (at least 90):
+
+```sh
+docker compose stop worker worker-export web
+docker compose run --rm --no-deps web python -m mirrorhub.audit purge --older-than-days 365 --dry-run
+docker compose run --rm --no-deps web python -m mirrorhub.audit purge --older-than-days 365
+docker compose up -d
+```
+
+In one transaction the command writes the removed entries to a JSON Lines
+archive (default `/var/lib/mirrorhub/backups/audit-archive-<UTC time>.jsonl`,
+mode 0600; `--archive PATH` to choose another file, which must not exist), drops
+the delete trigger, deletes the entries, creates the trigger again and records
+`audit.purge` (actor `cli`) with the cut-off, the count, the id range and the
+archive path. If any step fails, nothing is deleted and the trigger stays. It
+refuses to run when the trigger is missing. Copy the archive off the host like a
+database backup and check it against your retention obligations. Run VACUUM
+afterwards to shrink the file.
+
 ## Restore
 
 1. Stop the deployment.
@@ -744,6 +818,9 @@ It does not sync a repository, publish an export, send a notification, or prove
 upstream mirror correctness.
 
 ### Acceptance checks after deployment or upgrade
+
+The full test catalogue (P1–P3) is in docs/operations-handbook.md, section 3;
+the P1 sign-off sheet in docs/acceptance-p1.md.
 
 Container health and restarts:
 

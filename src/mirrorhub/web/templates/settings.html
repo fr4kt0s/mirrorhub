@@ -8,7 +8,7 @@
   <h2>Runtime settings</h2>
   <form method="post" action="/settings">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label>Job log retention (days) <input name="log_retention_days" value="{{ values.log_retention_days }}" inputmode="numeric"></label>
+    <label>Job and log retention (days) <input name="log_retention_days" value="{{ values.log_retention_days }}" inputmode="numeric"></label>
     <label>Disk warning threshold (%) <input name="disk_warn_percent" value="{{ values.disk_warn_percent }}" inputmode="numeric"></label>
     <label>Disk critical threshold (%) <input name="disk_critical_percent" value="{{ values.disk_critical_percent }}" inputmode="numeric"></label>
     <button class="btn" type="submit">Save</button>

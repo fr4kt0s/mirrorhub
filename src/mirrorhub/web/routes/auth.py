@@ -40,7 +40,11 @@ def login(
     ip = client_ip(request)
 
     if not auth.ip_limiter.allow(ip):
-        record(db, actor=username, ip=ip, action="login.rate_limited")
+        # Rejected requests come without any password check; audit only the first one
+        # per address and window so that an unauthenticated client cannot fill the
+        # append-only audit log.
+        if auth.ip_limiter.first_rejection(ip):
+            record(db, actor=username, ip=ip, action="login.rate_limited")
         resp = render(request, "login.html", {"error": "Too many attempts. Wait a minute."}, 429)
         resp.headers["Retry-After"] = "60"
         return resp

@@ -11,7 +11,6 @@ from sqlmodel import Session, col, select
 from mirrorhub.enums import (
     CleanupMode,
     DiffMode,
-    JobStatus,
     Method,
     RepoKind,
     Tool,
@@ -311,7 +310,21 @@ def validate(data: dict[str, Any]) -> list[str]:
     return errors
 
 
-def _ensure_unique_slug(db: Session, slug: str, repo_id: int | None) -> str | None:
+# Tools that fix the repository kind; rsync keeps the kind chosen in the form.
+TOOL_KINDS: dict[str, str] = {"debmirror": "apt", "ftpsync": "apt", "wget": "generic"}
+
+
+def apply_tool_rules(data: dict[str, Any], current: Repository | None) -> None:
+    """Derive tool-dependent fields: the kind, and signature checking (debmirror only)."""
+    kind = TOOL_KINDS.get(str(data.get("tool") or ""))
+    if kind is not None:
+        data["kind"] = kind
+    if data.get("tool") != "debmirror":
+        data["verify_signatures"] = current.verify_signatures if current is not None else True
+
+
+def slug_conflict(db: Session, slug: str, repo_id: int | None) -> str | None:
+    """Error message if another repository already uses the slug."""
     existing = db.exec(select(Repository).where(Repository.slug == slug)).first()
     if existing is not None and existing.id != repo_id:
         return f"slug: '{slug}' is already used by another repository"
@@ -436,7 +449,3 @@ def get(db: Session, repo_id: int) -> Repository | None:
 
 def list_all(db: Session) -> list[Repository]:
     return list(db.exec(select(Repository).order_by(col(Repository.slug))).all())
-
-
-def active_job_statuses() -> tuple[str, ...]:
-    return (JobStatus.QUEUED.value, JobStatus.RUNNING.value, JobStatus.CANCELLING.value)

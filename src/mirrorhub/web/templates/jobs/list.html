@@ -45,7 +45,7 @@
 <p>
   <button class="btn btn-secondary"
           hx-post="/jobs/cleanup"
-          hx-vals='{"status": "{{ filters.status }}", "repo_id": "{{ filters.repo_id or 0 }}"}'
+          hx-vals='{{ {"status": filters.status, "repo_id": filters.repo_id or 0} | tojson }}'
           hx-confirm="Delete all finished jobs matching the current filter? Running and queued jobs are kept."
           hx-target="body">Clear finished</button>
 </p>

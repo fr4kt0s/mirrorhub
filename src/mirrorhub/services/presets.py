@@ -7,7 +7,10 @@ from typing import Any
 from sqlmodel import Session, col, select
 
 from mirrorhub.models import Preset, Repository, default_retry_policy
-from mirrorhub.services import audit
+from mirrorhub.services import appsettings, audit
+
+# Names of seed presets the admin deleted; seed() does not bring them back.
+REMOVED_SEEDS_KEY = "presets_removed_seeds"
 
 DEBIAN_SECTIONS = ["main", "contrib", "non-free", "non-free-firmware"]
 UBUNTU_SECTIONS = ["main", "restricted", "universe", "multiverse"]
@@ -106,10 +109,24 @@ SEED_PRESETS: list[dict[str, Any]] = [
 # add a second repository for bookworm-security rather than mixing hosts.
 
 
-def seed(db: Session) -> int:
-    """Insert missing seed presets. Idempotent; existing presets are never overwritten."""
+def _removed_seeds(db: Session) -> list[str]:
+    value = appsettings.get(db, REMOVED_SEEDS_KEY, [])
+    return [str(name) for name in value] if isinstance(value, list) else []
+
+
+def seed(db: Session, *, restore: bool = False) -> int:
+    """Insert missing seed presets. Idempotent; existing presets are never overwritten.
+
+    Seed presets the admin deleted stay deleted unless ``restore`` is set (the
+    "Restore missing seed presets" button), which also forgets those deletions.
+    """
+    removed: set[str] = set() if restore else set(_removed_seeds(db))
+    if restore and _removed_seeds(db):
+        appsettings.set_value(db, REMOVED_SEEDS_KEY, [], commit=False)
     created = 0
     for item in SEED_PRESETS:
+        if item["name"] in removed:
+            continue
         existing = db.exec(select(Preset).where(Preset.name == item["name"])).first()
         if existing is not None:
             continue
@@ -117,8 +134,7 @@ def seed(db: Session) -> int:
         config.setdefault("retry_policy", default_retry_policy())
         db.add(Preset(name=item["name"], kind=item["kind"], config=config, is_seed=True))
         created += 1
-    if created:
-        db.commit()
+    db.commit()
     return created
 
 
@@ -216,5 +232,10 @@ def delete(db: Session, preset: Preset, *, actor: str, ip: str = "") -> None:
         detail={"was_seed": preset.is_seed},
         commit=False,
     )
+    seed_names = {item["name"] for item in SEED_PRESETS}
+    if preset.is_seed and preset.name in seed_names:
+        removed = _removed_seeds(db)
+        if preset.name not in removed:
+            appsettings.set_value(db, REMOVED_SEEDS_KEY, [*removed, preset.name], commit=False)
     db.delete(preset)
     db.commit()

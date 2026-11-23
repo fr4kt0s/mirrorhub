@@ -26,7 +26,8 @@
       <td class="row-actions">
         <a href="/repos/{{ r.id }}/edit">Edit</a>
         <button class="btn btn-danger" hx-post="/repos/{{ r.id }}/delete"
-                hx-confirm="Delete repository {{ r.slug }}? Mirror data on disk is kept.">Delete</button>
+                hx-confirm="Delete repository {{ r.slug }}? Mirror data on disk is kept."
+                hx-target="body">Delete</button>
       </td>
     </tr>
   {% else %}

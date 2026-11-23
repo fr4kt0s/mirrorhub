@@ -102,6 +102,10 @@ services:
       MIRRORHUB_ROLE: worker
       MIRRORHUB_WORKER_CONCURRENCY: ${MIRRORHUB_WORKER_CONCURRENCY:-1}
       HOME: /tmp
+      # Workers process data from foreign upstreams and need neither the admin
+      # password nor the secret key; `environment` overrides the values from .env.
+      MIRRORHUB_ADMIN_PASSWORD: ""
+      MIRRORHUB_SECRET_KEY: ""
     volumes:
       - state:/var/lib/mirrorhub
       - gnupg:/gnupg:ro                    # debmirror verifies Release signatures here
@@ -126,6 +130,8 @@ services:
       MIRRORHUB_TOOL: export
       GNUPGHOME: /gnupg
       HOME: /tmp
+      MIRRORHUB_ADMIN_PASSWORD: ""
+      MIRRORHUB_SECRET_KEY: ""
     volumes:
       - state:/var/lib/mirrorhub
       - gnupg:/gnupg:ro
@@ -154,6 +160,7 @@ services:
       - /tmp:rw,noexec,nosuid,size=64m
     environment:
       MIRRORHUB_HOSTNAME: ${MIRRORHUB_HOSTNAME:-localhost}
+      MIRRORHUB_MAX_REQUEST_BODY: ${MIRRORHUB_MAX_REQUEST_BODY:-16MB}
       XDG_DATA_HOME: /data
       XDG_CONFIG_HOME: /config
     depends_on:

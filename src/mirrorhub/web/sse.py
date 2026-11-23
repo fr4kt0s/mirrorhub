@@ -12,11 +12,13 @@ from fastapi import Request
 from sqlmodel import Session
 
 from mirrorhub.db import get_engine
+from mirrorhub.enums import TERMINAL_JOB_STATUSES
 from mirrorhub.models import Job
+from mirrorhub.security import auth
 from mirrorhub.services import logs
 
-TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
 POLL_SECONDS = 0.75
+LOGGED_OUT = "logged-out"
 
 
 def _event(
@@ -32,8 +34,12 @@ def _event(
 def _read(
     job_id: int,
     offset: int,
+    session_token: str,
 ) -> tuple[dict[str, Any] | None, str, int, bool]:
+    """Job state and the next log chunk; state {"status": LOGGED_OUT} once the session ended."""
     with Session(get_engine()) as db:
+        if auth.lookup_session(db, session_token) is None:
+            return {"status": LOGGED_OUT}, "", offset, True
         job = db.get(Job, job_id)
         if job is None:
             return None, "", offset, True
@@ -61,7 +67,9 @@ async def job_events(
     job_id: int,
     request: Request,
     offset: int = 0,
+    session_token: str = "",
 ) -> AsyncIterator[str]:
+    """Stream a job's log and state; ends when the job is done or the session ends."""
     resume = request.headers.get("last-event-id", "")
     if resume.isdigit():
         offset = int(resume)
@@ -72,7 +80,12 @@ async def job_events(
             _read,
             job_id,
             offset,
+            session_token,
         )
+        if state is not None and state["status"] == LOGGED_OUT:
+            # Logout or expiry ends the stream; the browser reloads into the login page.
+            yield _event("logout", {"stream_complete": True})
+            return
         if state is None:
             yield _event(
                 "status",
@@ -83,7 +96,7 @@ async def job_events(
         if text:
             yield _event("log", {"text": text}, event_id=offset)
 
-        complete = state["status"] in TERMINAL and eof
+        complete = state["status"] in TERMINAL_JOB_STATUSES and eof
         state["stream_complete"] = complete
         yield _event("status", state)
 

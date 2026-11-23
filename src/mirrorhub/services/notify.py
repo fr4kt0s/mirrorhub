@@ -138,6 +138,10 @@ def validate_config(channel_type: str, config: dict[str, Any]) -> dict[str, Any]
         sender = str(config.get("from") or config.get("username") or "").strip()
         if not recipient or not sender:
             raise NotifyError("SMTP from and to are required")
+        if config.get("username") and not config.get("tls"):
+            raise NotifyError(
+                "SMTP login needs TLS: enable TLS, otherwise the password is sent in clear text"
+            )
         return {
             "host": host,
             "port": _int(config, "port", 587, 1, 65535),
@@ -327,7 +331,10 @@ def _send_webhook(
             {"title": title, "message": message, "priority": int(config.get("priority", 5))}
         ).encode()
         headers = {"Content-Type": "application/json"}
-        url = f"{url.rstrip('/')}/message" + (f"?token={token}" if token else "")
+        # Header instead of ?token=, which would end up in proxy and server logs.
+        if token:
+            headers["X-Gotify-Key"] = token
+        url = f"{url.rstrip('/')}/message"
     elif style == "slack":
         body = json.dumps({"text": f"*{title}*\n{message}"}).encode()
         headers = {"Content-Type": "application/json"}
@@ -367,6 +374,9 @@ def _send_smtp(config: dict[str, Any], subject: str, body: str) -> None:
     message.set_content(body)
 
     use_tls = bool(config.get("tls", True))
+    if username and not use_tls:
+        # Channels saved before the form check existed: never send a password in clear.
+        raise NotifyError("smtp login without TLS refused; enable TLS for this channel")
     try:
         if use_tls and port == 465:
             with smtplib.SMTP_SSL(

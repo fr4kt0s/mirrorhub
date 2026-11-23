@@ -8,7 +8,7 @@ import warnings
 from sqlmodel import select
 
 from mirrorhub.db import immediate_session
-from mirrorhub.models import Admin, AuthSession
+from mirrorhub.models import Admin, AuthSession, LoginThrottle
 from mirrorhub.security.auth import hash_password
 from mirrorhub.services.audit import record
 
@@ -33,9 +33,12 @@ with immediate_session() as db:
     admin = accounts[0]
     username = admin.username
     admin.password_hash = password_hash
-    admin.failed_attempts = 0
-    admin.locked_until = None
     db.add(admin)
+
+    # Lift every login lockout, including those of the operator's own address.
+    throttles = db.exec(select(LoginThrottle)).all()
+    for throttle in throttles:
+        db.delete(throttle)
 
     sessions = db.exec(
         select(AuthSession).where(AuthSession.admin_id == admin.id)
@@ -49,7 +52,7 @@ with immediate_session() as db:
         action="admin.password_reset",
         target_type="admin",
         target_id=username,
-        detail={"sessions_revoked": len(sessions)},
+        detail={"sessions_revoked": len(sessions), "lockouts_lifted": len(throttles)},
         commit=False,
     )
 

@@ -70,7 +70,8 @@
   <h2>Retention</h2>
   <p class="muted">
     A chain is one full export plus its incrementals. The newest chain of each
-    repository is always kept.
+    repository is always kept. The scheduler applies this rule once an hour;
+    "Apply retention now" does it immediately.
   </p>
   <form hx-post="/exports/retention/save" hx-target="body">
     <label>Chains to keep per repository (0 = never delete)
