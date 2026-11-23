@@ -328,6 +328,54 @@ def test_wget_file_mode_rejects_501_files(admin: TestClient, csrf_token: str) ->
     assert "At most 500 files." in response.text
 
 
+def test_wget_keep_arches_saved_as_canonical_names(admin: TestClient, csrf_token: str) -> None:
+    form = _wget_form(wget_mode="tree", wget_keep_arches="x86_64, i386 amd64")
+    assert _post(admin, csrf_token, "/repos", form).status_code == 303
+    assert _repos()[0].wget_keep_arches == ["amd64", "i386"]
+    page = admin.get(f"/repos/{_repos()[0].id}/edit").text
+    assert 'value="amd64, i386"' in page
+    assert "Generated exclude regex" in page
+
+
+def test_wget_keep_arches_rejects_unknown(admin: TestClient, csrf_token: str) -> None:
+    form = _wget_form(wget_mode="tree", wget_keep_arches="amd64, sparc")
+    response = _post(admin, csrf_token, "/repos", form)
+    assert response.status_code == 400
+    assert "architectures to keep: unknown" in response.text
+    assert _repos() == []
+
+
+def test_wget_file_mode_clears_keep_arches(admin: TestClient, csrf_token: str) -> None:
+    form = _wget_form(
+        wget_mode="files",
+        wget_keep_arches="amd64",
+        extra_files="https://example.org/pub/a.iso",
+    )
+    assert _post(admin, csrf_token, "/repos", form).status_code == 303
+    assert _repos()[0].wget_keep_arches == []
+
+
+def test_wget_edit_keeps_regex_filters(admin: TestClient, csrf_token: str) -> None:
+    """Regression: the edit page used to drop include/exclude regex, saving cleared them."""
+    form = _wget_form(wget_mode="tree", include_regex=r"\.deb$", exclude_regex="/test/")
+    assert _post(admin, csrf_token, "/repos", form).status_code == 303
+    repo = _repos()[0]
+    page = admin.get(f"/repos/{repo.id}/edit").text
+    assert 'value="/test/"' in page
+    assert r'value="\.deb$"' in page
+
+
+def test_docker_preset_is_seeded(admin: TestClient) -> None:
+    with Session(get_engine()) as db:
+        preset = db.exec(select(Preset).where(Preset.name == "Docker CE (Ubuntu)")).first()
+    assert preset is not None
+    assert preset.config["tool"] == "debmirror"
+    assert preset.config["upstream_host"] == "download.docker.com"
+    assert preset.config["sections"] == ["stable"]
+    page = admin.get(f"/repos/new?preset={preset.id}").text
+    assert 'value="download.docker.com"' in page
+
+
 def test_wget_edit_page_shows_tree_mode(admin: TestClient, csrf_token: str) -> None:
     assert _post(admin, csrf_token, "/repos", _wget_form(wget_mode="tree")).status_code == 303
     page = admin.get(f"/repos/{_repos()[0].id}/edit").text

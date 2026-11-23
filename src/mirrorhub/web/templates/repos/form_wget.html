@@ -46,6 +46,20 @@
   </fieldset>
 
   <fieldset class="wget-tree-only">
+    <legend>Architectures</legend>
+    <label>Architectures to keep
+      <input name="wget_keep_arches" value="{{ values.wget_keep_arches }}" placeholder="amd64, i386">
+      <small>Leave empty to mirror all. Otherwise MirrorHub skips every other known architecture
+        (directories and files such as <code>binary-arm64/</code>, <code>…_arm64.deb</code>,
+        <code>….aarch64.rpm</code>, <code>…-linux-arm64.tar.gz</code>). Known:
+        {% for name, aliases in wget_arch_groups.items() %}<code>{{ name }}</code>{% if aliases|length > 1 %} ({{ aliases[1:]|join(", ") }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}.
+        Files without an architecture in their path (<code>Release</code>, <code>noarch</code>, <code>all</code>) are always kept.</small>
+    </label>
+    {% set generated = wget_arch_reject(values.wget_keep_arches) %}
+    {% if generated %}<p class="muted">Generated exclude regex (combined with the exclude regex below): <code>{{ generated }}</code></p>{% endif %}
+  </fieldset>
+
+  <fieldset class="wget-tree-only">
     <legend>Optional regex filters</legend>
     <p class="muted">POSIX regular expressions are matched against the complete URL.</p>
     <label>Include regex

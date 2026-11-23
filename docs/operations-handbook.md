@@ -61,7 +61,7 @@ Run all commands in the project directory on the Docker host.
    docker compose ps          # all healthy, init-volumes "exited (0)"
    ```
 
-5. Check the database revision (must match the newest file in `migrations/versions`, currently `0008`):
+5. Check the database revision (must match the newest file in `migrations/versions`, currently `0009`):
 
    ```sh
    docker compose exec web python -c "import sqlite3; print(sqlite3.connect('/var/lib/mirrorhub/db/mirrorhub.sqlite3').execute('select version_num from alembic_version').fetchone()[0])"
@@ -284,7 +284,7 @@ The practical tests 3.1–3.4 are referenced here, not repeated. The P1 tests al
 #### A. Sender: deployment, login, security
 
 - [ ] **A1** (P1) `docker compose ps` → all services `healthy`, `init-volumes` `exited (0)`.
-- [ ] **A2** (P1) Database revision (1.1 step 5) → `0008`.
+- [ ] **A2** (P1) Database revision (1.1 step 5) → `0009`.
 - [ ] **A3** (P1) Smoke test → 8/8.
 - [ ] **A4** (P1) Commit in the footer and in `web`, `worker` and `worker-export` equals `git rev-parse --short=12 HEAD`:
   `for s in web worker worker-export; do docker compose exec $s python -c "from mirrorhub import buildinfo; print('$s', buildinfo.describe())"; done`
@@ -325,6 +325,8 @@ The practical tests 3.1–3.4 are referenced here, not repeated. The P1 tests al
 - [ ] **C7** (P1) Log of an ftpsync job → no debmirror entries (original finding).
 - [ ] **C8** (P2) rsync repository → sync succeeds, tree complete.
 - [ ] **C9** (P2) wget repository, mode *Whole directory tree* → saves without a file list (#51), sync succeeds, tree below the upstream root complete.
+- [ ] **C26** (P2) wget tree `download.docker.com` `/linux/ubuntu` with *Architectures to keep* `amd64` → `/data/<slug>/dists/*/pool/stable/` contains only `amd64`; `binary-arm64` etc. missing; edit page shows the generated regex; include/exclude regex survive editing.
+- [ ] **C27** (P2) Preset *Docker CE (Ubuntu)* with the Docker key imported → debmirror sync (dry run, then real) succeeds.
 - [ ] **C10** (P1) Configuration error (e.g. invalid option) → job `failed` at once, no retry, the message names the cause and does not contain "exit code None".
 - [ ] **C11** (P2) Unreachable host → retries as configured, then `failed` and a `retry_exhausted` notification.
 - [ ] **C12** (P2) Cancel a running sync → job `cancelled`, no sync process left (`docker compose exec worker ps aux`).
@@ -656,7 +658,20 @@ Read an archive: one JSON object per line (`id`, `ts`, `actor`, `ip`, `action`, 
 
 The wget form has a switch *Download* with two modes.
 
-**Whole directory tree** mirrors everything below *Root path* on *Host* recursively (`wget --recursive --no-parent`). The optional include/exclude regex filters are POSIX regular expressions matched against the complete URL. A root of `/` mirrors the whole host.
+**Whole directory tree** mirrors everything below *Root path* on *Host* recursively (`wget --recursive --no-parent`). A root of `/` mirrors the whole host. Two kinds of filters narrow the tree:
+
+- **Architectures to keep** (from migration `0009`): e.g. `amd64, i386`. MirrorHub then skips every other known architecture and shows the generated regex under the field. An architecture counts as present when its name stands between `/`, `_`, `.`, `-` or at the end of the URL: `binary-arm64/`, `pool/stable/arm64/`, `foo_1.0_arm64.deb`, `foo-1.0.aarch64.rpm`, `tool-linux-arm64.tar.gz`. Aliases are covered (`amd64` = `x86_64`, `arm64` = `aarch64`, `i386` = `i486`–`i686`, `armhf` = `armv7*`, `armel` = `armv5`/`armv6`, `ppc64el` = `ppc64le`). Never skipped: files without an architecture in the path (`Release`, `InRelease`), `all`, `noarch`, and ambiguous short names (`arm`, `x86`, `x64`, `386`). Empty field = all architectures. Known limit: a package whose *name* is an architecture followed by a separator (e.g. `arm64-tools/`) is skipped too; keep it with an include regex or add it via a second repository.
+- **Include/exclude regex**: POSIX regular expressions matched against the complete URL (`wget --accept-regex` / `--reject-regex`). Every URL is checked, including the directory pages wget follows: an include regex must therefore also match the parent directories, or wget never reaches the files. For "everything except …" use the exclude regex. The exclude regex and the architecture filter are combined into one `--reject-regex`.
+
+Example, Docker's Ubuntu repository as a plain tree (amd64 only, stable channel only):
+
+| Field | Value |
+| --- | --- |
+| Host / Root path | `download.docker.com` / `/linux/ubuntu` |
+| Architectures to keep | `amd64` |
+| Exclude regex | `/(test\|edge\|nightly)/` |
+
+For APT repositories, debmirror is usually the better choice (signature check, only packages listed in the indexes, old packages removed, no `index.html` files from directory listings): use the preset **Docker CE (Ubuntu)** (debmirror, `download.docker.com`, `/linux/ubuntu`, suite `noble`, component `stable`, `amd64`, diff mode `none`). Before the first sync import `https://download.docker.com/linux/ubuntu/gpg` on the *Keys* page, adjust the suites, and start the first sync as a dry run.
 
 **File list** downloads only the listed files, one per line, into `/data/<slug>/`:
 
@@ -678,7 +693,7 @@ How a file-list sync runs, and what follows from it:
 - Every sync downloads all files again (`wget -O` cannot compare timestamps). For large files or long lists, schedule the sync accordingly.
 - Switching a repository from *File list* to *Whole directory tree* clears the stored list; files already in `/data/<slug>/` stay.
 
-In the YAML configuration there is no mode field: an empty or missing `extra_files` means the whole tree, entries mean only those files (`extra_files: [{url: …, path: …}]`, path always explicit).
+In the YAML configuration there is no mode field: an empty or missing `extra_files` means the whole tree, entries mean only those files (`extra_files: [{url: …, path: …}]`, path always explicit). Tree filters: `include_regex`, `exclude_regex`, `wget_keep_arches: [amd64, i386]` (before PR #51 the two regex fields were missing from the YAML export and were cleared when a wget repository was edited in the web interface).
 
 ---
 

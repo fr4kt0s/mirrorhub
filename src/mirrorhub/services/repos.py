@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 from sqlmodel import Session, col, select
 
+from mirrorhub import archfilter
 from mirrorhub.enums import (
     CleanupMode,
     DiffMode,
@@ -30,6 +31,7 @@ LIST_FIELDS = (
     "include_patterns",
     "exclude_patterns",
     "extra_args",
+    "wget_keep_arches",
 )
 TEXT_FIELDS = (
     "slug",
@@ -120,8 +122,11 @@ def parse_form(form: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, str]]
     for name in LIST_FIELDS:
         raw[name] = get(name)
         data[name] = _split(get(name))
-    for name in ("architectures", "arch_exclude"):
+    for name in ("architectures", "arch_exclude", "wget_keep_arches"):
         data[name] = _split_architectures(get(name))
+    data["wget_keep_arches"] = list(
+        dict.fromkeys(archfilter.canonical(name) or name for name in data["wget_keep_arches"])
+    )
     for name in BOOL_FIELDS:
         data[name] = bool(form.get(name))
         raw[name] = "on" if data[name] else ""
@@ -142,6 +147,14 @@ def parse_form(form: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, str]]
         data["wget_mode"] = wget_mode
     if data.get("wget_mode") == "tree":
         data["extra_files"] = []
+    elif data.get("wget_mode") == "files":
+        # Filters apply to the directory tree only.
+        data["wget_keep_arches"] = []
+        data["extra_files"] = []
+        try:
+            data["extra_files"] = parse_extra_files(get("extra_files"))
+        except FormError as exc:
+            messages.extend(exc.messages)
     else:
         try:
             data["extra_files"] = parse_extra_files(get("extra_files"))
@@ -307,6 +320,9 @@ def validate(data: dict[str, Any]) -> list[str]:
         if method not in ("http", "https"):
             errors.append("method: wget supports http and https only")
         mode = data.get("wget_mode") or wget_mode_for(data["extra_files"])
+        error = archfilter.validate_keep(data.get("wget_keep_arches") or [])
+        if error:
+            errors.append(error)
         if mode not in WGET_MODES:
             errors.append("download: choose the whole directory tree or a file list")
         elif mode == "files":

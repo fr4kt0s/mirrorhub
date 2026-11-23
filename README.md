@@ -405,6 +405,8 @@ For generic wget repositories, choose the download mode: *Whole directory tree*
 mirrors everything below the upstream root (optionally filtered by regex);
 *File list* downloads only the listed files, one URL per line. A plain URL is
 stored under its URL path; `URL -> relative/path` sets the target path.
+In tree mode, *Architectures to keep* (e.g. `amd64, i386`) skips all other
+known architectures; details in `docs/operations-handbook.md` 4.6.
 
 The web data mount is read-only. Workers write mirror data.
 

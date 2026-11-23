@@ -137,6 +137,8 @@ class Repository(SQLModel, table=True):
     exclude_patterns: list[str] = Field(default_factory=list, sa_column=_json())
     include_regex: str = ""
     exclude_regex: str = ""
+    # wget tree mode: architectures to keep; empty = all (see mirrorhub.archfilter).
+    wget_keep_arches: list[str] = Field(default_factory=list, sa_column=_json())
     extra_args: list[str] = Field(default_factory=list, sa_column=_json())
 
     retry_policy: dict[str, Any] = Field(default_factory=default_retry_policy, sa_column=_json())

@@ -253,3 +253,53 @@ def test_no_step_uses_a_shell(configured: Settings) -> None:
         assert all(isinstance(part, str) for part in step.argv)
         assert not any((";" in part or "|" in part or "&&" in part) for part in step.argv)
         assert Path(step.argv[0]).name == step.argv[0]
+
+
+def _wget_tree(**overrides: Any) -> Repository:
+    values: dict[str, Any] = {
+        "slug": "docker-ce",
+        "kind": "generic",
+        "tool": "wget",
+        "upstream_host": "download.docker.com",
+        "upstream_root": "/linux/ubuntu",
+        "suites": [],
+        "sections": [],
+    }
+    values.update(overrides)
+    return _repo(**values)
+
+
+def _reject_regex(argv: list[str]) -> str | None:
+    return argv[argv.index("--reject-regex") + 1] if "--reject-regex" in argv else None
+
+
+def test_wget_tree_keep_arches_builds_reject_regex(configured: Settings) -> None:
+    repo = _wget_tree(wget_keep_arches=["amd64", "i386"])
+    argv = list(_build(repo, _job(repo), get_settings()).steps[0].argv)
+    assert "--regex-type=posix" in argv
+    regex = _reject_regex(argv)
+    assert regex is not None
+    assert "arm64" in regex
+    assert "|amd64|" not in regex
+
+
+def test_wget_tree_keep_arches_combines_with_exclude_regex(configured: Settings) -> None:
+    repo = _wget_tree(wget_keep_arches=["amd64"], exclude_regex="/(test|nightly)/")
+    argv = list(_build(repo, _job(repo), get_settings()).steps[0].argv)
+    regex = _reject_regex(argv)
+    assert regex is not None
+    assert regex.startswith("(/(test|nightly)/)|(")
+    assert argv.count("--reject-regex") == 1
+
+
+def test_wget_tree_without_filters_has_no_regex(configured: Settings) -> None:
+    repo = _wget_tree()
+    argv = list(_build(repo, _job(repo), get_settings()).steps[0].argv)
+    assert "--reject-regex" not in argv
+    assert "--regex-type=posix" not in argv
+
+
+def test_wget_tree_unknown_keep_arch_is_a_build_error(configured: Settings) -> None:
+    repo = _wget_tree(wget_keep_arches=["sparc"])
+    with pytest.raises(BuildError):
+        _build(repo, _job(repo), get_settings())

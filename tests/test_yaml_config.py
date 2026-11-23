@@ -199,3 +199,47 @@ repositories:
     assert [repo.slug for repo in repos] == ["debian-ftpsync"]
     assert repos[0].architectures == []
     assert repos[0].arch_exclude == []
+
+
+def test_wget_filters_round_trip(admin: TestClient, csrf_token: str) -> None:
+    document = """\
+mirrorhub_config: 1
+repositories:
+  - slug: docker-tree
+    name: Docker tree
+    kind: generic
+    tool: wget
+    method: https
+    upstream_host: download.docker.com
+    upstream_root: /linux/ubuntu
+    include_regex: ''
+    exclude_regex: '/(test|nightly)/'
+    wget_keep_arches: [amd64, i386]
+"""
+    applied = _post(admin, csrf_token, {"yaml_text": document, "apply": "1"})
+    assert applied.status_code == 200
+    repo = _repos()[0]
+    assert repo.exclude_regex == "/(test|nightly)/"
+    assert repo.wget_keep_arches == ["amd64", "i386"]
+
+    exported = yaml.safe_load(admin.get("/config/export.yaml").text)["repositories"][0]
+    assert exported["exclude_regex"] == "/(test|nightly)/"
+    assert exported["wget_keep_arches"] == ["amd64", "i386"]
+
+
+def test_wget_unknown_keep_arch_is_an_import_error(admin: TestClient, csrf_token: str) -> None:
+    document = """\
+mirrorhub_config: 1
+repositories:
+  - slug: files
+    name: Files
+    kind: generic
+    tool: wget
+    method: https
+    upstream_host: example.org
+    upstream_root: /pub
+    wget_keep_arches: [sparc]
+"""
+    response = _post(admin, csrf_token, {"yaml_text": document, "apply": "1"})
+    assert "architectures to keep: unknown" in response.text
+    assert _repos() == []

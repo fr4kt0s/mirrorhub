@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from mirrorhub import archfilter
 from mirrorhub.models import Job, Repository
 from mirrorhub.security import validators
 
@@ -85,12 +86,16 @@ def build(repo: Repository, job: Job, target: Path, cwd: Path) -> BuildPlan:
         "--tries=3",
         "--timeout=60",
     ]
-    if repo.include_regex or repo.exclude_regex:
+    error = archfilter.validate_keep(list(repo.wget_keep_arches or []))
+    if error:
+        raise BuildError(error)
+    reject = archfilter.combine_reject(repo.exclude_regex, list(repo.wget_keep_arches or []))
+    if repo.include_regex or reject:
         argv.append("--regex-type=posix")
     if repo.include_regex:
         argv.extend(["--accept-regex", repo.include_regex])
-    if repo.exclude_regex:
-        argv.extend(["--reject-regex", repo.exclude_regex])
+    if reject:
+        argv.extend(["--reject-regex", reject])
     if repo.bwlimit_kbps:
         argv.append(f"--limit-rate={repo.bwlimit_kbps}k")
     argv.extend(repo.extra_args)
