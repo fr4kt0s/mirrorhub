@@ -82,8 +82,6 @@ def build(repo: Repository, job: Job, target: Path, cwd: Path) -> BuildPlan:
         # (dists/<suite>/pool/<channel>/<arch>/<file> below the root). --no-parent
         # already keeps the walk below the upstream root.
         "--level=inf",
-        # Only fetch files that changed upstream (Last-Modified / size), as --mirror does.
-        "--timestamping",
         "--no-parent",
         "--no-host-directories",
         f"--cut-dirs={depth}",
@@ -105,12 +103,29 @@ def build(repo: Repository, job: Job, target: Path, cwd: Path) -> BuildPlan:
     if repo.bwlimit_kbps:
         argv.append(f"--limit-rate={repo.bwlimit_kbps}k")
     argv.extend(repo.extra_args)
+
+    steps: list[Step] = []
     if job.dry_run:
         argv.append("--spider")
+    else:
+        # Only fetch files that changed upstream (Last-Modified / size), as --mirror does.
+        argv.append("--timestamping")
+        if target.is_dir():
+            # With --timestamping wget neither re-downloads nor re-parses an unchanged
+            # directory listing, so the walk would stop at the first stored index.html
+            # and new files below it would never be found. Listings are small: drop
+            # them so every run reads them fresh; files keep their timestamps.
+            steps.append(
+                Step(
+                    ("find", str(target), "-type", "f", "-name", "index.html", "-delete"),
+                    "drop stored directory listings",
+                )
+            )
     argv.append(url)
+    steps.append(Step(tuple(argv), f"mirror tree {repo.upstream_host}{repo.upstream_root}"))
 
     return BuildPlan(
-        steps=[Step(tuple(argv), f"mirror tree {repo.upstream_host}{repo.upstream_root}")],
+        steps=steps,
         cwd=cwd,
         target=target,
     )

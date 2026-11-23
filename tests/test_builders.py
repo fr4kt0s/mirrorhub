@@ -275,7 +275,7 @@ def _reject_regex(argv: list[str]) -> str | None:
 
 def test_wget_tree_keep_arches_builds_reject_regex(configured: Settings) -> None:
     repo = _wget_tree(wget_keep_arches=["amd64", "i386"])
-    argv = list(_build(repo, _job(repo), get_settings()).steps[0].argv)
+    argv = list(_build(repo, _job(repo), get_settings()).steps[-1].argv)
     assert "--regex-type=posix" in argv
     regex = _reject_regex(argv)
     assert regex is not None
@@ -285,7 +285,7 @@ def test_wget_tree_keep_arches_builds_reject_regex(configured: Settings) -> None
 
 def test_wget_tree_keep_arches_combines_with_exclude_regex(configured: Settings) -> None:
     repo = _wget_tree(wget_keep_arches=["amd64"], exclude_regex="/(test|nightly)/")
-    argv = list(_build(repo, _job(repo), get_settings()).steps[0].argv)
+    argv = list(_build(repo, _job(repo), get_settings()).steps[-1].argv)
     regex = _reject_regex(argv)
     assert regex is not None
     assert regex.startswith("(/(test|nightly)/)|(")
@@ -294,7 +294,7 @@ def test_wget_tree_keep_arches_combines_with_exclude_regex(configured: Settings)
 
 def test_wget_tree_without_filters_has_no_regex(configured: Settings) -> None:
     repo = _wget_tree()
-    argv = list(_build(repo, _job(repo), get_settings()).steps[0].argv)
+    argv = list(_build(repo, _job(repo), get_settings()).steps[-1].argv)
     assert "--reject-regex" not in argv
     assert "--regex-type=posix" not in argv
 
@@ -303,3 +303,24 @@ def test_wget_tree_unknown_keep_arch_is_a_build_error(configured: Settings) -> N
     repo = _wget_tree(wget_keep_arches=["sparc"])
     with pytest.raises(BuildError):
         _build(repo, _job(repo), get_settings())
+
+
+def test_wget_tree_refreshes_listings_before_timestamped_run(configured: Settings) -> None:
+    """--timestamping alone stops at the first unchanged index.html (host finding #51)."""
+    repo = _wget_tree()
+    plan = _build(repo, _job(repo), get_settings())
+    assert len(plan.steps) == 2
+    cleanup, mirror = (list(step.argv) for step in plan.steps)
+    assert cleanup == ["find", str(plan.target), "-type", "f", "-name", "index.html", "-delete"]
+    assert mirror[0] == "wget"
+    assert "--timestamping" in mirror
+    assert "--level=inf" in mirror
+
+
+def test_wget_tree_dry_run_keeps_listings(configured: Settings) -> None:
+    repo = _wget_tree()
+    plan = _build(repo, _job(repo, dry_run=True), get_settings())
+    assert [step.argv[0] for step in plan.steps] == ["wget"]
+    argv = list(plan.steps[0].argv)
+    assert "--spider" in argv
+    assert "--timestamping" not in argv

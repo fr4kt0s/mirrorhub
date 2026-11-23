@@ -97,6 +97,7 @@ def test_wget_adapter_builds_https_tree_plan() -> None:
     assert "--no-parent" in argv
     assert "--level=inf" in argv
     assert "--timestamping" in argv
+    assert "--spider" not in argv
     assert "--no-host-directories" in argv
     assert "--cut-dirs=2" in argv
     assert "--directory-prefix=/data/example-tree" in argv

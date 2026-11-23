@@ -658,7 +658,7 @@ Read an archive: one JSON object per line (`id`, `ts`, `actor`, `ip`, `action`, 
 
 The wget form has a switch *Download* with two modes.
 
-**Whole directory tree** mirrors everything below *Root path* on *Host* recursively (`wget --recursive --level=inf --timestamping --no-parent`): no depth limit (before PR #51 wget stopped at depth 5, so e.g. Docker's packages under `dists/<suite>/pool/stable/amd64/` were never fetched), and later syncs only download files whose size or modification time changed. Directory listings are stored as `index.html`. A root of `/` mirrors the whole host.
+**Whole directory tree** mirrors everything below *Root path* on *Host* recursively (`wget --recursive --level=inf --timestamping --no-parent`): no depth limit (before PR #51 wget stopped at depth 5, so e.g. Docker's packages under `dists/<suite>/pool/stable/amd64/` were never fetched), and later syncs only download files whose size or modification time changed. Directory listings are stored as `index.html`; each sync first deletes them (`find <target> -name index.html -delete`, visible as the first step in the job log) and fetches them again, because with `--timestamping` wget would not re-read an unchanged listing and would miss new files below it. A dry run (`--spider`) skips both. A root of `/` mirrors the whole host.
 
 wget needs ordinary directory listings. If a server offers a file and a directory under the same name (S3 directory markers, e.g. `dists/yakkety/pool` on download.docker.com), wget logs `Cannot write to '…' (Is a directory)` and ends with exit code 3 although everything else was downloaded. Find the paths with `grep -n "Cannot write" <job log>` and exclude them with the exclude regex. Two kinds of filters narrow the tree:
 
