@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import logging
 import shutil
 import subprocess
 import tempfile
@@ -15,6 +16,7 @@ from typing import IO, Any
 
 from mirrorhub.importer.checks import Export
 from mirrorhub.importer.errors import ToolMissingError, UnsafeArchiveError, VerificationFailed
+from mirrorhub.importer.logs import log_event
 
 CHUNK = 1024 * 1024
 
@@ -29,6 +31,7 @@ class PartReader(io.RawIOBase):
         self._index = 0
         self._handle: IO[bytes] | None = None
         self._hash = hashlib.sha256()
+        self._size = 0
 
     def readable(self) -> bool:
         return True
@@ -41,9 +44,11 @@ class PartReader(io.RawIOBase):
                     return 0
                 self._handle = self._parts[self._index].open("rb")
                 self._hash = hashlib.sha256()
+                self._size = 0
             chunk = self._handle.read(len(view))
             if chunk:
                 self._hash.update(chunk)
+                self._size += len(chunk)
                 view[: len(chunk)] = chunk
                 return len(chunk)
             self._handle.close()
@@ -51,6 +56,12 @@ class PartReader(io.RawIOBase):
             if self._hash.hexdigest() != self._digests[self._index]:
                 name = self._parts[self._index].name
                 raise VerificationFailed(f"archive part changed after verification: {name}")
+            log_event(
+                logging.DEBUG,
+                "archive part read and re-verified",
+                part=self._parts[self._index].name,
+                bytes=self._size,
+            )
             self._index += 1
 
     def close(self) -> None:
@@ -82,6 +93,7 @@ def open_archive(export: Export) -> Iterator[IO[bytes]]:
         reader.close()
         raise ToolMissingError("zstd is not installed; it is required for .tar.zst exports")
 
+    log_event(logging.DEBUG, "decompressing with zstd", zstd=zstd)
     errors: list[BaseException] = []
     with tempfile.TemporaryFile() as stderr:
         process = subprocess.Popen(  # noqa: S603

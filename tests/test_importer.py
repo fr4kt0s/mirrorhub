@@ -947,3 +947,70 @@ def test_import_writes_drift_files(tmp_path: Path) -> None:
 
     assert (reports / "ubuntu" / "missing.txt").read_text() == "pool/a.deb\n"
     assert f"export_id={ID2}\n" in (reports / "ubuntu" / "summary.txt").read_text()
+
+
+# --log-level
+
+
+def _log_lines(stderr: str) -> list[tuple[str, str]]:
+    lines = [json.loads(line) for line in stderr.splitlines() if line.startswith("{")]
+    return [(line["level"], line["event"]) for line in lines]
+
+
+@pytest.mark.parametrize(
+    ("level", "expect_debug", "expect_info"),
+    [("debug", True, True), ("info", False, True), ("warning", False, False)],
+)
+def test_log_level_controls_json_lines(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    level: str,
+    expect_debug: bool,
+    expect_info: bool,
+) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+
+    assert main([*base, "--log-level", level, "import", "--slug", "ubuntu"]) == 0
+
+    captured = capsys.readouterr()
+    lines = _log_lines(captured.err)
+    events = {event for _, event in lines}
+    assert any(lvl == "debug" for lvl, _ in lines) is expect_debug
+    assert ("applied" in events) is expect_info
+    if expect_debug:
+        assert {"config loaded", "export verified", "plan", "post-check passed"} <= events
+    assert f"applied {ID2}" in captured.out  # stdout does not depend on the level
+
+
+@pytest.mark.parametrize("command", ["import", "status", "check", "adopt"])
+def test_log_level_and_config_after_the_command(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], command: str
+) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    if command == "adopt":
+        (tmp_path / "st" / "ubuntu.json").unlink()  # adopt needs a lost state file
+    capsys.readouterr()
+    extra = {
+        "import": ["--slug", "ubuntu"],
+        "status": [],
+        "check": ["--slug", "ubuntu"],
+        "adopt": ["--slug", "ubuntu", "--auto"],
+    }[command]
+
+    assert main([command, *extra, *base, "--log-level", "DEBUG"]) == 0
+
+    assert ("debug", "config loaded") in _log_lines(capsys.readouterr().err)
+
+
+def test_log_level_after_the_command_wins(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _, base = _inbox_cli(tmp_path)
+    assert main([*base, "--log-level", "debug", "status", "--log-level", "error"]) == 0
+    assert _log_lines(capsys.readouterr().err) == []
+    assert main([*base, "--log-level", "debug", "status"]) == 0
+    assert ("debug", "config loaded") in _log_lines(capsys.readouterr().err)
