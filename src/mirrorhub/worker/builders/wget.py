@@ -78,6 +78,12 @@ def build(repo: Repository, job: Job, target: Path, cwd: Path) -> BuildPlan:
     argv = [
         "wget",
         "--recursive",
+        # wget stops at depth 5 by default; package pools are often deeper
+        # (dists/<suite>/pool/<channel>/<arch>/<file> below the root). --no-parent
+        # already keeps the walk below the upstream root.
+        "--level=inf",
+        # Only fetch files that changed upstream (Last-Modified / size), as --mirror does.
+        "--timestamping",
         "--no-parent",
         "--no-host-directories",
         f"--cut-dirs={depth}",
