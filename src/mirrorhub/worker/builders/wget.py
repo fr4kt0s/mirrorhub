@@ -104,7 +104,7 @@ def build(repo: Repository, job: Job, target: Path, cwd: Path) -> BuildPlan:
         argv.append(f"--limit-rate={repo.bwlimit_kbps}k")
     argv.extend(repo.extra_args)
 
-    steps: list[Step] = []
+    tree_steps: list[Step] = []
     if job.dry_run:
         argv.append("--spider")
     else:
@@ -115,17 +115,17 @@ def build(repo: Repository, job: Job, target: Path, cwd: Path) -> BuildPlan:
             # directory listing, so the walk would stop at the first stored index.html
             # and new files below it would never be found. Listings are small: drop
             # them so every run reads them fresh; files keep their timestamps.
-            steps.append(
+            tree_steps.append(
                 Step(
                     ("find", str(target), "-type", "f", "-name", "index.html", "-delete"),
                     "drop stored directory listings",
                 )
             )
     argv.append(url)
-    steps.append(Step(tuple(argv), f"mirror tree {repo.upstream_host}{repo.upstream_root}"))
+    tree_steps.append(Step(tuple(argv), f"mirror tree {repo.upstream_host}{repo.upstream_root}"))
 
     return BuildPlan(
-        steps=steps,
+        steps=tree_steps,
         cwd=cwd,
         target=target,
     )
