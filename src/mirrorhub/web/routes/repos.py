@@ -43,6 +43,7 @@ def _blank_values() -> dict[str, str]:
     values.update(
         {
             "extra_files": "",
+            "wget_mode": "tree",
             "retry_max_attempts": "3",
             "retry_backoff": "exponential",
             "retry_base_seconds": "60",

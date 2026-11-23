@@ -25,12 +25,27 @@
     </label>
   </fieldset>
 
-  <fieldset>
-    <legend>Complete directory tree</legend>
-    <p class="muted">MirrorHub downloads the complete directory tree below the configured upstream root.</p>
+  {% set wget_mode = values.wget_mode or "tree" %}
+  <fieldset class="wget-mode">
+    <legend>Download</legend>
+    <label class="check"><input type="radio" name="wget_mode" value="tree" {% if wget_mode != "files" %}checked{% endif %}>
+      Whole directory tree</label>
+    <label class="check"><input type="radio" name="wget_mode" value="files" {% if wget_mode == "files" %}checked{% endif %}>
+      File list</label>
+    <p class="muted wget-tree-only">MirrorHub downloads the complete directory tree below the configured upstream root.</p>
   </fieldset>
 
-  <fieldset>
+  <fieldset class="wget-files-only">
+    <legend>File list</legend>
+    <p class="muted">One file per line. A plain URL is stored under its URL path
+      (<code>https://example.com/pub/a.iso</code> → <code>pub/a.iso</code>);
+      write <code>URL -&gt; relative/path</code> to choose the target path. At most 32 files.</p>
+    <label>Files
+      <textarea name="extra_files" rows="8" spellcheck="false" placeholder="https://example.com/pub/image.iso&#10;https://example.com/keys/release.asc -&gt; keys/release.asc">{{ values.extra_files }}</textarea>
+    </label>
+  </fieldset>
+
+  <fieldset class="wget-tree-only">
     <legend>Optional regex filters</legend>
     <p class="muted">POSIX regular expressions are matched against the complete URL.</p>
     <label>Include regex

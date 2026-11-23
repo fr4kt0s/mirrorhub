@@ -229,22 +229,93 @@ def test_wget_requires_http_or_https(admin: TestClient, csrf_token: str) -> None
     assert "wget supports http and https only" in response.text
 
 
-def test_wget_requires_entries(admin: TestClient, csrf_token: str) -> None:
+def _wget_form(**overrides: str) -> dict[str, str]:
     form = _form(
         slug="files",
         name="Files",
         kind="generic",
         tool="wget",
         method="https",
-        upstream_root="/",
+        upstream_host="example.org",
+        upstream_root="/pub",
         suites="",
         sections="",
         architectures="none",
         extra_files="",
     )
+    form.update(overrides)
+    return form
+
+
+def test_wget_tree_mode_needs_no_file_entries(admin: TestClient, csrf_token: str) -> None:
+    response = _post(admin, csrf_token, "/repos", _wget_form(wget_mode="tree"))
+    assert response.status_code == 303
+    saved = _repos()
+    assert [repo.slug for repo in saved] == ["files"]
+    assert saved[0].extra_files == []
+
+
+def test_wget_without_mode_field_defaults_to_tree(admin: TestClient, csrf_token: str) -> None:
+    """Older forms and API clients without the switch: an empty list means the whole tree."""
+    response = _post(admin, csrf_token, "/repos", _wget_form())
+    assert response.status_code == 303
+    assert _repos()[0].extra_files == []
+
+
+def test_wget_tree_mode_ignores_file_list(admin: TestClient, csrf_token: str) -> None:
+    form = _wget_form(wget_mode="tree", extra_files="https://example.org/pub/a.iso")
+    assert _post(admin, csrf_token, "/repos", form).status_code == 303
+    assert _repos()[0].extra_files == []
+
+
+def test_wget_file_mode_requires_entries(admin: TestClient, csrf_token: str) -> None:
+    response = _post(admin, csrf_token, "/repos", _wget_form(wget_mode="files"))
+    assert response.status_code == 400
+    assert "file list: enter at least one file URL, one per line" in response.text
+    assert _repos() == []
+
+
+def test_wget_file_mode_one_url_per_line(admin: TestClient, csrf_token: str) -> None:
+    form = _wget_form(
+        wget_mode="files",
+        extra_files=(
+            "https://example.org/pub/iso/a.iso\n"
+            "\n"
+            "https://example.org/keys/release.asc -> keys/archive.asc\n"
+        ),
+    )
+    assert _post(admin, csrf_token, "/repos", form).status_code == 303
+    assert _repos()[0].extra_files == [
+        {"url": "https://example.org/pub/iso/a.iso", "path": "pub/iso/a.iso"},
+        {"url": "https://example.org/keys/release.asc", "path": "keys/archive.asc"},
+    ]
+    repo_id = _repos()[0].id
+    page = admin.get(f"/repos/{repo_id}/edit").text
+    assert 'value="files" checked' in page
+    assert "https://example.org/pub/iso/a.iso -&gt; pub/iso/a.iso" in page
+
+
+def test_wget_file_mode_rejects_url_without_file_name(admin: TestClient, csrf_token: str) -> None:
+    form = _wget_form(wget_mode="files", extra_files="https://example.org/pub/")
     response = _post(admin, csrf_token, "/repos", form)
     assert response.status_code == 400
-    assert "wget mirrors need at least one URL and relative path entry" in response.text
+    assert "cannot derive a file name" in response.text
+
+
+def test_wget_file_mode_rejects_duplicate_paths(admin: TestClient, csrf_token: str) -> None:
+    form = _wget_form(
+        wget_mode="files",
+        extra_files="https://a.example.org/x/a.iso\nhttps://b.example.org/x/a.iso",
+    )
+    response = _post(admin, csrf_token, "/repos", form)
+    assert response.status_code == 400
+    assert "several entries write to the same path: x/a.iso" in response.text
+
+
+def test_wget_edit_page_shows_tree_mode(admin: TestClient, csrf_token: str) -> None:
+    assert _post(admin, csrf_token, "/repos", _wget_form(wget_mode="tree")).status_code == 303
+    page = admin.get(f"/repos/{_repos()[0].id}/edit").text
+    assert 'value="tree" checked' in page
 
 
 def test_debmirror_requires_suites_and_sections(admin: TestClient, csrf_token: str) -> None:

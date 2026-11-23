@@ -62,3 +62,6 @@ ul.counters li, ul.plain li { margin: 0.15rem 0; }
 .chip { display: inline-block; margin: 0 0.25rem 0.25rem 0; padding: 0.05rem 0.4rem; border-radius: 4px; background: #eceff4; font-size: 0.8em; }
 fieldset { border: 1px solid var(--border); border-radius: 8px; margin: 0 0 1rem; padding: 0.25rem 1rem 1rem; }
 legend { font-weight: 700; padding: 0 0.35rem; }
+/* wget form: show the fields of the selected download mode (no script needed). */
+form:has(input[name="wget_mode"][value="tree"]:checked) .wget-files-only { display: none; }
+form:has(input[name="wget_mode"][value="files"]:checked) .wget-tree-only { display: none; }
