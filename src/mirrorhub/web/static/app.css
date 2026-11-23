@@ -190,6 +190,9 @@ legend { font-weight: 650; padding: 0 0.4rem; }
 .filters { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; margin: 0 0 1rem; }
 .filters label { margin: 0; font-weight: 500; }
 .filters input, .filters select { width: auto; min-width: 9rem; }
+/* wget form (#51): show the fields of the selected download mode (no script needed). */
+form:has(input[name="wget_mode"][value="tree"]:checked) .wget-files-only { display: none; }
+form:has(input[name="wget_mode"][value="files"]:checked) .wget-tree-only { display: none; }
 
 /* ---- Buttons ---------------------------------------------------------------- */
 
