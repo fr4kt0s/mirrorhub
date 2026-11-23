@@ -96,10 +96,24 @@ def adopt(
             entries = tree.scan_tree(target)
             chosen: ExportMetadata | None = None
             first_failure = ""
+            log_event(
+                logging.DEBUG,
+                "adopt candidates",
+                slug=slug,
+                export_ids=[candidate.name for candidate in candidates],
+                tree_entries=len(entries),
+            )
             for candidate in candidates:
                 metadata = load_metadata(candidate)
                 check_signature(candidate, config.keyring, config.require_signature)
                 found = tree.differences(metadata.inventory, entries)
+                log_event(
+                    logging.DEBUG,
+                    "adopt candidate compared",
+                    slug=slug,
+                    export_id=metadata.export_id,
+                    differences=len(found),
+                )
                 if not found:
                     chosen = metadata
                     break

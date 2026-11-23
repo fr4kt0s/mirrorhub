@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import posixpath
 import re
 import shutil
@@ -18,7 +19,7 @@ from mirrorhub.importer.errors import (
     ToolMissingError,
     VerificationFailed,
 )
-from mirrorhub.importer.logs import LOGGER
+from mirrorhub.importer.logs import log_event
 from mirrorhub.verify import VerificationError, verify
 
 SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -108,6 +109,19 @@ def load_export(directory: Path) -> Export:
         metadata.get("archive_format"), list(metadata["archive_parts"])
     )
     _check_inventory(inventory)
+    log_event(
+        logging.DEBUG,
+        "export verified",
+        slug=slug,
+        export_id=export_id,
+        mode=metadata["mode"],
+        base_export_id=metadata.get("base_export_id"),
+        archive_format=metadata.get("archive_format"),
+        parts=part_names,
+        inventory=len(inventory),
+        payload=len(metadata["payload_paths"]),
+        deleted=len(deleted),
+    )
 
     return Export(
         directory=directory,
@@ -223,6 +237,15 @@ def load_metadata(directory: Path) -> ExportMetadata:
         raise VerificationFailed(f"invalid inventory: {exc}") from exc
 
     base = metadata.get("base_export_id")
+    log_event(
+        logging.DEBUG,
+        "export metadata verified",
+        slug=slug,
+        export_id=export_id,
+        mode=metadata.get("mode"),
+        base_export_id=base,
+        inventory=len(inventory),
+    )
     return ExportMetadata(
         directory=directory,
         slug=slug,
@@ -236,16 +259,23 @@ def load_metadata(directory: Path) -> ExportMetadata:
 def check_signature(directory: Path, keyring: Path | None, require: bool) -> None:
     """Verify MANIFEST.sha256.sig against an independently provisioned keyring."""
     signature = directory / "MANIFEST.sha256.sig"
+    where = {"slug": directory.parent.name, "export_id": directory.name}
     if keyring is None:
         if require:
             raise ConfigError("require_signature is set but no keyring is configured")
         if signature.exists():
-            LOGGER.warning("signature present but not checked (no keyring configured)")
+            log_event(
+                logging.WARNING,
+                "signature present but not checked (no keyring configured)",
+                **where,
+            )
+        else:
+            log_event(logging.DEBUG, "signature not checked (no keyring configured)", **where)
         return
     if not signature.is_file():
         if require:
             raise SignatureError("export has no MANIFEST.sha256.sig")
-        LOGGER.warning("export is unsigned")
+        log_event(logging.WARNING, "export is unsigned", **where)
         return
     gpgv = shutil.which("gpgv")
     if gpgv is None:
@@ -259,3 +289,4 @@ def check_signature(directory: Path, keyring: Path | None, require: bool) -> Non
     if result.returncode != 0:
         detail = result.stderr.decode("utf-8", "replace").strip()
         raise SignatureError(f"signature check failed: {detail}")
+    log_event(logging.DEBUG, "signature verified", keyring=keyring, **where)

@@ -57,6 +57,30 @@ All examples use `python -m mirrorhub.importer`; with the archive, write
 The config path can also be set with `MIRRORHUB_IMPORTER_CONFIG`. See
 `importer.example.toml`.
 
+### Output and log level
+
+The importer writes two kinds of output:
+
+- **stdout, plain text** for people: the plan (`--dry-run`), `applied …`,
+  `nothing to import …`, `status`, `check` results and the first differences. It does
+  not depend on the log level.
+- **stderr, one JSON object per line** for log collection (`ts`, `level`, `event`,
+  plus fields such as `slug` and `export_id`). Error messages (`error: …`) are also
+  printed as plain text on stderr.
+
+`--log-level` (`debug`, `info` (default), `warning`, `error`) controls only the JSON
+lines. `--log-level` and `--config` may be given before or after the command; a value
+after the command wins:
+
+    python -m mirrorhub.importer --config importer.toml import --slug ubuntu --log-level debug
+
+| Level | JSON lines on stderr |
+|---|---|
+| `error` | failures only |
+| `warning` | plus unsigned exports, superseded exports, commit mismatch, tree differences, resumed imports |
+| `info` | plus `staged`, `applied`, `already applied`, `adopted` |
+| `debug` | plus every step: config, pending exports, verification, signature, lock, chain check, plan, each archive part, journal, post-check, tree check |
+
 ## Behaviour
 
 1. `mirrorhub.verify.verify()` runs first, followed by extra checks: slug and export id
