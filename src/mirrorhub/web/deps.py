@@ -13,7 +13,7 @@ from sqlmodel import Session
 from mirrorhub import buildinfo
 from mirrorhub.db import get_engine
 from mirrorhub.models import Admin, AuthSession
-from mirrorhub.security import auth, csrf
+from mirrorhub.security import auth, csrf, validators
 
 log = logging.getLogger("mirrorhub.security")
 
@@ -24,6 +24,7 @@ PRE_COOKIE_TTL_S = 3600
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.filters["ts"] = lambda value: value.strftime("%Y-%m-%d %H:%M:%S") if value else ""
+templates.env.globals["max_extra_files"] = validators.MAX_EXTRA_FILES
 
 
 def _human_bytes(value: int | None) -> str:

@@ -312,6 +312,22 @@ def test_wget_file_mode_rejects_duplicate_paths(admin: TestClient, csrf_token: s
     assert "several entries write to the same path: x/a.iso" in response.text
 
 
+def test_wget_file_mode_accepts_500_files(admin: TestClient, csrf_token: str) -> None:
+    lines = "\n".join(f"https://host{i % 7}.example.org/pub/f{i}.bin" for i in range(500))
+    form = _wget_form(wget_mode="files", extra_files=lines)
+    assert _post(admin, csrf_token, "/repos", form).status_code == 303
+    assert len(_repos()[0].extra_files) == 500
+
+
+def test_wget_file_mode_rejects_501_files(admin: TestClient, csrf_token: str) -> None:
+    lines = "\n".join(f"https://example.org/pub/f{i}.bin" for i in range(501))
+    form = _wget_form(wget_mode="files", extra_files=lines)
+    response = _post(admin, csrf_token, "/repos", form)
+    assert response.status_code == 400
+    assert "extra files: at most 500 entries" in response.text
+    assert "At most 500 files." in response.text
+
+
 def test_wget_edit_page_shows_tree_mode(admin: TestClient, csrf_token: str) -> None:
     assert _post(admin, csrf_token, "/repos", _wget_form(wget_mode="tree")).status_code == 303
     page = admin.get(f"/repos/{_repos()[0].id}/edit").text

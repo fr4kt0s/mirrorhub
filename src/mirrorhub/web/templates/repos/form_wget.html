@@ -39,7 +39,7 @@
     <legend>File list</legend>
     <p class="muted">One file per line. A plain URL is stored under its URL path
       (<code>https://example.com/pub/a.iso</code> → <code>pub/a.iso</code>);
-      write <code>URL -&gt; relative/path</code> to choose the target path. At most 32 files.</p>
+      write <code>URL -&gt; relative/path</code> to choose the target path. At most {{ max_extra_files }} files.</p>
     <label>Files
       <textarea name="extra_files" rows="8" spellcheck="false" placeholder="https://example.com/pub/image.iso&#10;https://example.com/keys/release.asc -&gt; keys/release.asc">{{ values.extra_files }}</textarea>
     </label>
