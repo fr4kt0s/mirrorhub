@@ -25,16 +25,45 @@ from mirrorhub.importer.state import StateStore
 CONFIG_ENV = "MIRRORHUB_IMPORTER_CONFIG"
 
 
+LOG_LEVELS = ("debug", "info", "warning", "error")
+LOG_LEVEL_HELP = (
+    "level of the JSON log lines on stderr (default: info); does not change the "
+    "plain-text output on stdout"
+)
+
+
+def _global_options(parser: argparse.ArgumentParser, *, defaults: bool) -> None:
+    """--config and --log-level, accepted before and after the command.
+
+    Only the main parser sets defaults; on the command parsers they are suppressed, so
+    a value given before the command is kept unless the command repeats the option.
+    """
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None if defaults else argparse.SUPPRESS,
+        help=f"TOML file (or set {CONFIG_ENV})",
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str.lower,
+        choices=LOG_LEVELS,
+        default="info" if defaults else argparse.SUPPRESS,
+        help=LOG_LEVEL_HELP,
+    )
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mirrorhub.importer", description=__doc__)
     parser.add_argument("--version", action="version", version=f"%(prog)s {buildinfo.describe()}")
-    parser.add_argument("--config", type=Path, help=f"TOML file (or set {CONFIG_ENV})")
-    parser.add_argument(
-        "--log-level", default="info", choices=["debug", "info", "warning", "error"]
-    )
+    _global_options(parser, defaults=True)
+    common = argparse.ArgumentParser(add_help=False)
+    _global_options(common, defaults=False)
     commands = parser.add_subparsers(dest="command", required=True)
 
-    run = commands.add_parser("import", help="apply exports from the configured inbox")
+    run = commands.add_parser(
+        "import", parents=[common], help="apply exports from the configured inbox"
+    )
     target = run.add_mutually_exclusive_group(required=True)
     target.add_argument("--slug", help="apply all pending exports of this repository")
     target.add_argument("--export", type=Path, help="apply one export directory")
@@ -62,11 +91,13 @@ def _parser() -> argparse.ArgumentParser:
         "--discard-staging", action="store_true", help="drop another unfinished import"
     )
 
-    status = commands.add_parser("status", help="show receiver state")
+    status = commands.add_parser("status", parents=[common], help="show receiver state")
     status.add_argument("--slug", help="repository slug (default: all)")
 
     check = commands.add_parser(
-        "check", help="compare the tree with the inventory of its last applied export"
+        "check",
+        parents=[common],
+        help="compare the tree with the inventory of its last applied export",
     )
     scope = check.add_mutually_exclusive_group(required=True)
     scope.add_argument("--slug", help="repository slug")
@@ -85,6 +116,7 @@ def _parser() -> argparse.ArgumentParser:
 
     take = commands.add_parser(
         "adopt",
+        parents=[common],
         help="write a lost state file for a tree that matches an export exactly",
     )
     take.add_argument("--slug", required=True, help="repository slug")
@@ -203,9 +235,23 @@ def _import_slug(config: Config, slug: str, options: Options, report: Path | Non
     done = 0
     drift = False
     pending = pending_exports(config, slug)
+    log_event(
+        logging.DEBUG,
+        "pending exports",
+        slug=slug,
+        count=len(pending),
+        export_ids=[path.name for path in pending],
+    )
     for path in pending:
         state = store.load()
         if state.applied(path.name) or state.superseded(path.name):
+            log_event(
+                logging.DEBUG,
+                "export already in history",
+                slug=slug,
+                export_id=path.name,
+                status="applied" if state.applied(path.name) else "superseded",
+            )
             continue
         jumped_by = _jumped_by(path, pending, state.last_export_id)
         if jumped_by is not None:
@@ -236,6 +282,7 @@ def _import_all(config: Config, options: Options, report: Path | None = None) ->
     if options.rebase or options.discard_staging:
         raise ConfigError("--rebase and --discard-staging cannot be used with --all")
     slugs = list_slugs(config)
+    log_event(logging.DEBUG, "repositories in the inbox", slugs=slugs)
     if not slugs:
         print("no repositories in the inbox")
     worst = 0
@@ -283,6 +330,7 @@ def _state_slugs(config: Config) -> list[str]:
 def _check(config: Config, arguments: argparse.Namespace) -> int:
     """Exit 0 if every checked tree matches, 11 if one differs, else the worst error."""
     slugs = _state_slugs(config) if arguments.all_slugs else [arguments.slug]
+    log_event(logging.DEBUG, "checking trees", slugs=slugs, hashed=arguments.hash)
     if not slugs:
         print("no repositories with a receiver state")
     worst = 0
@@ -355,6 +403,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not location:
             raise ConfigError(f"no config file: use --config or set {CONFIG_ENV}")
         config = load_config(Path(location))
+        log_event(
+            logging.DEBUG,
+            "config loaded",
+            command=arguments.command,
+            config=str(location),
+            version=buildinfo.describe(),
+            export_dir=config.export_dir,
+            mirror_root=config.mirror_root,
+            state_dir=config.state_dir,
+            staging_dir=config.staging_dir,
+            keyring=config.keyring,
+            require_signature=config.require_signature,
+        )
         if arguments.command == "status":
             return _status(config, arguments.slug)
         if arguments.command == "check":

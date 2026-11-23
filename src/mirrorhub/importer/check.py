@@ -9,12 +9,14 @@ finds silent corruption. Nothing is changed. Exit code 11 when the tree differs.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from mirrorhub.importer import tree
 from mirrorhub.importer.checks import SLUG_RE, Inventory, load_metadata
 from mirrorhub.importer.config import Config
 from mirrorhub.importer.errors import ChainError, ConfigError, IoFailure
+from mirrorhub.importer.logs import log_event
 from mirrorhub.importer.state import StateStore
 
 
@@ -31,6 +33,7 @@ def _inventory(config: Config, store: StateStore, export_id: str) -> Inventory:
     """The local copy, or the export in the inbox for states written before copies."""
     stored = store.load_inventory(export_id)
     if stored is not None:
+        log_event(logging.DEBUG, "inventory from local copy", slug=store.slug, export_id=export_id)
         return stored
     directory = config.export_dir / store.slug / export_id
     if not (directory / ".done").is_file():
@@ -38,6 +41,7 @@ def _inventory(config: Config, store: StateStore, export_id: str) -> Inventory:
             f"no inventory of {export_id}: no local copy and the export is no longer "
             "in the inbox; the next import or adopt writes one"
         )
+    log_event(logging.DEBUG, "inventory from the inbox", slug=store.slug, export_id=export_id)
     metadata = load_metadata(directory)
     store.save_inventory(export_id, directory / "files.json")
     return metadata.inventory

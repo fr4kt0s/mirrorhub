@@ -261,6 +261,16 @@ def _apply_locked(
     if not resuming:
         target_has_entries = bool(_tree_paths(target))
         check_chain(state, export, target_has_entries, options.rebase)
+        log_event(
+            logging.DEBUG,
+            "chain check passed",
+            slug=export.slug,
+            export_id=export.export_id,
+            mode=export.mode,
+            base_export_id=export.base_export_id,
+            last_applied=state.last_export_id,
+            rebase=replace,
+        )
 
     target.mkdir(parents=True, exist_ok=True)
     config.staging_dir.mkdir(parents=True, exist_ok=True)
@@ -278,8 +288,26 @@ def _apply_locked(
         )
     else:
         plan = build_plan(export, target, replace)
+        log_event(
+            logging.DEBUG,
+            "plan",
+            slug=export.slug,
+            export_id=export.export_id,
+            adds=len(plan.adds),
+            changes=len(plan.changes),
+            deletes=len(plan.deletes),
+        )
         shutil.rmtree(staging, ignore_errors=True)
         files.mkdir(parents=True)
+        log_event(
+            logging.DEBUG,
+            "extracting archive",
+            slug=export.slug,
+            export_id=export.export_id,
+            parts=len(export.parts),
+            compressed=export.compressed,
+            staging=files,
+        )
         try:
             with open_archive(export) as stream:
                 extract_payload(export, stream, files)
@@ -302,11 +330,28 @@ def _apply_locked(
         )
 
     apply_journal(target, files, journal)
+    log_event(
+        logging.DEBUG,
+        "journal applied",
+        slug=export.slug,
+        export_id=export.export_id,
+        deletes=len(journal["deletes"]),
+        installs=len(journal["installs"]),
+        target=target,
+    )
+    full_post_check = options.full_check or export.mode == "full"
     try:
-        post_check(export, target, journal["deletes"], options.full_check or export.mode == "full")
+        post_check(export, target, journal["deletes"], full_post_check)
     except PostCheckError:
         shutil.rmtree(staging, ignore_errors=True)
         raise
+    log_event(
+        logging.DEBUG,
+        "post-check passed",
+        slug=export.slug,
+        export_id=export.export_id,
+        scope="whole tree" if full_post_check else "touched paths",
+    )
 
     store.save_inventory(export.export_id, export.directory / "files.json")
     state.last_export_id = export.export_id
@@ -330,6 +375,14 @@ def _apply_locked(
     checked = options.tree_check and not full  # a full post-check compared everything
     if checked:
         drift = tree.differences(export.inventory, tree.scan_tree(target))
+        log_event(
+            logging.DEBUG,
+            "tree check done",
+            slug=export.slug,
+            export_id=export.export_id,
+            entries=len(export.inventory),
+            differences=len(drift),
+        )
         if drift:
             log_event(
                 logging.WARNING,
@@ -449,6 +502,7 @@ def import_export(export_dir: Path, config: Config, options: Options) -> Outcome
         target = config.mirror_root / export.slug
 
         if options.dry_run:
+            log_event(logging.DEBUG, "dry run, no lock taken", slug=export.slug)
             state = store.load()
             if state.applied(export.export_id):
                 return Outcome(export.export_id, "noop", Plan())
@@ -459,6 +513,7 @@ def import_export(export_dir: Path, config: Config, options: Options) -> Outcome
             return Outcome(export.export_id, "dry-run", build_plan(export, target, replace))
 
         with store.locked():
+            log_event(logging.DEBUG, "lock acquired", slug=export.slug, lock=store.lock_path)
             state = store.load()
             if state.applied(export.export_id):
                 shutil.rmtree(config.staging_dir / export.slug, ignore_errors=True)
