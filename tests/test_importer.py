@@ -755,6 +755,7 @@ def test_version_mismatch_is_a_warning(
         other = build_export(config.export_dir, "20261102T000000Z", "incr", T2, T1, base=ID1)
         _with_sender_commit(other, "bbbbbbbbbbbb")
 
+        _with_sender_commit(same, "aaaaaaa")  # GitHub's 7-digit id: same commit
         with caplog.at_level("WARNING", logger="mirrorhub.importer"):
             assert import_export(same, config, Options()).status == "applied"
             assert "different commits" not in caplog.text

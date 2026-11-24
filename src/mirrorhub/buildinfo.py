@@ -2,7 +2,8 @@
 
 Sources, first match wins:
 
-1. ``MIRRORHUB_COMMIT`` in the environment (override, e.g. for builds without git).
+1. ``MIRRORHUB_COMMIT`` in the environment (override, e.g. for builds without git;
+   the Docker build sets it from the build argument of the same name).
 2. ``mirrorhub/_build.py``, written into the receiver importer archive by
    scripts/build_importer.py.
 3. The ``.git`` directory next to ``src/`` (a source checkout, or the minimal copy of
@@ -76,6 +77,22 @@ def commit() -> str | None:
             return value
     full = resolve_head(_git_dir())
     return full[:SHORT] if full else None
+
+
+MIN_PREFIX = 7  # git's default abbreviation; GitHub shows commits with 7 digits
+
+
+def same_commit(first: str, second: str) -> bool:
+    """True if both ids name the same commit, allowing different abbreviations.
+
+    ``MIRRORHUB_COMMIT`` may be given as 7 digits (GitHub), 12 (``.git`` in the image)
+    or 40; suffixes such as ``-dirty`` must match.
+    """
+    first_id, _, first_suffix = first.strip().lower().partition("-")
+    second_id, _, second_suffix = second.strip().lower().partition("-")
+    if first_suffix != second_suffix or min(len(first_id), len(second_id)) < MIN_PREFIX:
+        return first.strip().lower() == second.strip().lower()
+    return first_id.startswith(second_id) or second_id.startswith(first_id)
 
 
 def describe() -> str:

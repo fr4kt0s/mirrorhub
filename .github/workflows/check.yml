@@ -145,6 +145,22 @@ jobs:
             test "$actual" = "$expected"
           done
 
+      - name: Images build without .git (ZIP/tarball checkout)
+        run: |
+          # git archive leaves out .git, like a GitHub ZIP download.
+          context=$(mktemp -d)
+          git archive HEAD | tar -x -C "$context"
+          test ! -e "$context/.git"
+          report() {
+            docker run --rm --entrypoint python "$1" \
+              -c 'from mirrorhub import buildinfo; print(buildinfo.describe())'
+          }
+          docker build --target base -t mirrorhub-nogit "$context"
+          report mirrorhub-nogit | tee /dev/stderr | grep -q '(unknown commit)'
+          docker build --target base --build-arg MIRRORHUB_COMMIT=abc1234 \
+            -t mirrorhub-nogit-arg "$context"
+          report mirrorhub-nogit-arg | tee /dev/stderr | grep -q '(abc1234)'
+
       - name: Web trusts only the proxy
         run: |
           test "$(docker compose exec -T web printenv FORWARDED_ALLOW_IPS)" = "172.31.254.2"

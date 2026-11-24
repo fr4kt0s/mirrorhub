@@ -26,8 +26,15 @@ WORKDIR /app
 COPY alembic.ini /app/alembic.ini
 COPY migrations /app/migrations
 COPY src /app/src
-# Filtered by .dockerignore to HEAD and branch refs: mirrorhub.buildinfo reads the commit.
-COPY .git /app/.git
+# Build commit for mirrorhub.buildinfo (page footer, exports, importer warning).
+# Optional: a checkout without .git (ZIP/tarball, git archive, a worktree whose .git
+# is a file) still builds and reports "unknown commit". .dockerignore filters .git to
+# HEAD and branch refs; the bind mount (not COPY) tolerates a missing .git.
+# MIRRORHUB_COMMIT (build arg, e.g. from docker compose) overrides .git.
+ARG MIRRORHUB_COMMIT=""
+ENV MIRRORHUB_COMMIT=${MIRRORHUB_COMMIT}
+RUN --mount=type=bind,target=/tmp/build-context \
+    if [ -d /tmp/build-context/.git ]; then cp -a /tmp/build-context/.git /app/.git; fi
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh
 USER mirror
