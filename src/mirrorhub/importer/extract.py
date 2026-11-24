@@ -11,6 +11,7 @@ from typing import IO, Any
 
 from mirrorhub.importer.checks import Export, safe_link, safe_relative
 from mirrorhub.importer.errors import UnsafeArchiveError
+from mirrorhub.importer.progress import Progress
 
 CHUNK = 1024 * 1024
 
@@ -57,7 +58,9 @@ def _write_file(
     os.utime(dest, ns=(entry["mtime_ns"], entry["mtime_ns"]))
 
 
-def extract_payload(export: Export, stream: IO[bytes], staging: Path) -> None:
+def extract_payload(
+    export: Export, stream: IO[bytes], staging: Path, progress: Progress | None = None
+) -> None:
     """Stream the tar; accept only the regular files and symlinks promised by the manifest.
 
     The tar is never passed to extractall; every member is checked and written by hand.
@@ -91,8 +94,13 @@ def extract_payload(export: Export, stream: IO[bytes], staging: Path) -> None:
                     raise UnsafeArchiveError(f"file does not match inventory: {name!r}")
                 directories.ensure(dest.parent)
                 _write_file(tar, member, dest, entry)
+                if progress is not None:
+                    progress.advance(1, member.size)
+                continue
             else:
                 raise UnsafeArchiveError(f"unsupported member type for {name!r}: {member.type!r}")
+            if progress is not None:
+                progress.advance()
     missing = export.payload - seen
     if missing:
         raise UnsafeArchiveError(f"archive is missing {len(missing)} payload members")

@@ -49,6 +49,7 @@ from mirrorhub.importer.errors import (
 )
 from mirrorhub.importer.extract import extract_payload
 from mirrorhub.importer.logs import log_event
+from mirrorhub.importer.progress import Progress
 from mirrorhub.importer.reader import open_archive
 from mirrorhub.importer.state import RepoState, StateStore
 
@@ -184,13 +185,20 @@ def post_check(
     for relative in journal_deletes:
         if os.path.lexists(target / relative):
             raise PostCheckError(f"deleted path still exists: {relative}")
+    slug, export_id = export.slug, export.export_id
     if not whole_tree:
+        progress = Progress(
+            "post-check", files_total=len(export.payload), slug=slug, export_id=export_id
+        )
         for relative in sorted(export.payload):
             _check_entry(target, relative, export.inventory[relative], hash_contents)
+            progress.advance()
+        progress.finish()
         return
-    found = tree.differences(export.inventory, tree.scan_tree(target))
+    entries = tree.scan(target, export.inventory, slug=slug, export_id=export_id)
+    found = tree.differences(export.inventory, entries)
     if not found and hash_contents:
-        found = tree.content_differences(export.inventory, target)
+        found = tree.hash_contents(export.inventory, target, slug=slug, export_id=export_id)
     if found:
         raise PostCheckError(tree.summary(f"files.json of {export.export_id}", found))
 
@@ -268,7 +276,9 @@ def _sync_filesystem(path: Path) -> None:
         os.close(descriptor)
 
 
-def apply_journal(target: Path, files: Path, journal: dict[str, Any]) -> None:
+def apply_journal(
+    target: Path, files: Path, journal: dict[str, Any], progress: Progress | None = None
+) -> None:
     """Idempotent: deletes first, then per-file replace from staging.
 
     Parent directories of installs are checked (and created) once per directory;
@@ -286,6 +296,8 @@ def apply_journal(target: Path, files: Path, journal: dict[str, Any]) -> None:
             raise IoFailure(f"cannot delete, path is a directory: {relative}")
         path.unlink()
         _prune(target, relative)
+        if progress is not None:
+            progress.advance()
     checked: set[str] = set()
     for relative in journal["installs"]:
         source = files / relative
@@ -301,6 +313,8 @@ def apply_journal(target: Path, files: Path, journal: dict[str, Any]) -> None:
         if destination.is_dir() and not destination.is_symlink():
             raise IoFailure(f"cannot install over a directory: {relative}")
         os.replace(source, destination)
+        if progress is not None:
+            progress.advance()
 
 
 def _same_filesystem(first: Path, second: Path) -> bool:
@@ -398,7 +412,14 @@ def _apply_locked(
             files=len(export.payload),
         )
 
-    apply_journal(target, files, journal)
+    installing = Progress(
+        "installing",
+        files_total=len(journal["deletes"]) + len(journal["installs"]),
+        slug=export.slug,
+        export_id=export.export_id,
+    )
+    apply_journal(target, files, journal, installing)
+    installing.finish()
     log_event(
         logging.DEBUG,
         "journal applied",
@@ -449,7 +470,8 @@ def _apply_locked(
     drift: list[str] = []
     checked = options.tree_check and not full_post_check  # that compared everything
     if checked:
-        drift = tree.differences(export.inventory, tree.scan_tree(target))
+        entries = tree.scan(target, export.inventory, slug=export.slug, export_id=export.export_id)
+        drift = tree.differences(export.inventory, entries)
         log_tree_check(export.slug, export.export_id, len(export.inventory), drift)
     return Outcome(export.export_id, "applied", plan, drift, checked, full_post_check)
 
@@ -481,9 +503,18 @@ def _extract(export: Export, files: Path, options: Options) -> None:
     fails, they are hashed now so that a damaged archive is reported as such
     (verification failure) and not as whatever the damage looked like to tar or zstd.
     """
+    staged = [export.inventory[path] for path in export.payload]
+    progress = Progress(
+        "staging",
+        files_total=len(staged),
+        bytes_total=sum(entry["size"] for entry in staged if entry["type"] == "file"),
+        slug=export.slug,
+        export_id=export.export_id,
+    )
     try:
         with open_archive(export) as stream:
-            extract_payload(export, stream, files)
+            extract_payload(export, stream, files, progress)
+        progress.finish()
     except VerificationFailed:
         raise
     except (UnsafeArchiveError, tarfile.TarError, EOFError) as exc:

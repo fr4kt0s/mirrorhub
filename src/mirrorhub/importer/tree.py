@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from mirrorhub.importer.checks import SKIP_DIRECTORIES, Inventory
+from mirrorhub.importer.progress import Progress
 
 SHOWN_DIFFERENCES = 10
 
@@ -28,7 +29,7 @@ class TreeEntry:
     target: str | None
 
 
-def scan_tree(root: Path) -> dict[str, TreeEntry]:
+def scan_tree(root: Path, progress: Progress | None = None) -> dict[str, TreeEntry]:
     """lstat every entry below root once; symlinked directories count as entries."""
     found: dict[str, TreeEntry] = {}
     for directory, names, filenames in os.walk(root, followlinks=False):
@@ -46,6 +47,8 @@ def scan_tree(root: Path) -> dict[str, TreeEntry]:
                 kind, target = "other", None
             relative = path.relative_to(root).as_posix()
             found[relative] = TreeEntry(kind, info.st_size, info.st_mtime_ns, target)
+            if progress is not None:
+                progress.advance()
     return found
 
 
@@ -70,7 +73,10 @@ def differences(inventory: Inventory, tree: dict[str, TreeEntry]) -> list[str]:
 
 
 def content_differences(
-    inventory: Inventory, root: Path, skip: frozenset[str] = frozenset()
+    inventory: Inventory,
+    root: Path,
+    skip: frozenset[str] = frozenset(),
+    progress: Progress | None = None,
 ) -> list[str]:
     """SHA-256 of every regular file against the inventory (reads the whole tree).
 
@@ -84,8 +90,46 @@ def content_differences(
         with (root / relative).open("rb") as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
+                if progress is not None:
+                    progress.advance(0, len(chunk))
+        if progress is not None:
+            progress.advance(1)
         if digest.hexdigest() != entry["sha256"]:
             found.append(f"sha256: {relative}")
+    return found
+
+
+def scan(root: Path, inventory: Inventory, slug: str, export_id: str) -> dict[str, TreeEntry]:
+    """scan_tree with progress lines; the inventory size is the expected total."""
+    progress = Progress("tree scan", files_total=len(inventory), slug=slug, export_id=export_id)
+    entries = scan_tree(root, progress)
+    progress.finish()
+    return entries
+
+
+def hash_contents(
+    inventory: Inventory,
+    root: Path,
+    skip: frozenset[str] = frozenset(),
+    *,
+    slug: str,
+    export_id: str,
+) -> list[str]:
+    """content_differences with progress lines (files and bytes to hash as totals)."""
+    files = [
+        entry
+        for relative, entry in inventory.items()
+        if entry["type"] == "file" and relative not in skip
+    ]
+    progress = Progress(
+        "content hash",
+        files_total=len(files),
+        bytes_total=sum(entry["size"] for entry in files),
+        slug=slug,
+        export_id=export_id,
+    )
+    found = content_differences(inventory, root, skip, progress)
+    progress.finish()
     return found
 
 

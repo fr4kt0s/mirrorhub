@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -21,6 +22,7 @@ import pytest
 from mirrorhub import verify as verify_module
 from mirrorhub.importer import apply as apply_module
 from mirrorhub.importer import checks as checks_module
+from mirrorhub.importer import progress as progress_module
 from mirrorhub.importer import tree as tree_module
 from mirrorhub.importer.adopt import adopt
 from mirrorhub.importer.apply import Options, import_export
@@ -1095,8 +1097,8 @@ def test_full_post_check_finds_a_file_missing_after_apply(
 ) -> None:
     real_apply = apply_module.apply_journal
 
-    def losing_apply(target: Path, files: Path, journal: dict[str, Any]) -> None:
-        real_apply(target, files, journal)
+    def losing_apply(target: Path, files: Path, journal: dict[str, Any], *rest: Any) -> None:
+        real_apply(target, files, journal, *rest)
         (target / "pool/b.deb").unlink()
 
     monkeypatch.setattr(apply_module, "apply_journal", losing_apply)
@@ -1111,8 +1113,8 @@ def test_full_check_finds_content_changed_after_apply(
 ) -> None:
     real_apply = apply_module.apply_journal
 
-    def corrupting_apply(target: Path, files: Path, journal: dict[str, Any]) -> None:
-        real_apply(target, files, journal)
+    def corrupting_apply(target: Path, files: Path, journal: dict[str, Any], *rest: Any) -> None:
+        real_apply(target, files, journal, *rest)
         path = target / "pool/b.deb"
         path.write_text("bXb")  # same size and mtime: only a re-hash sees it
         os.utime(path, ns=(BASE_MTIME, BASE_MTIME))
@@ -1215,9 +1217,9 @@ def test_tree_check_runs_once_after_the_last_pending_export(
     scans = {"count": 0}
     real_scan = tree_module.scan_tree
 
-    def counting_scan(root: Path) -> Any:
+    def counting_scan(root: Path, *rest: Any) -> Any:
         scans["count"] += 1
-        return real_scan(root)
+        return real_scan(root, *rest)
 
     monkeypatch.setattr(tree_module, "scan_tree", counting_scan)
     inbox, base = _inbox_cli(tmp_path)
@@ -1240,3 +1242,94 @@ def test_tree_check_runs_once_after_the_last_pending_export(
     assert (tmp_path / "rep" / "ubuntu" / "missing.txt").read_text() == "pool/a.deb\n"
     assert main([*base, "import", "--slug", "ubuntu", "--no-tree-check"]) == 0
     assert scans["count"] == 2
+
+
+# Progress lines for long phases
+
+
+class FakeClock:
+    def __init__(self, step: float) -> None:
+        self.now = 0.0
+        self.step = step
+
+    def __call__(self) -> float:
+        self.now += self.step
+        return self.now
+
+
+def _record_progress(monkeypatch: pytest.MonkeyPatch, step: float, interval: float) -> list[Any]:
+    events: list[Any] = []
+
+    def record(level: int, event: str, **fields: object) -> None:
+        events.append((level, event, fields))
+
+    monkeypatch.setattr(progress_module, "log_event", record)
+    monkeypatch.setattr(progress_module, "_clock", FakeClock(step))
+    monkeypatch.setattr(progress_module, "_interval", interval)
+    return events
+
+
+def test_progress_logs_once_per_interval_with_totals(monkeypatch: pytest.MonkeyPatch) -> None:
+    events = _record_progress(monkeypatch, step=4.0, interval=10.0)
+    progress = progress_module.Progress("staging", files_total=10, bytes_total=1000, slug="u")
+    for _ in range(10):
+        progress.advance(1, 100)  # started at 4; advances at 8, 12, 16, ... 44
+    progress.finish()
+
+    lines = [fields for _, event, fields in events if event == "progress"]
+    assert [line["files"] for line in lines] == [3, 6, 9]  # at 16, 28 and 40
+    first = lines[0]
+    assert first["phase"] == "staging" and first["slug"] == "u"
+    assert first["files_total"] == 10 and first["bytes_total"] == 1000
+    assert first["bytes"] == 300 and first["percent"] == 30.0
+    assert first["elapsed_s"] == 12 and first["eta_s"] == 28
+    level, event, done = events[-1]
+    assert (level, event) == (logging.INFO, "phase done") and done["files"] == 10
+
+
+def test_short_phase_and_interval_zero_stay_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
+    events = _record_progress(monkeypatch, step=1.0, interval=30.0)
+    short = progress_module.Progress("installing", files_total=3)
+    for _ in range(3):
+        short.advance()
+    short.finish()
+    assert [(level, event) for level, event, _ in events] == [(logging.DEBUG, "phase done")]
+
+    events.clear()
+    monkeypatch.setattr(progress_module, "_interval", 0.0)
+    off = progress_module.Progress("tree scan")
+    for _ in range(100):
+        off.advance()
+    assert [event for _, event, _ in events] == []
+    with pytest.raises(ValueError):
+        progress_module.configure(-1)
+
+
+def test_import_reports_progress_for_every_phase(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events = _record_progress(monkeypatch, step=1.0, interval=0.5)  # a line per step
+    tree = _many_files(20)
+    full = build_export(config.export_dir, "20261101T000000Z", "full", tree)
+    assert import_export(full, config, Options(full_check=True)).status == "applied"
+
+    phases = {fields["phase"] for _, event, fields in events if event == "progress"}
+    assert phases == {"staging", "installing", "tree scan", "content hash"}
+    staging = [f for _, e, f in events if e == "progress" and f["phase"] == "staging"]
+    assert staging[-1]["files"] == 21 and staging[-1]["files_total"] == 21
+    assert staging[-1]["bytes"] == staging[-1]["bytes_total"]
+    assert staging[-1]["export_id"] == ID1 and staging[-1]["slug"] == "ubuntu"
+    done = {f["phase"] for level, e, f in events if e == "phase done" and level == logging.INFO}
+    assert done == phases
+
+
+def test_progress_interval_option(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(progress_module, "_interval", progress_module.DEFAULT_INTERVAL)
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu", "--progress-interval", "0"]) == 0
+    assert progress_module.interval() == 0
+    assert main([*base, "--progress-interval", "5", "status"]) == 0
+    assert progress_module.interval() == 5
+    with pytest.raises(SystemExit):
+        main([*base, "status", "--progress-interval", "-1"])

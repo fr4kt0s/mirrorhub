@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from mirrorhub import buildinfo
-from mirrorhub.importer import tree
+from mirrorhub.importer import progress, tree
 from mirrorhub.importer.adopt import adopt
 from mirrorhub.importer.apply import (
     Options,
@@ -32,6 +32,19 @@ CONFIG_ENV = "MIRRORHUB_IMPORTER_CONFIG"
 
 
 LOG_LEVELS = ("debug", "info", "warning", "error")
+
+
+def _interval(value: str) -> float:
+    seconds = float(value)
+    if seconds < 0:
+        raise argparse.ArgumentTypeError("must be 0 (off) or a positive number of seconds")
+    return seconds
+
+
+PROGRESS_HELP = (
+    "seconds between JSON progress lines on stderr during long phases (staging, "
+    f"installing, tree scans, hashing); 0 turns them off (default: {progress.DEFAULT_INTERVAL:g})"
+)
 LOG_LEVEL_HELP = (
     "level of the JSON log lines on stderr (default: info); does not change the "
     "plain-text output on stdout"
@@ -56,6 +69,13 @@ def _global_options(parser: argparse.ArgumentParser, *, defaults: bool) -> None:
         choices=LOG_LEVELS,
         default="info" if defaults else argparse.SUPPRESS,
         help=LOG_LEVEL_HELP,
+    )
+    parser.add_argument(
+        "--progress-interval",
+        type=_interval,
+        metavar="SECONDS",
+        default=progress.DEFAULT_INTERVAL if defaults else argparse.SUPPRESS,
+        help=PROGRESS_HELP,
     )
 
 
@@ -440,6 +460,7 @@ def _slug_of(arguments: argparse.Namespace) -> str | None:
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     configure_logging(arguments.log_level)
+    progress.configure(arguments.progress_interval)
     try:
         location = arguments.config or os.environ.get(CONFIG_ENV)
         if not location:

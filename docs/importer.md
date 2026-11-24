@@ -78,8 +78,27 @@ after the command wins:
 |---|---|
 | `error` | failures only |
 | `warning` | plus unsigned exports, superseded exports, commit mismatch, tree differences, resumed imports |
-| `info` | plus `staged`, `applied`, `already applied`, `adopted` |
-| `debug` | plus every step: config, pending exports, verification, signature, lock, chain check, plan, each archive part, journal, post-check, tree check |
+| `info` | plus `staged`, `applied`, `already applied`, `adopted`, `progress` and `phase done` of long phases |
+| `debug` | plus every step: config, pending exports, verification, signature, lock, chain check, plan, each archive part, staging synced, journal, post-check, tree check, `phase done` of short phases |
+
+### Progress of long phases
+
+Long phases log a `progress` line every 30 seconds (`--progress-interval SECONDS`,
+before or after the command; `0` turns it off). Phases: `staging` (extracting the
+archive), `installing` (deletes and renames into the tree), `post-check` (touched
+paths), `tree scan` (post-check of a full export, tree check, `check`, `adopt`),
+`content hash` (`--full-check`, `check --hash`, `adopt --hash`). Each line carries
+`files`, `files_total`, for staging and hashing also `bytes`, `bytes_total` and
+`rate_mib_s`, plus `percent`, `elapsed_s` and `eta_s`:
+
+    {"event": "progress", "phase": "staging", "slug": "ubuntu", "files": 120000,
+     "files_total": 480000, "bytes": 51539607552, "bytes_total": 214748364800,
+     "percent": 24.0, "rate_mib_s": 81.9, "elapsed_s": 600, "eta_s": 1900, ...}
+
+A phase that logged progress ends with `phase done` (files, bytes, duration, rate)
+at info level; a phase shorter than the interval logs it at debug level only. For a
+tree scan the total is the number of entries in `files.json`, so `percent` is an
+estimate if the tree has extra paths.
 
 ## Behaviour
 
