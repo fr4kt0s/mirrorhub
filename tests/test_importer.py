@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,7 @@ import pytest
 from mirrorhub import verify as verify_module
 from mirrorhub.importer import apply as apply_module
 from mirrorhub.importer import checks as checks_module
+from mirrorhub.importer import events as events_module
 from mirrorhub.importer import logs as logs_module
 from mirrorhub.importer import progress as progress_module
 from mirrorhub.importer import tree as tree_module
@@ -1418,3 +1420,154 @@ def test_auto_log_format_is_json_unless_stderr_is_a_terminal(
     assert main([*base, "status", "--log-level", "debug", "--log-format", "text"]) == 0
     err = capsys.readouterr().err
     assert " DEBUG   config loaded " in err and not err.startswith("{")
+
+
+# Event files for monitoring (events_dir, docs/checkmk.md)
+
+
+def _events_cli(tmp_path: Path, extra: str = "") -> tuple[Path, list[str], Path]:
+    settings = tmp_path / "importer.toml"
+    settings.write_text(
+        'export_dir = "in"\nmirror_root = "out"\nstate_dir = "st"\nevents_dir = "ev"\n' + extra
+    )
+    return tmp_path / "in", ["--config", str(settings)], tmp_path / "ev"
+
+
+def _events(directory: Path) -> list[dict[str, Any]]:
+    assert not [path for path in directory.iterdir() if path.name.startswith(".")]
+    return [json.loads(path.read_text()) for path in sorted(directory.glob("*.json"))]
+
+
+@pytest.fixture(autouse=True)
+def _events_off() -> Any:
+    yield
+    events_module.configure(None)
+
+
+def test_no_event_files_without_events_dir(tmp_path: Path) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    assert not events_module.enabled()
+    assert not list(tmp_path.rglob("*importer-ubuntu*"))
+
+
+def test_import_writes_events_for_applied_exports_and_tree_checks(tmp_path: Path) -> None:
+    inbox, base, directory = _events_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+
+    found = _events(directory)
+    kinds = [(event["event"], event.get("export_id"), event.get("origin")) for event in found]
+    assert kinds == [
+        ("import_applied", ID1, None),
+        ("tree_check", ID1, "post-check"),
+        ("import_applied", ID2, None),
+        ("tree_check", ID2, "import"),
+        ("import_run", None, None),
+    ]
+    full, _, incr, check, run = found
+    assert full["source"] == "importer" and full["repo"] == "ubuntu" and full["schema"] == 1
+    assert full["export_mode"] == "full" and full["base_export_id"] is None
+    assert full["payload_count"] == 4 and full["tree_verified"] is True
+    assert incr["export_mode"] == "incr" and incr["base_export_id"] == ID1
+    assert incr["payload_count"] == 3 and incr["deleted_count"] == 1
+    assert incr["tree_verified"] is False and incr["duration_s"] >= 0
+    assert check["differences"] == 0 and check["entries"] == 4 and check["hashed"] is False
+    assert run["repo"] == "ubuntu" and run["scope"] == "slug ubuntu" and run["exit_code"] == 0
+    assert full["time"].endswith("Z") and full["importer_version"]
+
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0  # nothing pending
+    assert [event["event"] for event in _events(directory)][-1] == "import_run"
+    assert len(_events(directory)) == 6
+
+
+def test_failed_import_names_the_export(tmp_path: Path) -> None:
+    inbox, base, directory = _events_cli(tmp_path)
+    export = build_export(inbox, "20261101T000000Z", "full", T1)
+    raw = bytearray((export / "data.tar").read_bytes())
+    raw[raw.index(b"bbb")] = ord("x")
+    (export / "data.tar").write_bytes(bytes(raw))
+
+    assert main([*base, "import", "--all"]) == 3
+
+    failed, run = _events(directory)
+    assert failed["event"] == "import_failed" and failed["export_id"] == ID1
+    assert failed["error_kind"] == "VerificationFailed" and failed["exit_code"] == 3
+    assert "checksum mismatch" in failed["error"]
+    assert run["event"] == "import_run" and run["exit_code"] == 3 and run["scope"] == "all"
+
+
+def test_superseded_export_and_dry_run(tmp_path: Path) -> None:
+    inbox, base, directory = _events_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu", "--no-tree-check"]) == 0
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    build_export(inbox, "20261104T000000Z", "incr", T3, T1, base=ID1)
+    before = len(_events(directory))
+
+    assert main([*base, "import", "--slug", "ubuntu", "--dry-run"]) == 0
+    assert len(_events(directory)) == before
+
+    assert main([*base, "import", "--slug", "ubuntu", "--no-tree-check"]) == 0
+    new = _events(directory)[before:]
+    assert [event["event"] for event in new] == [
+        "import_superseded",
+        "import_applied",
+        "import_run",
+    ]
+    assert new[0]["export_id"] == ID2 and new[0]["superseded_by"] == SINCE
+
+
+def test_check_writes_tree_check_and_check_failed(tmp_path: Path) -> None:
+    inbox, base, directory = _events_cli(tmp_path)
+    assert main([*base, "check", "--slug", "ubuntu"]) == 5  # nothing applied yet
+    (failed,) = _events(directory)
+    assert failed["event"] == "check_failed" and failed["error_kind"] == "ChainError"
+
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    (tmp_path / "out" / "ubuntu" / "pool/a.deb").unlink()
+    (tmp_path / "out" / "ubuntu" / "pool/x.deb").write_text("x")
+    assert main([*base, "check", "--slug", "ubuntu", "--hash"]) == 11
+
+    check = _events(directory)[-1]
+    assert check["event"] == "tree_check" and check["origin"] == "check"
+    assert check["hashed"] is True and check["differences"] == 2
+    assert check["counts"] == {"extra": 1, "missing": 1} and check["export_id"] == ID1
+
+
+def test_old_event_files_are_pruned_and_write_errors_do_not_fail(tmp_path: Path) -> None:
+    _, base, directory = _events_cli(tmp_path, "events_keep_days = 7\n")
+    directory.mkdir()
+    old, recent, other = directory / "old.json", directory / "recent.json", directory / "x.txt"
+    for path in (old, recent, other):
+        path.write_text("{}")
+    stamp = time.time() - 8 * 86400
+    os.utime(old, (stamp, stamp))
+    os.utime(other, (stamp, stamp))
+    assert main([*base, "status"]) == 0
+    assert not old.exists() and recent.exists() and other.exists()
+
+    blocked_base = tmp_path / "blocked"
+    blocked_base.mkdir()
+    (blocked_base / "ev").write_text("not a directory")
+    settings = blocked_base / "importer.toml"
+    settings.write_text(
+        'export_dir = "in"\nmirror_root = "out"\nstate_dir = "st"\nevents_dir = "ev"\n'
+    )
+    build_export(blocked_base / "in", "20261101T000000Z", "full", T1)
+    assert main(["--config", str(settings), "import", "--slug", "ubuntu"]) == 0
+
+
+def test_events_keep_days_must_be_a_non_negative_integer(tmp_path: Path) -> None:
+    settings = tmp_path / "importer.toml"
+    for value in ("-1", '"7"', "true"):
+        settings.write_text(
+            'export_dir = "in"\nmirror_root = "out"\nstate_dir = "st"\n'
+            f"events_keep_days = {value}\n"
+        )
+        with pytest.raises(ConfigError, match="events_keep_days"):
+            load_config(settings)

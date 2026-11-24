@@ -8,11 +8,12 @@ import json
 import logging
 import os
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
 from mirrorhub import buildinfo
-from mirrorhub.importer import progress, tree
+from mirrorhub.importer import events, progress, tree
 from mirrorhub.importer.adopt import adopt
 from mirrorhub.importer.apply import (
     Options,
@@ -270,6 +271,79 @@ def _jumped_by(path: Path, pending: list[Path], last: str | None) -> str | None:
     return None
 
 
+def _mode_of(export_id: str) -> str:
+    return export_id.rsplit("-", 1)[-1]
+
+
+def _emit_outcome(
+    slug: str,
+    path: Path,
+    outcome: Outcome,
+    started: float,
+    options: Options,
+    jumped_by: str | None = None,
+) -> None:
+    """Event files for one export: applied (plus tree verified), superseded."""
+    if options.dry_run:
+        return
+    if outcome.status == "superseded":
+        events.emit("import_superseded", slug, export_id=outcome.export_id, superseded_by=jumped_by)
+    if outcome.status != "applied":
+        return
+    plan = outcome.plan
+    events.emit(
+        "import_applied",
+        slug,
+        export_id=outcome.export_id,
+        export_mode=_mode_of(outcome.export_id),
+        base_export_id=_base_of(path),
+        payload_count=len(plan.adds) + len(plan.changes),
+        deleted_count=len(plan.deletes),
+        duration_s=round(time.monotonic() - started, 1),
+        tree_verified=outcome.whole_tree_checked,
+    )
+    if outcome.whole_tree_checked:  # the post-check compared the whole tree
+        _emit_tree_check(slug, outcome.export_id, "post-check", [], hashed=options.full_check)
+    elif outcome.tree_checked:
+        _emit_tree_check(slug, outcome.export_id, "import", outcome.drift, hashed=False)
+
+
+def _emit_tree_check(
+    slug: str,
+    export_id: str,
+    origin: str,
+    found: list[str],
+    *,
+    hashed: bool,
+    entries: int | None = None,
+) -> None:
+    events.emit(
+        "tree_check",
+        slug,
+        export_id=export_id,
+        origin=origin,
+        hashed=hashed,
+        differences=len(found),
+        counts=events.count_kinds(found),
+        entries=entries,
+    )
+
+
+def _emit_failure(kind: str, slug: str | None, exc: ImporterError, **fields: object) -> None:
+    """One failure event per error, even if it passes several handlers."""
+    if getattr(exc, "event_written", False):
+        return
+    events.emit(
+        kind,
+        slug,
+        error=str(exc),
+        error_kind=type(exc).__name__,
+        exit_code=exc.exit_code,
+        **fields,
+    )
+    exc.event_written = True  # type: ignore[attr-defined]
+
+
 def _report(directory: Path | None, slug: str, export_id: str, drift: list[str]) -> None:
     if directory is None:
         return
@@ -281,6 +355,9 @@ def _tree_check_after(config: Config, slug: str, report: Path | None) -> bool:
     """Quick comparison of the tree with the last applied export; True if it differs."""
     result = check_tree(config, slug)
     log_tree_check(slug, result.export_id, result.entries, result.differences)
+    _emit_tree_check(
+        slug, result.export_id, "import", result.differences, hashed=False, entries=result.entries
+    )
     _print_drift(result.export_id, result.differences)
     _report(report, slug, result.export_id, result.differences)
     return bool(result.differences)
@@ -296,55 +373,68 @@ def _import_slug(config: Config, slug: str, options: Options, report: Path | Non
     The quick tree check runs once, after the last applied export, not after each one:
     every walk of a large tree costs one lstat per file. It is skipped when the last
     applied export's post-check already compared the whole tree (full export).
+
+    With events_dir set, every applied or superseded export, the tree check and a
+    failure (with the export it happened on) are written as event files.
     """
     store = StateStore(config.state_dir, slug)
     done = 0
     last_applied: Outcome | None = None
     tree_check = options.tree_check
     options = dataclasses.replace(options, tree_check=False)
-    pending = pending_exports(config, slug)
-    log_event(
-        logging.DEBUG,
-        "pending exports",
-        slug=slug,
-        count=len(pending),
-        export_ids=[path.name for path in pending],
-    )
-    for path in pending:
-        state = store.load()
-        if state.applied(path.name) or state.superseded(path.name):
-            log_event(
-                logging.DEBUG,
-                "export already in history",
-                slug=slug,
-                export_id=path.name,
-                status="applied" if state.applied(path.name) else "superseded",
-            )
-            continue
-        jumped_by = _jumped_by(path, pending, state.last_export_id)
-        if jumped_by is not None:
-            outcome = skip_jumped(path, config, options, jumped_by)
-        else:
-            outcome = import_export(path, config, options)
-        _print(outcome, options.dry_run)
-        done += 1
-        if outcome.status == "applied":
-            last_applied = outcome
-        if outcome.status == "superseded":
-            continue  # recorded (or, in a dry run, reported) and skipped
-        if options.dry_run:
-            log_event(
-                logging.INFO,
-                "dry-run plans only the first pending export",
-                slug=slug,
-            )
-            break
-        options = dataclasses.replace(options, rebase=False, discard_staging=False)
-    if done == 0:
-        print(f"nothing to import for {slug}")
-    if tree_check and last_applied is not None and not last_applied.whole_tree_checked:
-        return _tree_check_after(config, slug, report)
-    return False
+    current: str | None = None
+    try:
+        pending = pending_exports(config, slug)
+        log_event(
+            logging.DEBUG,
+            "pending exports",
+            slug=slug,
+            count=len(pending),
+            export_ids=[path.name for path in pending],
+        )
+        for path in pending:
+            state = store.load()
+            if state.applied(path.name) or state.superseded(path.name):
+                log_event(
+                    logging.DEBUG,
+                    "export already in history",
+                    slug=slug,
+                    export_id=path.name,
+                    status="applied" if state.applied(path.name) else "superseded",
+                )
+                continue
+            current = path.name
+            started = time.monotonic()
+            jumped_by = _jumped_by(path, pending, state.last_export_id)
+            if jumped_by is not None:
+                outcome = skip_jumped(path, config, options, jumped_by)
+            else:
+                outcome = import_export(path, config, options)
+            _print(outcome, options.dry_run)
+            _emit_outcome(slug, path, outcome, started, options, jumped_by)
+            current = None
+            done += 1
+            if outcome.status == "applied":
+                last_applied = outcome
+            if outcome.status == "superseded":
+                continue  # recorded (or, in a dry run, reported) and skipped
+            if options.dry_run:
+                log_event(
+                    logging.INFO,
+                    "dry-run plans only the first pending export",
+                    slug=slug,
+                )
+                break
+            options = dataclasses.replace(options, rebase=False, discard_staging=False)
+        if done == 0:
+            print(f"nothing to import for {slug}")
+        if tree_check and last_applied is not None and not last_applied.whole_tree_checked:
+            return _tree_check_after(config, slug, report)
+        return False
+    except ImporterError as exc:
+        if not options.dry_run:
+            _emit_failure("import_failed", slug, exc, export_id=current)
+        raise
 
 
 def _import_all(config: Config, options: Options, report: Path | None = None) -> int:
@@ -384,16 +474,53 @@ def _run_import(config: Config, arguments: argparse.Namespace) -> int:
     )
     report = arguments.drift_output
     if arguments.export is not None:
-        outcome = import_export(arguments.export, config, options)
+        path = Path(os.path.abspath(arguments.export))
+        slug = path.parent.name
+        started = time.monotonic()
+        try:
+            outcome = import_export(path, config, options)
+        except ImporterError as exc:
+            if not options.dry_run:
+                _emit_failure("import_failed", slug, exc, export_id=path.name)
+            raise
         _print(outcome, options.dry_run)
+        _emit_outcome(slug, path, outcome, started, options)
         if outcome.tree_checked:
-            slug = Path(os.path.abspath(arguments.export)).parent.name
             _report(report, slug, outcome.export_id, outcome.drift)
         return DriftError.exit_code if outcome.drift else 0
     if arguments.all_slugs:
         return _import_all(config, options, report)
     drift = _import_slug(config, arguments.slug, options, report)
     return DriftError.exit_code if drift else 0
+
+
+def _run_import_with_event(config: Config, arguments: argparse.Namespace) -> int:
+    """_run_import plus one import_run event per run (also when nothing was pending), so
+    monitoring can tell a stopped timer from an idle inbox."""
+    started = time.monotonic()
+    code = 1  # an unexpected exception ends the process with exit code 1
+    try:
+        code = _run_import(config, arguments)
+        return code
+    except ImporterError as exc:
+        code = exc.exit_code
+        raise
+    finally:
+        if not arguments.dry_run:
+            scope = (
+                "all"
+                if arguments.all_slugs
+                else f"export {arguments.export}"
+                if arguments.export is not None
+                else f"slug {arguments.slug}"
+            )
+            events.emit(
+                "import_run",
+                _slug_of(arguments),
+                scope=scope,
+                exit_code=code,
+                duration_s=round(time.monotonic() - started, 1),
+            )
 
 
 def _state_slugs(config: Config) -> list[str]:
@@ -411,12 +538,21 @@ def _check(config: Config, arguments: argparse.Namespace) -> int:
         try:
             result = check_tree(config, slug, hash_contents=arguments.hash)
         except ImporterError as exc:
+            _emit_failure("check_failed", slug, exc)
             if not arguments.all_slugs:
                 raise
             print(f"{slug}: error: {exc}", file=sys.stderr)
             worst = max(worst, exc.exit_code)
             continue
         kind = "quick check and SHA-256" if result.hashed else "quick check"
+        _emit_tree_check(
+            slug,
+            result.export_id,
+            "check",
+            result.differences,
+            hashed=result.hashed,
+            entries=result.entries,
+        )
         if arguments.output_dir is not None:
             written = tree.write_report(
                 arguments.output_dir,
@@ -489,7 +625,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             staging_dir=config.staging_dir,
             keyring=config.keyring,
             require_signature=config.require_signature,
+            events_dir=config.events_dir,
         )
+        events.configure(config.events_dir, config.events_keep_days)
         if arguments.command == "status":
             return _status(config, arguments.slug)
         if arguments.command == "check":
@@ -502,15 +640,31 @@ def main(argv: Sequence[str] | None = None) -> int:
                 hash_contents=arguments.hash,
             )
             check = "quick check and SHA-256" if result.hashed else "quick check"
+            events.emit(
+                "import_adopted",
+                result.slug,
+                export_id=result.export_id,
+                export_mode=_mode_of(result.export_id),
+            )
+            _emit_tree_check(
+                result.slug,
+                result.export_id,
+                "adopt",
+                [],
+                hashed=result.hashed,
+                entries=result.entries,
+            )
             print(
                 f"adopted {result.export_id} for {result.slug}: "
                 f"{result.entries} entries match ({check})"
             )
             return 0
-        return _run_import(config, arguments)
+        return _run_import_with_event(config, arguments)
     except ImporterError as exc:
         slug = _slug_of(arguments)
         extra: dict[str, object] = {"slug": slug} if slug else {}
         log_event(logging.ERROR, "failed", error=str(exc), kind=type(exc).__name__, **extra)
+        if arguments.command == "import" and not getattr(arguments, "dry_run", False):
+            _emit_failure("import_failed", slug, exc, export_id=None)
         print(f"error: {exc}", file=sys.stderr)
         return exc.exit_code
