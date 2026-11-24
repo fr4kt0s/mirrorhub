@@ -3,6 +3,8 @@ name: mirrorhub
 x-build-args: &build-args
   PUID: ${PUID:-1000}
   PGID: ${PGID:-1000}
+  # Optional, only for checkouts without .git: the commit shown in the footer.
+  MIRRORHUB_COMMIT: ${MIRRORHUB_COMMIT:-}
 
 x-hardened: &hardened
   env_file: .env

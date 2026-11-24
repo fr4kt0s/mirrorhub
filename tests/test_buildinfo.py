@@ -72,3 +72,21 @@ def test_source_checkout_reports_its_head(monkeypatch: pytest.MonkeyPatch) -> No
     except (OSError, subprocess.CalledProcessError):
         pytest.skip("not a git checkout")
     assert buildinfo.commit() == expected
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "same"),
+    [
+        ("7a3f3b243299", "7a3f3b2", True),  # GitHub short id vs. .git in the image
+        ("7a3f3b2", "7a3f3b24329c995524abdf53308c385e97854784", True),
+        ("7A3F3B2", "7a3f3b243299", True),
+        ("7a3f3b243299", "7a3f3b343299", False),
+        ("7a3f3b243299-dirty", "7a3f3b2-dirty", True),
+        ("7a3f3b243299-dirty", "7a3f3b243299", False),  # local changes differ
+        ("7a3f3", "7a3f3b243299", False),  # too short to compare by prefix
+        ("7a3f3", "7a3f3", True),
+    ],
+)
+def test_same_commit(first: str, second: str, same: bool) -> None:
+    assert buildinfo.same_commit(first, second) is same
+    assert buildinfo.same_commit(second, first) is same

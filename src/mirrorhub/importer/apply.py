@@ -404,7 +404,7 @@ def warn_on_version_mismatch(export: Export) -> bool:
     """
     own = buildinfo.commit()
     sender = export.sender_commit
-    if own is None or sender is None or own == sender:
+    if own is None or sender is None or buildinfo.same_commit(own, sender):
         return False
     log_event(
         logging.WARNING,

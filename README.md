@@ -902,6 +902,17 @@ git rev-parse --short=12 HEAD
 docker compose exec web python -c "from mirrorhub import buildinfo; print(buildinfo.describe())"
 ```
 
+The images read the commit from `.git` (only `HEAD` and the branch refs are copied).
+A checkout without `.git` (GitHub ZIP or tarball, `git archive`, a `git worktree`)
+still builds; the footer then shows "unknown commit". Pass the commit explicitly
+in that case, with 7 or 12 digits as shown on GitHub:
+
+```sh
+MIRRORHUB_COMMIT=7a3f3b2 docker compose build
+```
+
+Deploying with `git clone` is still preferred: `make importer` needs the checkout too.
+
 Every published export's metadata copy carries a `.published` marker (existing
 copies get one on the first scheduler tick after the upgrade; the Audit log shows
 `exports.reconcile`). Both numbers should be equal:
