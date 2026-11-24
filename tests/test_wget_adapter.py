@@ -114,10 +114,8 @@ def test_wget_adapter_builds_regex_filters() -> None:
 
     argv = list(built.steps[0].argv)
     assert "--regex-type=posix" in argv
-    assert "--accept-regex" in argv
-    assert r"\\.iso$" in argv
-    assert "--reject-regex" in argv
-    assert "/archive/" in argv
+    assert r"--accept-regex=\\.iso$" in argv
+    assert "--reject-regex=/archive/" in argv
 
 
 def test_wget_adapter_builds_bandwidth_limit() -> None:

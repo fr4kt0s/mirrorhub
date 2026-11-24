@@ -199,6 +199,7 @@ def config_for_repo(repo: Repository) -> dict[str, Any]:
         "include_regex": repo.include_regex,
         "exclude_regex": repo.exclude_regex,
         "wget_keep_arches": repo.wget_keep_arches,
+        "wget_custom_args": repo.wget_custom_args,
         "extra_args": repo.extra_args,
         "extra_files": repo.extra_files,
         "bwlimit_kbps": repo.bwlimit_kbps,

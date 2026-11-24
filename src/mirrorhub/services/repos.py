@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import re
+import shlex
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
 from sqlmodel import Session, col, select
 
-from mirrorhub import archfilter
+from mirrorhub import archfilter, wgetcmd
 from mirrorhub.enums import (
     CleanupMode,
     DiffMode,
@@ -20,6 +21,7 @@ from mirrorhub.enums import (
 from mirrorhub.models import Export, Job, Repository, default_retry_policy
 from mirrorhub.security import validators
 from mirrorhub.services import audit
+from mirrorhub.settings import get_settings
 
 BOOL_FIELDS = ("enabled", "include_source", "verify_signatures", "chain_export")
 LIST_FIELDS = (
@@ -58,6 +60,7 @@ DATA_FIELDS = (
     *INT_FIELDS,
     "extra_files",
     "retry_policy",
+    "wget_custom_args",
 )
 
 
@@ -162,6 +165,28 @@ def parse_form(form: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, str]]
             messages.extend(exc.messages)
             data["extra_files"] = []
 
+    custom = (
+        bool(form.get("wget_custom"))
+        and data.get("tool") == "wget"
+        and data.get("wget_mode") != "files"
+    )
+    raw["wget_custom"] = "on" if custom else ""
+    raw["wget_command"] = get("wget_command")
+    data["wget_custom_args"] = []
+    if custom:
+        try:
+            data["wget_custom_args"] = wgetcmd.parse_command(
+                get("wget_command"),
+                url=wgetcmd.tree_url(
+                    data.get("method") or "https",
+                    data.get("upstream_host") or "",
+                    data.get("upstream_root") or "",
+                ),
+                target=wget_target(data.get("slug") or ""),
+            )
+        except wgetcmd.CommandError as exc:
+            messages.extend(exc.messages)
+
     policy = default_retry_policy()
     for key, field in (
         ("max_attempts", "retry_max_attempts"),
@@ -224,6 +249,9 @@ def preset_values(config: dict[str, Any]) -> dict[str, str]:
         f"{item['url']} -> {item['path']}" for item in config.get("extra_files") or []
     )
     values["wget_mode"] = wget_mode_for(config.get("extra_files"))
+    custom_args = list(config.get("wget_custom_args") or [])
+    values["wget_custom"] = "on" if custom_args else ""
+    values["wget_custom_args"] = shlex.join(custom_args)
     policy = config.get("retry_policy") or default_retry_policy()
     values["retry_max_attempts"] = str(policy.get("max_attempts", 3))
     values["retry_backoff"] = str(policy.get("backoff", "exponential"))
@@ -233,6 +261,61 @@ def preset_values(config: dict[str, Any]) -> dict[str, str]:
         str(code) for code in policy.get("retryable_exit_codes", [])
     )
     return values
+
+
+def wget_target(slug: str) -> str:
+    """Directory a wget tree mirror writes to, as shown in the command."""
+    return str(get_settings().data_dir / (slug or "<repository-id>"))
+
+
+def _int_or_zero(text: str) -> int:
+    try:
+        return max(0, int(text))
+    except ValueError:
+        return 0
+
+
+def wget_command_values(values: Mapping[str, str]) -> dict[str, str]:
+    """Generated and current wget command for the form, from the form's own strings.
+
+    Works on half-filled forms (live preview): unknown pieces are shown as placeholders.
+    """
+    if values.get("tool") != "wget":
+        return {}
+    slug = values.get("slug", "")
+    target = wget_target(slug)
+    url = wgetcmd.tree_url(
+        values.get("method") or "https",
+        values.get("upstream_host") or "<host>",
+        values.get("upstream_root") or "",
+    )
+    keep = [
+        archfilter.canonical(name) or ""
+        for name in _split_architectures(values.get("wget_keep_arches", ""))
+    ]
+    generated = wgetcmd.generated_args(
+        upstream_root=values.get("upstream_root", ""),
+        include_regex=values.get("include_regex", ""),
+        exclude_regex=values.get("exclude_regex", ""),
+        keep_arches=[name for name in keep if name],
+        bwlimit_kbps=_int_or_zero(values.get("bwlimit_kbps", "0")),
+        extra_args=_split(values.get("extra_args", "")),
+    )
+    generated_line = wgetcmd.display(generated, target=target, url=url)
+    custom = values.get("wget_custom") == "on"
+    command = values.get("wget_command", "")
+    if custom and not command and values.get("wget_custom_args"):
+        try:
+            command = wgetcmd.display(
+                shlex.split(values["wget_custom_args"]), target=target, url=url
+            )
+        except ValueError:
+            command = ""
+    return {
+        "wget_generated": generated_line,
+        "wget_custom": "on" if custom else "",
+        "wget_command": command if custom and command else generated_line,
+    }
 
 
 def validate(data: dict[str, Any]) -> list[str]:
@@ -323,6 +406,13 @@ def validate(data: dict[str, Any]) -> list[str]:
         error = archfilter.validate_keep(data.get("wget_keep_arches") or [])
         if error:
             errors.append(error)
+        custom_args = data.get("wget_custom_args") or []
+        if custom_args:
+            error = wgetcmd.validate_args(custom_args)
+            if error:
+                errors.append(error)
+            if data["extra_files"]:
+                errors.append("wget command: hand-edited commands apply to the directory tree only")
         if mode not in WGET_MODES:
             errors.append("download: choose the whole directory tree or a file list")
         elif mode == "files":

@@ -139,6 +139,9 @@ class Repository(SQLModel, table=True):
     exclude_regex: str = ""
     # wget tree mode: architectures to keep; empty = all (see mirrorhub.archfilter).
     wget_keep_arches: list[str] = Field(default_factory=list, sa_column=_json())
+    # wget tree mode: hand-edited options replacing the generated ones; empty = generated
+    # (see mirrorhub.wgetcmd).
+    wget_custom_args: list[str] = Field(default_factory=list, sa_column=_json())
     extra_args: list[str] = Field(default_factory=list, sa_column=_json())
 
     retry_policy: dict[str, Any] = Field(default_factory=default_retry_policy, sa_column=_json())

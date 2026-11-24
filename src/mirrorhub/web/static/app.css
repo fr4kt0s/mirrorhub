@@ -193,6 +193,20 @@ legend { font-weight: 650; padding: 0 0.4rem; }
 /* wget form (#51): show the fields of the selected download mode (no script needed). */
 form:has(input[name="wget_mode"][value="tree"]:checked) .wget-files-only { display: none; }
 form:has(input[name="wget_mode"][value="files"]:checked) .wget-tree-only { display: none; }
+/* wget command: generated preview, or the textarea when editing by hand. */
+form:has(input[name="wget_custom"]:checked) .wget-generated,
+form:has(input[name="wget_custom"]:checked) .wget-generator-input { display: none; }
+form:not(:has(input[name="wget_custom"]:checked)) .wget-custom-only { display: none; }
+pre.command {
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 0.8rem/1.45 var(--mono);
+  background: var(--surface-2);
+  border-radius: var(--radius-m);
+}
+textarea[name="wget_command"] { font: 0.8rem/1.45 var(--mono); }
 
 /* ---- Buttons ---------------------------------------------------------------- */
 

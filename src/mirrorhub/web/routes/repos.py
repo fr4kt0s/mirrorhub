@@ -57,6 +57,11 @@ def _blank_values() -> dict[str, str]:
     return values
 
 
+def _with_wget(values: dict[str, str]) -> dict[str, str]:
+    """Add the generated/current wget command (only for wget forms)."""
+    return {**values, **repos.wget_command_values(values)}
+
+
 @router.get("/repos/new")
 def new_page(
     request: Request,
@@ -85,7 +90,7 @@ def new_page(
     return render(
         request,
         _template_for(str(values.get("tool") or tool)),
-        {"values": values, "errors": [], "repo": None, "mode": "create"},
+        {"values": _with_wget(values), "errors": [], "repo": None, "mode": "create"},
     )
 
 
@@ -103,7 +108,7 @@ def edit_page(
     return render(
         request,
         _template_for(repo.tool),
-        {"values": values, "errors": [], "repo": repo, "mode": "edit"},
+        {"values": _with_wget(values), "errors": [], "repo": repo, "mode": "edit"},
     )
 
 
@@ -141,7 +146,7 @@ async def _save(
             request,
             template,
             {
-                "values": {**_blank_values(), **values},
+                "values": _with_wget({**_blank_values(), **values}),
                 "errors": exc.messages,
                 "repo": repo,
                 "mode": "edit" if repo else "create",
@@ -152,6 +157,7 @@ async def _save(
     if repo is not None:
         data["slug"] = repo.slug
         values["slug"] = repo.slug
+    values = _with_wget(values)
     repos.apply_tool_rules(data, repo)
     errors = repos.validate(data)
 
@@ -213,6 +219,24 @@ async def create_repo(
     db: Session = Depends(get_db),
 ) -> Response:
     return await _save(request, db, user, None)
+
+
+@router.post("/repos/wget-preview")
+async def wget_preview(
+    request: Request,
+    reset: int = 0,
+    _user: CurrentUser = Depends(require_user),
+) -> Response:
+    """Live preview of the wget command while the form is being filled in (htmx)."""
+    form = await request.form()
+    values = {name: str(form.get(name) or "").strip() for name in form}
+    values["tool"] = "wget"
+    values["wget_custom"] = "on" if form.get("wget_custom") else ""
+    if reset:
+        values["wget_command"] = ""
+    return render(
+        request, "repos/_wget_command.html", {"values": repos.wget_command_values(values)}
+    )
 
 
 @router.post("/repos/{repo_id}")

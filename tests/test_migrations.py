@@ -40,7 +40,7 @@ def test_migration_installs_append_only_audit_triggers(
 
     with get_engine().connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert version == "0009"
+        assert version == "0010"
 
     command.upgrade(config, "head")
 
@@ -248,3 +248,31 @@ def test_0009_adds_wget_keep_arches_and_keeps_rows(configured: Settings) -> None
     with get_engine().connect() as connection:
         row = connection.exec_driver_sql("SELECT slug, wget_keep_arches FROM repository").one()
     assert tuple(row) == ("w", "[]")
+
+
+def test_0010_adds_wget_custom_args_and_keeps_rows(configured: Settings) -> None:
+    from sqlmodel import Session
+
+    from mirrorhub.models import Repository
+
+    config = _alembic_config()
+    command.upgrade(config, "head")
+    with Session(get_engine()) as db:
+        db.add(
+            Repository(
+                slug="t", name="T", kind="generic", tool="wget", wget_custom_args=["--recursive"]
+            )
+        )
+        db.commit()
+
+    def repo_columns() -> set[str]:
+        with get_engine().connect() as connection:
+            return {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(repository)")}
+
+    assert "wget_custom_args" in repo_columns()
+    command.downgrade(config, "0009")
+    assert "wget_custom_args" not in repo_columns()
+    command.upgrade(config, "head")
+    with get_engine().connect() as connection:
+        row = connection.exec_driver_sql("SELECT slug, wget_custom_args FROM repository").one()
+    assert tuple(row) == ("t", "[]")
