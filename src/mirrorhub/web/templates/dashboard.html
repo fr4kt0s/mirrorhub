@@ -17,33 +17,40 @@
     <p class="muted">{{ usage.path }}</p>
     <a href="/storage">Details</a>
   </article>
-  <article class="card">
-    <h2>Next schedules</h2>
-    <ul class="plain">
-      {% for s in upcoming %}
-        {% set repo = repos.get(s.repo_id) %}
-        <li>
-          {% if repo %}<strong title="{{ repo.name }}">{{ repo.slug }}</strong>{% else %}<strong>#{{ s.repo_id }}</strong>{% endif %}
-          <span class="muted">{{ s.job_type }}</span>
-          <code>{{ s.cron_expr }}</code> {{ s.next_fire_at | ts }}
-        </li>
-      {% else %}<li class="muted">Nothing scheduled.</li>{% endfor %}
-    </ul>
-    <a href="/schedules">Schedules</a>
-  </article>
+</section>
+
+<section class="card">
+  <h2>Next schedules</h2>
+  <table class="table stack">
+    <thead><tr><th>Repository</th><th>Type</th><th>Schedule</th><th>Next run</th></tr></thead>
+    <tbody>
+    {% for s in upcoming %}
+      {% set repo = repos.get(s.repo_id) %}
+      <tr>
+        <td>{% if repo %}<strong title="{{ repo.name }}">{{ repo.slug }}</strong>{% else %}<strong>#{{ s.repo_id }}</strong>{% endif %}</td>
+        <td data-label="Type"><span class="muted">{{ s.job_type }}</span></td>
+        <td data-label="Schedule"><code>{{ s.cron_expr }}</code></td>
+        <td data-label="Next run" class="nowrap">{{ s.next_fire_at | ts }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">Nothing scheduled.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <a href="/schedules">Schedules</a>
 </section>
 
 <section class="card">
   <h2>Recent failures</h2>
-  <table class="table">
+  <table class="table stack">
     <thead><tr><th>#</th><th>Repository</th><th>Attempt</th><th>Detail</th><th></th></tr></thead>
     <tbody>
     {% for j in failures %}
       <tr>
-        <td>{{ j.id }}</td>
-        <td>{{ repo_names.get(j.repo_id, j.repo_id) }}</td>
-        <td>{{ j.attempt }}/{{ j.max_attempts }}</td>
-        <td>{{ j.error_summary }}</td>
+        <td data-label="Job">{{ j.id }}</td>
+        <td data-label="Repository">{{ repo_names.get(j.repo_id, j.repo_id) }}</td>
+        <td data-label="Attempt">{{ j.attempt }}/{{ j.max_attempts }}</td>
+        <td data-label="Detail" class="detail">{{ j.error_summary }}</td>
         <td><a href="/jobs/{{ j.id }}">Open</a></td>
       </tr>
     {% else %}

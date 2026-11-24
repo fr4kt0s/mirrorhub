@@ -298,6 +298,7 @@ The practical tests 3.1–3.4 are referenced here, not repeated. The P1 tests al
 - [ ] **A12** (P2) POST without CSRF token (e.g. `curl -X POST …/jobs/cleanup` with a valid session cookie but no token) → rejected, nothing changed.
 - [ ] **A13** (P2) Audit log shows the real client IP, not the proxy address from 172.31.254.x.
 - [ ] **A14** (P2) Browser console on every page (Dashboard, Repositories, Jobs, Exports, Schedules, Keys, Notifications, Settings, Storage, Config, Audit) → no CSP violations, all buttons work; the theme button (sidebar, bottom) switches auto → light → dark, the choice survives a reload, and "auto" follows the operating system.
+- [ ] **A15** (P2) Phone width (browser developer tools, about 390 px, or a phone): no page scrolls sideways (wget form with *Architectures to keep* set, Dashboard); on the Dashboard *Next schedules* and *Recent failures* show one labelled block per entry. On a wide screen the content uses up to 1600 px; *Next schedules* is a full-width table above *Recent failures*.
 - [ ] **A15** (P2) `docker compose restart` → all `healthy` again, repositories, jobs and settings unchanged.
 - [ ] **A16** (P2) Restart the worker during a sync (`docker compose restart worker`) → the job does not stay `running` forever (detected after `MIRRORHUB_HEARTBEAT_STALE_S` at the latest); a new sync runs cleanly, the log has a new `# run` header.
 - [ ] **A17** (P3) Reboot the Docker host → the stack starts by itself (`restart: unless-stopped`), A1 holds.
