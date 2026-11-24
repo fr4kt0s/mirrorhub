@@ -51,6 +51,8 @@ def test_next_schedules_empty(admin: TestClient) -> None:
 
 
 def test_next_schedules_full_width_above_failures(admin: TestClient) -> None:
+    with Session(get_engine()) as db:
+        _schedule(db, "dash-layout", "Layout repo", job_type="sync", enabled=True)
     html = admin.get("/").text
     grid = re.search(r'<section class="grid">(.*?)</section>', html, re.S)
     assert grid and "Next schedules" not in grid.group(1)  # not squeezed into the grid
