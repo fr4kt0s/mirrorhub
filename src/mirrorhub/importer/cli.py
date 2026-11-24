@@ -355,10 +355,17 @@ def _emit_failure(kind: str, slug: str | None, exc: ImporterError, **fields: obj
     exc.event_written = True  # type: ignore[attr-defined]
 
 
-def _report(directory: Path | None, slug: str, export_id: str, drift: list[str]) -> None:
+def _report(
+    directory: Path | None,
+    slug: str,
+    export_id: str,
+    drift: list[str],
+    *,
+    hashed: bool = False,
+) -> None:
     if directory is None:
         return
-    written = tree.write_report(directory, slug, export_id, drift, hashed=False)
+    written = tree.write_report(directory, slug, export_id, drift, hashed=hashed)
     print(f"differences written to {written}")
 
 
@@ -441,6 +448,9 @@ def _import_slug(config: Config, slug: str, options: Options, report: Path | Non
             print(f"nothing to import for {slug}")
         if tree_check and last_applied is not None and not last_applied.whole_tree_checked:
             return _tree_check_after(config, slug, report)
+        if last_applied is not None and last_applied.whole_tree_checked:
+            # the post-check compared the whole tree: replace an older report with an empty one
+            _report(report, slug, last_applied.export_id, [], hashed=options.full_check)
         return False
     except ImporterError as exc:
         if not options.dry_run:
@@ -483,7 +493,7 @@ def _run_import(config: Config, arguments: argparse.Namespace) -> int:
         tree_check=not arguments.no_tree_check,
         verify_first=arguments.verify_first,
     )
-    report = arguments.drift_output
+    report = arguments.drift_output or config.reports_dir
     if arguments.export is not None:
         path = Path(os.path.abspath(arguments.export))
         slug = path.parent.name
@@ -498,6 +508,8 @@ def _run_import(config: Config, arguments: argparse.Namespace) -> int:
         _emit_outcome(slug, path, outcome, started, options)
         if outcome.tree_checked:
             _report(report, slug, outcome.export_id, outcome.drift)
+        elif outcome.whole_tree_checked:
+            _report(report, slug, outcome.export_id, [], hashed=options.full_check)
         return DriftError.exit_code if outcome.drift else 0
     if arguments.all_slugs:
         return _import_all(config, options, report)
@@ -564,9 +576,10 @@ def _check(config: Config, arguments: argparse.Namespace) -> int:
             hashed=result.hashed,
             entries=result.entries,
         )
-        if arguments.output_dir is not None:
+        output_dir = arguments.output_dir or config.reports_dir
+        if output_dir is not None:
             written = tree.write_report(
-                arguments.output_dir,
+                output_dir,
                 slug,
                 result.export_id,
                 result.differences,

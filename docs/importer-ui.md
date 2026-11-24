@@ -41,23 +41,50 @@ Any CLI command also runs in the container, for example
 
 ## Pages
 
-- **Repositories**: every repository in the inbox or with a receiver state, the
-  last applied export and when, how many exports are pending (not yet applied or
-  superseded), and buttons for *Import*, *Dry run*, *Check* and *Check SHA-256*.
-- **Import**: all repositories, one repository or one export directory (must be
-  below `export_dir`); options dry run, full check, verify first, no tree check,
-  drift output directory; `--rebase` and `--discard-staging` only with the
-  confirmation box ticked.
-- **Check tree**, **Adopt**, **Status**: the same options as the CLI.
-- **Runs**: the last 50 runs since the server started, with the full command
-  line, live output (readable log lines, progress every 10 s), duration, exit code
-  and its meaning. *Cancel* stops a running command (SIGTERM); an interrupted
-  import continues from its journal on the next import.
+- **Repositories**: every repository in the inbox or with a receiver state, with
+  - *Last import*: the applied export (link to its page) and when; a failed import
+    in red with its error until the next success;
+  - *Tree*: result of the newest tree check (after an import, `check`, `adopt`):
+    *matches* or the number of differences per kind, quick or SHA-256 and how long
+    ago, when the last SHA-256 check ran, link to the report;
+  - *Pending*: exports in the inbox not applied or superseded yet (links);
+  - buttons *Import*, *Dry run*, *Check*, *Check SHA-256*; link to the history.
+- **History**: imports, failures, superseded exports, tree checks and every import
+  run (also timer and shell runs, *trigger* `cli`, and runs from the UI, `ui`),
+  newest first, per repository or all. Needs `events_dir` in `importer.toml`.
+- **Report** (per repository): the newest difference lists — missing, extra, type,
+  size, mtime, symlink target, sha256 — with the export and the time of the
+  check, each list downloadable as text.
+- **Export** (per export in the inbox): status (pending, applied, superseded),
+  mode, base export and whether it fits the receiver state, creation time, file,
+  payload and deletion counts, archive size and parts, signature present, sender
+  commit. Buttons: *Import this export* and *Dry run* when it fits; for a full
+  export over an existing state *Plan rebase (dry run)*.
+- **Import**, **Check tree**, **Adopt**, **Status** forms with the CLI options.
+- **Runs**: command line, live output (readable log lines, progress every 10 s),
+  duration, exit code and meaning; *Cancel* (SIGTERM; an interrupted import
+  continues from its journal on the next import).
 
-One run at a time. Each run is the real CLI in its own process, so locks, exit
-codes, event files (`events_dir`) and the receiver state are the same as on the
-command line, and a run started from the UI and a timer run never apply at the
-same time (the second one stops with exit code 7).
+### Rebase only after a plan
+
+A full export over an existing tree (`--rebase`) deletes every path that is not
+in its `files.json`. The UI offers it only on the export's page: *Plan rebase*
+runs the import as a dry run with `--rebase`; its page lists every change
+(`A`/`C`/`D` lines) and the counts, and offers *Apply rebase (N deletions)*. That
+button works for an hour and only for the same export. `--discard-staging` stays
+in the import form behind a confirmation.
+
+A full export that is already applied cannot be applied again (the importer skips
+applied exports); repairing a tree needs a new full export from the sender.
+
+### Where the data comes from
+
+| Shown | Source |
+|---|---|
+| runs of the UI and their output | `<state_dir>/ui-runs/<n>.json` and `<n>.log` (last 200 kept, last 50 shown); kept across restarts |
+| history, last import, failures, tree status | event files in `events_dir` |
+| difference lists | `reports_dir` if set in `importer.toml` (then timer runs write them too), else `<state_dir>/reports`, written by checks and imports started from the UI |
+| pending exports, export details | the inbox (`manifest.json`, archive sizes); verified only when imported |
 
 ## Access
 
@@ -77,8 +104,8 @@ a warning; then restrict access by firewall or port binding.
 
 ## Limits
 
-- Runs and their output are kept in memory only (last 50, up to 4 MB of output
-  each) and are gone after a restart; the importer's own log lines, event files and
-  state are unaffected.
+- Up to 4 MB of output per run are shown (the oldest lines are dropped).
+- A run that was active when the UI stopped is shown with exit code −1 (result
+  unknown); the importer's own state, journal and event files tell what happened.
 - No scheduling: keep the systemd timer for regular imports and checks
   (`docs/importer.md`).

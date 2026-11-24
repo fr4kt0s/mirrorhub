@@ -19,6 +19,7 @@ KNOWN_KEYS = frozenset(
         "require_signature",
         "events_dir",
         "events_keep_days",
+        "reports_dir",
     }
 )
 
@@ -41,6 +42,8 @@ class Config:
     # Event files for monitoring (docs/checkmk.md); None = off.
     events_dir: Path | None = None
     events_keep_days: int = 30
+    # Default for check --output-dir and import --drift-output; None = off.
+    reports_dir: Path | None = None
 
 
 def _path(base: Path, value: Any, key: str) -> Path:
@@ -88,4 +91,7 @@ def load_config(path: Path) -> Config:
         require_signature=require,
         events_dir=_path(base, events_dir, "events_dir") if events_dir else None,
         events_keep_days=keep_days,
+        reports_dir=_path(base, raw["reports_dir"], "reports_dir")
+        if raw.get("reports_dir")
+        else None,
     )

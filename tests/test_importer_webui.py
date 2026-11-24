@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 
 import pytest
 
+from mirrorhub.importer import events as events_module
 from mirrorhub.importer import webui
 from mirrorhub.importer.cli import main
 from mirrorhub.importer.config import Config, load_config
@@ -23,8 +24,17 @@ from test_importer import ID1, ID2, T1, T2, build_export
 @pytest.fixture
 def setup(tmp_path: Path) -> tuple[Config, Path]:
     settings = tmp_path / "importer.toml"
-    settings.write_text('export_dir = "in"\nmirror_root = "out"\nstate_dir = "st"\n')
+    settings.write_text(
+        'export_dir = "in"\nmirror_root = "out"\nstate_dir = "st"\n'
+        'events_dir = "ev"\nreports_dir = "rep"\n'
+    )
     return load_config(settings), settings
+
+
+@pytest.fixture(autouse=True)
+def _events_off() -> Iterator[None]:
+    yield
+    events_module.configure(None)
 
 
 def _form(**fields: str) -> dict[str, list[str]]:
@@ -74,11 +84,14 @@ def test_build_command_for_every_cli_command(setup: tuple[Config, Path]) -> None
                 command="import",
                 scope="slug",
                 slug="ubuntu",
-                rebase="on",
                 discard_staging="on",
                 confirm="on",
             ),
-            ["import", "--slug", "ubuntu", "--rebase", "--discard-staging"],
+            ["import", "--slug", "ubuntu", "--discard-staging"],
+        ),
+        (
+            _form(command="import", scope="export", export=str(export), dry_run="on", rebase="on"),
+            ["import", "--export", str(export), "--dry-run", "--rebase"],
         ),
         (_form(command="check"), ["check", "--all"]),
         (
@@ -102,8 +115,9 @@ def test_build_command_for_every_cli_command(setup: tuple[Config, Path]) -> None
         ({"command": "import"}, "choose what to import"),
         ({"command": "import", "scope": "export", "export": "/etc"}, "below"),
         ({"command": "import", "scope": "export", "export": "relative"}, "absolute path"),
-        ({"command": "import", "scope": "slug", "slug": "u", "rebase": "on"}, "confirmation"),
-        ({"command": "import", "scope": "all", "rebase": "on", "confirm": "on"}, "all repos"),
+        ({"command": "import", "scope": "slug", "slug": "u", "discard_staging": "on"}, "confirm"),
+        ({"command": "import", "scope": "all", "discard_staging": "on"}, "all repos"),
+        ({"command": "import", "scope": "slug", "slug": "u", "rebase": "on"}, "one export"),
         ({"command": "check", "output_dir": "out"}, "absolute path"),
         ({"command": "adopt", "slug": "u", "export_id": "latest"}, "invalid export id"),
         ({"command": "rm"}, "unknown command"),
@@ -287,3 +301,137 @@ def test_password_login(server: Any) -> None:
 def test_serve_with_a_bad_listen_address_is_a_config_error(setup: tuple[Config, Path]) -> None:
     _, settings = setup
     assert main(["--config", str(settings), "serve", "--listen", "nowhere"]) == 2
+
+
+def test_reports_go_to_the_reports_directory_without_reports_dir(tmp_path: Path) -> None:
+    settings = tmp_path / "importer.toml"
+    settings.write_text('export_dir = "in"\nmirror_root = "out"\nstate_dir = "st"\n')
+    config = load_config(settings)
+    reports = str(config.state_dir / "reports")
+    assert webui.build_command(_form(command="check", slug="u"), config)[1][-2:] == [
+        "--output-dir",
+        reports,
+    ]
+    args = webui.build_command(_form(command="import", scope="all"), config)[1]
+    assert args[-2:] == ["--drift-output", reports]
+    dry = webui.build_command(_form(command="import", scope="all", dry_run="on"), config)[1]
+    assert "--drift-output" not in dry
+
+
+# ---- history, reports, exports, rebase plan ------------------------------------------
+
+
+def _start(client: Client, **fields: str) -> int:
+    status, headers, page = client.request("POST", "/run", {"csrf": client.csrf(), **fields})
+    assert status == 303, page
+    return int(headers["location"].rsplit("/", 1)[1])
+
+
+def test_runs_survive_a_restart(server: Any, setup: tuple[Config, Path]) -> None:
+    config, _ = setup
+    _, client = server()
+    run_id = _start(client, command="status")
+    client.wait(run_id)
+    runs = config.state_dir / "ui-runs"
+    assert (runs / f"{run_id}.json").is_file() and (runs / f"{run_id}.log").is_file()
+    stale = {"id": 7, "title": "import --all", "argv": [], "started": 1.0}
+    (runs / "7.json").write_text(json.dumps({**stale, "finished": None, "exit_code": None}))
+
+    _, again = server()
+    page = again.request("GET", "/")[2]
+    assert f"/runs/{run_id}'" in page and "status (all)" in page
+    assert "# exit code 0 (ok)" in again.request("GET", f"/runs/{run_id}")[2]
+    assert "stopped during this run" in again.request("GET", "/runs/7")[2]
+    assert _start(again, command="status") == 8  # numbering continues
+
+
+def test_history_and_overview_from_event_files(server: Any, setup: tuple[Config, Path]) -> None:
+    config, settings = setup
+    build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    assert main(["--config", str(settings), "import", "--slug", "ubuntu"]) == 0  # a "timer"
+    events_module.configure(None)
+    build_export(config.export_dir, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    _, client = server()
+    client.wait(_start(client, command="import", scope="slug", slug="ubuntu"))
+
+    history = client.request("GET", "/history?slug=ubuntu")[2]
+    assert history.count("import_applied") == 2
+    assert ">ui<" in history and ">cli<" in history
+    assert f"/repos/ubuntu/exports/{ID2}" in history
+    overview = client.request("GET", "/")[2]
+    assert "matches" in overview and "no SHA-256 check yet" in overview
+    assert f"/repos/ubuntu/exports/{ID2}'><code>{ID2}" in overview
+
+
+def test_report_page_lists_differences(server: Any, setup: tuple[Config, Path]) -> None:
+    config, settings = setup
+    build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    assert main(["--config", str(settings), "import", "--slug", "ubuntu"]) == 0
+    assert (config.reports_dir or Path()).joinpath("ubuntu", "summary.txt").is_file()
+    (config.mirror_root / "ubuntu" / "pool/a.deb").unlink()
+    (config.mirror_root / "ubuntu" / "pool/x.deb").write_text("x")
+    _, client = server()
+    client.wait(_start(client, command="check", slug="ubuntu"))
+
+    page = client.request("GET", "/repos/ubuntu/report")[2]
+    assert "2 differences" in page and "missing: 1" in page and "extra: 1" in page
+    assert "pool/a.deb" in page and "pool/x.deb" in page
+    status, headers, text = client.request("GET", "/repos/ubuntu/report/missing.txt")
+    assert (
+        status == 200 and text == "pool/a.deb\n" and "attachment" in headers["content-disposition"]
+    )
+    assert client.request("GET", "/repos/ubuntu/report/../../x.txt")[0] == 404
+    assert "2 differences" in client.request("GET", "/")[2]
+
+
+def test_export_page_and_planned_rebase(server: Any, setup: tuple[Config, Path]) -> None:
+    config, settings = setup
+    build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    assert main(["--config", str(settings), "import", "--slug", "ubuntu"]) == 0
+    build_export(config.export_dir, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    full = build_export(config.export_dir, "20261103T000000Z", "full", T2)  # new full export
+    (config.mirror_root / "ubuntu" / "pool/stray.deb").write_text("x")
+    _, client = server()
+
+    incr = client.request("GET", f"/repos/ubuntu/exports/{ID2}")[2]
+    assert "fits: built on" in incr and "Import this export" in incr and "pending" in incr
+    applied = client.request("GET", f"/repos/ubuntu/exports/{ID1}")[2]
+    assert "the receiver&#x27;s current state" in applied and "Plan rebase" not in applied
+    page = client.request("GET", f"/repos/ubuntu/exports/{full.name}")[2]
+    assert "needs a rebase" in page and "Plan rebase (dry run)" in page
+    assert client.request("GET", "/repos/ubuntu/exports/nope")[0] == 404
+
+    token = client.csrf()
+    refused = client.request(
+        "POST",
+        "/run",
+        {
+            "csrf": token,
+            "command": "import",
+            "scope": "export",
+            "export": str(full),
+            "rebase": "on",
+        },
+    )
+    assert refused[0] == 400 and "needs a dry run of this export first" in refused[2]
+
+    plan = _start(
+        client, command="import", scope="export", export=str(full), dry_run="on", rebase="on"
+    )
+    client.wait(plan)
+    run_page = client.request("GET", f"/runs/{plan}")[2]
+    assert "Rebase plan" in run_page and "Apply rebase (2 deletions)" in run_page
+    assert "D pool/b.deb" in run_page and "D pool/stray.deb" in run_page
+
+    applied = _start(
+        client,
+        command="import",
+        scope="export",
+        export=str(full),
+        rebase="on",
+        plan=str(plan),
+    )
+    data = client.wait(applied)
+    assert "--rebase" in client.request("GET", f"/runs/{applied}")[2]
+    assert "exit code 0" in data["text"]
+    assert not (config.mirror_root / "ubuntu" / "pool/stray.deb").exists()
