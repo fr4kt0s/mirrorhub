@@ -20,11 +20,22 @@ from mirrorhub.importer.errors import (
     VerificationFailed,
 )
 from mirrorhub.importer.logs import log_event
-from mirrorhub.verify import VerificationError, verify
+from mirrorhub.verify import CHECKSUM_EXCLUSIONS, FORMAT_VERSION, VerificationError, verify
 
 SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 EXPORT_ID_RE = re.compile(r"^\d{8}T\d{6}Z-(full|incr)$")
 SKIP_DIRECTORIES = frozenset({".temp", ".tmp", ".mirrorhub", ".rsync-partial"})
+REQUIRED_MANIFEST_FIELDS = frozenset(
+    {
+        "format_version",
+        "export_id",
+        "repo",
+        "mode",
+        "created_at",
+        "archive_format",
+        "archive_parts",
+    }
+)
 
 Inventory = dict[str, dict[str, Any]]
 
@@ -80,16 +91,123 @@ def _expected_parts(archive_format: object, names: list[str]) -> tuple[list[str]
     return expected, archive_format == "tar.zst"
 
 
-def load_export(directory: Path) -> Export:
-    """Run the unmodified verifier, then validate what it does not check."""
+def _read_checksums(directory: Path) -> dict[str, str]:
+    """MANIFEST.sha256 as {name: lower-case digest}, with the verifier's line rules."""
+    digests: dict[str, str] = {}
+    text = (directory / "MANIFEST.sha256").read_text(encoding="ascii")
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2 or not parts[1].strip():
+            raise VerificationFailed(f"invalid checksum line {line_number} in MANIFEST.sha256")
+        name = parts[1].strip()
+        if name in CHECKSUM_EXCLUSIONS:
+            raise VerificationFailed(f"checksum manifest must not contain {name}")
+        digests[name] = parts[0].lower()
+    if not digests:
+        raise VerificationFailed("MANIFEST.sha256 contains no checksum entries")
+    return digests
+
+
+def _verify_without_parts(directory: Path) -> tuple[dict[str, Any], Inventory]:
+    """The checks of mirrorhub.verify.verify() except hashing the archive parts.
+
+    The parts must exist and be listed in MANIFEST.sha256; their digests are compared
+    while the archive is streamed (reader.PartReader), so a large export is read once
+    instead of twice. Every other checksummed file (files.json, manifest.json,
+    deleted.txt, ...) is hashed here, before anything is extracted.
+    """
+    done = directory / ".done"
+    if not done.is_file():
+        raise VerificationFailed("export is not published: .done is missing")
     try:
-        metadata = verify(directory)
-        inventory: Inventory = json.loads((directory / "files.json").read_text(encoding="utf-8"))
+        metadata = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise VerificationFailed("manifest.json is missing") from exc
+    except ValueError as exc:
+        raise VerificationFailed(f"manifest.json is invalid: {exc}") from exc
+    if not isinstance(metadata, dict):
+        raise VerificationFailed("manifest.json must contain an object")
+    missing = sorted(REQUIRED_MANIFEST_FIELDS - set(metadata))
+    if missing:
+        raise VerificationFailed(f"manifest.json is missing fields: {', '.join(missing)}")
+    if metadata["format_version"] != FORMAT_VERSION:
+        raise VerificationFailed(f"unsupported export format version: {metadata['format_version']}")
+    marker = done.read_text(encoding="ascii").strip()
+    if marker != metadata["export_id"]:
+        raise VerificationFailed(
+            f"export identity mismatch: .done={marker!r}, manifest={metadata['export_id']!r}"
+        )
+    parts = metadata["archive_parts"]
+    if not isinstance(parts, list) or not all(isinstance(item, str) for item in parts):
+        raise VerificationFailed("manifest archive_parts must be a list of strings")
+    for name in parts:
+        if not (directory / name).is_file():
+            raise VerificationFailed(f"archive part is missing: {name}")
+
+    digests = _read_checksums(directory)
+    archive = set(parts)
+    for name, expected in digests.items():
+        path = directory / name
+        if not path.is_file():
+            raise VerificationFailed(f"checksummed file is missing: {name}")
+        if name in archive:
+            continue  # compared while streaming
+        if _sha256_file(path) != expected:
+            raise VerificationFailed(f"checksum mismatch for {name}")
+
+    if not (directory / "files.json").is_file():
+        raise VerificationFailed("files.json is missing")
+    try:
+        inventory = json.loads((directory / "files.json").read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise VerificationFailed(f"files.json is invalid: {exc}") from exc
+    if not isinstance(inventory, dict):
+        raise VerificationFailed("files.json is invalid: inventory must be a mapping")
+    for relative, entry in inventory.items():
+        if not safe_relative(relative):
+            raise VerificationFailed(f"files.json is invalid: unsafe relative path: {relative!r}")
+        if not isinstance(entry, dict):
+            raise VerificationFailed("files.json is invalid: invalid inventory entry")
+    if len(inventory) != (metadata.get("counts") or {}).get("inventory"):
+        raise VerificationFailed("files.json inventory count does not match manifest metadata")
+    if not (directory / "deleted.txt").is_file():
+        raise VerificationFailed("deleted.txt is missing")
+    return metadata, inventory
+
+
+def verify_parts(export: Export) -> None:
+    """Hash every archive part against MANIFEST.sha256 (reads the whole archive).
+
+    Used after a failed extraction to tell a damaged archive (exit code 3) from an
+    export whose archive does not match its own inventory.
+    """
+    for path, expected in zip(export.parts, export.part_digests, strict=True):
+        if _sha256_file(path) != expected:
+            raise VerificationFailed(f"checksum mismatch for archive part {path.name}")
+
+
+def load_export(directory: Path, *, verify_parts_first: bool = False) -> Export:
+    """Check an export before anything is extracted.
+
+    By default the archive parts are only required to exist and be listed in
+    MANIFEST.sha256; they are hashed while streaming. With verify_parts_first the
+    unmodified mirrorhub.verify.verify() runs first and hashes them up front too.
+    """
+    try:
+        if verify_parts_first:
+            metadata = verify(directory)
+            inventory: Inventory = json.loads(
+                (directory / "files.json").read_text(encoding="utf-8")
+            )
+        else:
+            metadata, inventory = _verify_without_parts(directory)
         deleted = tuple((directory / "deleted.txt").read_text(encoding="utf-8").splitlines())
-        digests: dict[str, str] = {}
-        for line in (directory / "MANIFEST.sha256").read_text(encoding="ascii").splitlines():
-            digest, _, name = line.partition("  ")
-            digests[name] = digest
+        digests = _read_checksums(directory)
+    except VerificationFailed:
+        raise
     except (VerificationError, OSError, ValueError, TypeError, KeyError) as exc:
         raise VerificationFailed(f"verification failed: {exc}") from exc
 
@@ -108,6 +226,9 @@ def load_export(directory: Path) -> Export:
     part_names, compressed = _expected_parts(
         metadata.get("archive_format"), list(metadata["archive_parts"])
     )
+    unlisted = [name for name in part_names if name not in digests]
+    if unlisted:
+        raise VerificationFailed(f"archive part not covered by MANIFEST.sha256: {unlisted[0]}")
     _check_inventory(inventory)
     log_event(
         logging.DEBUG,
@@ -121,6 +242,7 @@ def load_export(directory: Path) -> Export:
         inventory=len(inventory),
         payload=len(metadata["payload_paths"]),
         deleted=len(deleted),
+        parts_hashed="up front" if verify_parts_first else "while streaming",
     )
 
     return Export(

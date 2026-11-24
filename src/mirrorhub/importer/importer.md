@@ -152,7 +152,8 @@ python3 -m mirrorhub.importer --config importer.toml status
 | Option | Behavior |
 | --- | --- |
 | `--dry-run` | Verification and planning only; no tar extraction and no receiver writes. |
-| `--full-check` | Compare the whole tree after application; full exports already request this. Incrementals normally check touched paths. |
+| `--full-check` | Compare the whole tree after application and re-hash every file. Without it the post-check compares metadata (type, size, mtime, symlink target) of the touched paths, or of the whole tree for full exports; contents are hashed while staging. |
+| `--verify-first` | Hash the archive parts before extracting (reads the archive twice). By default they are hashed once, while extracting. |
 | `--rebase` | Explicitly allow a full export over existing content/state; remove entries absent from its inventory, subject to skipped directories. |
 | `--discard-staging` | Allow discarding another export's unfinished journal; does not undo partial changes. |
 

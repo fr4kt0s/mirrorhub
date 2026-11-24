@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -17,6 +18,10 @@ from typing import Any
 
 import pytest
 
+from mirrorhub import verify as verify_module
+from mirrorhub.importer import apply as apply_module
+from mirrorhub.importer import checks as checks_module
+from mirrorhub.importer import tree as tree_module
 from mirrorhub.importer.adopt import adopt
 from mirrorhub.importer.apply import Options, import_export
 from mirrorhub.importer.cli import main
@@ -303,7 +308,9 @@ def test_tampered_archive_fails_checksum(config: Config) -> None:
     archive.write_bytes(bytes(raw))
     with pytest.raises(VerificationFailed, match="checksum mismatch"):
         import_export(export, config, Options())
-    assert not config.mirror_root.exists()
+    assert read_tree(config.mirror_root / "ubuntu") == {}
+    assert not (config.staging_dir / "ubuntu").exists()
+    assert StateStore(config.state_dir, "ubuntu").load().last_export_id is None
 
 
 def test_tampered_manifest_checksum(config: Config) -> None:
@@ -1014,3 +1021,222 @@ def test_log_level_after_the_command_wins(
     assert _log_lines(capsys.readouterr().err) == []
     assert main([*base, "--log-level", "debug", "status"]) == 0
     assert ("debug", "config loaded") in _log_lines(capsys.readouterr().err)
+
+
+# Performance of large first imports: one sync, one read of the archive, metadata
+# post-check, one tree walk per repository
+
+
+def _many_files(count: int) -> Tree:
+    tree: Tree = {f"pool/{i % 7}/{i % 3}/p{i}.deb": fnode(f"data {i}") for i in range(count)}
+    tree["dists/Release"] = fnode("r")
+    return tree
+
+
+def test_staging_is_synced_once_not_per_file(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export = build_export(config.export_dir, "20261101T000000Z", "full", _many_files(60))
+    fsyncs = {"count": 0}
+    real_fsync = os.fsync
+
+    def counting_fsync(descriptor: int) -> None:
+        fsyncs["count"] += 1
+        real_fsync(descriptor)
+
+    syncs: list[tuple[bool, bool]] = []
+    real_sync = apply_module._sync_filesystem
+
+    def recording_sync(path: Path) -> None:
+        staging = config.staging_dir / "ubuntu"
+        syncs.append(((staging / "journal.json").exists(), (path / "dists/Release").is_file()))
+        real_sync(path)
+
+    monkeypatch.setattr(os, "fsync", counting_fsync)
+    monkeypatch.setattr(apply_module, "_sync_filesystem", recording_sync)
+
+    assert import_export(export, config, Options()).status == "applied"
+
+    assert syncs == [(False, True)]  # once, after staging, before the journal
+    assert fsyncs["count"] < 10  # journal, inventory copy, state: not one per file
+
+
+def test_post_check_compares_metadata_and_rehashes_only_with_full_check(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hashed: list[str] = []
+    real_digest = apply_module._file_digest
+    real_content = tree_module.content_differences
+
+    def digest(path: Path) -> str:
+        hashed.append(path.name)
+        return real_digest(path)
+
+    def content(*args: Any, **kwargs: Any) -> list[str]:
+        hashed.append("<tree>")
+        return real_content(*args, **kwargs)
+
+    monkeypatch.setattr(apply_module, "_file_digest", digest)
+    monkeypatch.setattr(tree_module, "content_differences", content)
+    full = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    incr = build_export(config.export_dir, "20261102T000000Z", "incr", T2, T1, base=ID1)
+
+    import_export(full, config, Options())
+    import_export(incr, config, Options())
+    assert hashed == []
+
+    third = build_export(config.export_dir, "20261103T000000Z", "incr", T3, T2, base=ID2)
+    import_export(third, config, Options(full_check=True))
+    assert hashed == ["<tree>"]
+
+
+def test_full_post_check_finds_a_file_missing_after_apply(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_apply = apply_module.apply_journal
+
+    def losing_apply(target: Path, files: Path, journal: dict[str, Any]) -> None:
+        real_apply(target, files, journal)
+        (target / "pool/b.deb").unlink()
+
+    monkeypatch.setattr(apply_module, "apply_journal", losing_apply)
+    export = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    with pytest.raises(PostCheckError, match=re.escape("missing: pool/b.deb")):
+        import_export(export, config, Options())
+    assert StateStore(config.state_dir, "ubuntu").load().last_export_id is None
+
+
+def test_full_check_finds_content_changed_after_apply(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_apply = apply_module.apply_journal
+
+    def corrupting_apply(target: Path, files: Path, journal: dict[str, Any]) -> None:
+        real_apply(target, files, journal)
+        path = target / "pool/b.deb"
+        path.write_text("bXb")  # same size and mtime: only a re-hash sees it
+        os.utime(path, ns=(BASE_MTIME, BASE_MTIME))
+
+    monkeypatch.setattr(apply_module, "apply_journal", corrupting_apply)
+    export = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    with pytest.raises(PostCheckError, match=re.escape("sha256: pool/b.deb")):
+        import_export(export, config, Options(full_check=True))
+
+
+def test_archive_parts_are_hashed_once_unless_verify_first(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    real_verify = verify_module.verify
+
+    def counting_verify(directory: Path) -> dict[str, Any]:
+        calls.append(directory.name)
+        return real_verify(directory)
+
+    monkeypatch.setattr(checks_module, "verify", counting_verify)
+    full = build_export(config.export_dir, "20261101T000000Z", "full", T1, split=40)
+    incr = build_export(config.export_dir, "20261102T000000Z", "incr", T2, T1, base=ID1)
+
+    assert import_export(full, config, Options()).status == "applied"
+    assert calls == []
+    assert import_export(incr, config, Options(verify_first=True)).status == "applied"
+    assert calls == [ID2]
+
+
+@pytest.mark.parametrize("verify_first", [False, True])
+def test_damaged_file_data_is_reported_as_verification_failure(
+    config: Config, verify_first: bool
+) -> None:
+    export = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    archive = export / "data.tar"
+    raw = bytearray(archive.read_bytes())
+    offset = raw.index(b"bbb")  # file data, not a tar header
+    raw[offset] = ord("x")
+    archive.write_bytes(bytes(raw))
+
+    with pytest.raises(
+        VerificationFailed, match=r"checksum mismatch for (archive part )?data\.tar"
+    ):
+        import_export(export, config, Options(verify_first=verify_first))
+    assert read_tree(config.mirror_root / "ubuntu") == {}
+    assert not (config.staging_dir / "ubuntu").exists()
+
+
+def test_damaged_metadata_fails_before_extraction(config: Config) -> None:
+    export = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    with (export / "files.json").open("a") as handle:
+        handle.write(" ")
+    with pytest.raises(VerificationFailed, match=re.escape("checksum mismatch for files.json")):
+        import_export(export, config, Options())
+    assert not config.mirror_root.exists()
+
+
+def test_archive_part_must_be_listed_in_manifest(config: Config) -> None:
+    export = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    manifest = export / "MANIFEST.sha256"
+    lines = manifest.read_text().splitlines(keepends=True)
+    manifest.write_text("".join(line for line in lines if not line.endswith("data.tar\n")))
+    with pytest.raises(
+        VerificationFailed, match=re.escape("not covered by MANIFEST.sha256: data.tar")
+    ):
+        import_export(export, config, Options())
+
+
+def test_tree_has_entries_stops_at_the_first_entry(tmp_path: Path) -> None:
+    root = tmp_path / "tree"
+    assert not apply_module._tree_has_entries(root)
+    (root / "a" / "b").mkdir(parents=True)
+    (root / ".tmp").mkdir()
+    (root / ".tmp" / "partial").write_text("x")
+    assert not apply_module._tree_has_entries(root)  # empty dirs and skipped dirs
+    (root / "link").symlink_to("a")
+    assert apply_module._tree_has_entries(root)
+    (root / "link").unlink()
+    (root / "a" / "b" / "f").write_text("x")
+    assert apply_module._tree_has_entries(root)
+
+
+def test_symlinked_parent_is_refused_with_directory_cache(config: Config, tmp_path: Path) -> None:
+    full = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    import_export(full, config, Options())
+    pool = config.mirror_root / "ubuntu" / "pool"
+    outside = tmp_path / "outside"
+    shutil.move(pool, outside)
+    pool.symlink_to(outside)
+    incr = build_export(config.export_dir, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    with pytest.raises(IoFailure, match="unsafe or conflicting parent"):
+        import_export(incr, config, Options())
+    assert not (outside / "c.deb").exists()
+
+
+def test_tree_check_runs_once_after_the_last_pending_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    scans = {"count": 0}
+    real_scan = tree_module.scan_tree
+
+    def counting_scan(root: Path) -> Any:
+        scans["count"] += 1
+        return real_scan(root)
+
+    monkeypatch.setattr(tree_module, "scan_tree", counting_scan)
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    assert scans["count"] == 1  # the full export's post-check, no extra tree check
+
+    (tmp_path / "out" / "ubuntu" / "pool/a.deb").unlink()  # untouched by what follows
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    build_export(inbox, "20261103T000000Z", "incr", T3, T2, base=ID2)
+    capsys.readouterr()
+    assert (
+        main([*base, "import", "--slug", "ubuntu", "--drift-output", str(tmp_path / "rep")]) == 11
+    )
+
+    assert scans["count"] == 2  # once for both incrementals
+    output = capsys.readouterr().out
+    assert output.count("missing: pool/a.deb") == 1
+    assert f"files.json of {ID3}" in output
+    assert (tmp_path / "rep" / "ubuntu" / "missing.txt").read_text() == "pool/a.deb\n"
+    assert main([*base, "import", "--slug", "ubuntu", "--no-tree-check"]) == 0
+    assert scans["count"] == 2

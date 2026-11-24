@@ -83,21 +83,54 @@ after the command wins:
 
 ## Behaviour
 
-1. `mirrorhub.verify.verify()` runs first, followed by extra checks: slug and export id
-   match the directory, contiguous part numbering, symlink targets, path conflicts.
+1. The checks of `mirrorhub.verify.verify()` run first, except hashing the archive
+   parts: every other file in `MANIFEST.sha256` (`files.json`, `manifest.json`,
+   `deleted.txt`) is hashed, the parts must exist and be listed. Then extra checks:
+   slug and export id match the directory, contiguous part numbering, symlink targets,
+   path conflicts. With `--verify-first` the unmodified `verify()` runs and hashes the
+   parts up front as well (reads the archive twice).
 2. Optional `gpgv` check against a keyring from the config; never from the export.
 3. Per-slug lock, state file outside the mirror tree, chain check (base must equal the
    last applied export; a full export over existing data needs `--rebase`).
-4. The archive is streamed (parts re-hashed while reading, optional external `zstd`),
-   every member is checked by hand and written to a staging directory.
-5. A journal is written, deletions run, files are moved with `os.replace`, the tree is
-   checked against `files.json`, then the state is updated. An interrupted run is
+4. The archive is streamed (each part hashed against `MANIFEST.sha256` while reading,
+   optional external `zstd`), every member is checked by hand, written to a staging
+   directory and its size and SHA-256 compared with `files.json`. A damaged part fails
+   at its end; if extraction fails for another reason, the parts are hashed to report
+   a damaged archive as a verification failure (exit code 3). Either way staging is
+   discarded and the tree is not touched.
+5. The staging file system is synced once (`syncfs`, else `sync`), then a journal is
+   written, deletions run, files are moved with `os.replace`, the tree is checked
+   against `files.json` (post-check), then the state is updated. An interrupted run is
    continued by running the same import again.
 6. A copy of the export's `files.json` is kept in `<state_dir>/inventories/<slug>/`
    (only the one for the current state), so `check` works after the export has left
    the inbox.
 7. Quick comparison of the whole tree with `files.json` (see below); skip it with
    `--no-tree-check`.
+
+### Post-check and how often data is read
+
+Every byte is hashed once on its way into staging. The post-check therefore compares
+file system metadata only: type, size, mtime (nanoseconds) and symlink targets of the
+touched paths (incremental export) or of the whole tree, including extra paths (full
+export). `--full-check` additionally reads the whole tree back and hashes it, which
+also finds damage between writing and reading (disk, controller, file system); the
+same check is available at any time as `check --hash`.
+
+| | Archive read | Tree read back |
+|---|---|---|
+| default | once | no (metadata only) |
+| `--verify-first` | twice | no |
+| `--full-check` | once | once, whole tree |
+
+Before this change (importer builds up to `7a3f3b2`) the archive was read twice,
+every file was flushed to disk on its own (`fsync`) and a full export always re-read
+and hashed the whole tree.
+
+`scripts/bench_importer.py` measures import time, fsync calls and bytes read on
+synthetic exports, also for two versions side by side (`--src before=… --src after=…`,
+see the script's help). Run it on the receiver's disk type: an fsync costs about
+0.5 ms on an SSD and 5–20 ms on a hard disk or USB medium.
 
 The export directory is never modified. File modes are 0644 as written by the sender.
 
@@ -112,8 +145,10 @@ neither needs a return path to the sender:
   `files.json`: every path present, same type, size, mtime (nanoseconds) and symlink
   target, no extra paths. No contents are read. The export is applied and the state
   updated anyway; differences are printed and logged ("tree differs from
-  inventory"), and the run ends with exit code 11. A full export, or an import with
-  `--full-check`, already compares everything and skips this step.
+  inventory"), and the run ends with exit code 11. With `--slug` or `--all` the
+  comparison runs once per repository, after the last pending export, not after
+  each one. If the last applied export was a full export, or the import used
+  `--full-check`, its post-check already compared everything and the step is skipped.
 - **`check`** runs the same comparison on demand against the inventory of the last
   applied export; `--hash` also compares SHA-256 of every file the quick check did
   not already report, and finds silent corruption with unchanged size and mtime. It
