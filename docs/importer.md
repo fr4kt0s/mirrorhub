@@ -165,6 +165,13 @@ see the script's help). Run it on the receiver's disk type: an fsync costs about
 
 The export directory is never modified. File modes are 0644 as written by the sender.
 
+## Web UI
+
+`python3 mirrorhub-importer.pyz --config importer.toml serve` starts a small web
+interface with all commands of this page (no login by default, listens on
+127.0.0.1:8080); Docker image: `make importer-image`. See
+[importer-ui.md](importer-ui.md).
+
 ## Event files for monitoring
 
 With `events_dir` in `importer.toml` the importer writes one JSON file per event,

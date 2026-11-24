@@ -1,16 +1,33 @@
-# Receiver-side importer (CLI only, standard library). Not a production-ready image.
-FROM python:3.12-slim
+# syntax=docker/dockerfile:1
+# Receiver-side importer with its web UI (docs/importer-ui.md).
+#
+#   make importer-image            # docker build -f Dockerfile.importer -t mirrorhub-importer .
+#   docker run ... mirrorhub-importer                 # web UI on port 8080 (serve)
+#   docker run ... mirrorhub-importer import --all    # any CLI command instead
+#
+# The image holds exactly the file `make importer` builds (mirrorhub-importer.pyz,
+# standard library only) plus zstd and gpgv.
 
+FROM python:3.12-slim AS build
+WORKDIR /src
+COPY scripts/build_importer.py scripts/build_importer.py
+COPY src/mirrorhub/__init__.py src/mirrorhub/verify.py src/mirrorhub/buildinfo.py src/mirrorhub/
+COPY src/mirrorhub/importer src/mirrorhub/importer
+# Commit shown by --version and the UI; the build context usually has no git (make passes it).
+ARG MIRRORHUB_COMMIT=
+RUN MIRRORHUB_COMMIT="${MIRRORHUB_COMMIT}" python scripts/build_importer.py --output /out/mirrorhub-importer.pyz
+
+FROM python:3.12-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends zstd gpgv \
     && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-COPY src/mirrorhub/__init__.py src/mirrorhub/verify.py /app/mirrorhub/
-COPY src/mirrorhub/importer /app/mirrorhub/importer
-ENV PYTHONPATH=/app \
-    PYTHONUNBUFFERED=1 \
-    MIRRORHUB_IMPORTER_CONFIG=/config/importer.toml
-
+COPY --from=build /out/mirrorhub-importer.pyz /app/mirrorhub-importer.pyz
+ENV PYTHONUNBUFFERED=1 \
+    MIRRORHUB_IMPORTER_CONFIG=/config/importer.toml \
+    MIRRORHUB_IMPORTER_UI_LISTEN=0.0.0.0:8080
 USER 10001:10001
-ENTRYPOINT ["python", "-m", "mirrorhub.importer"]
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+    CMD ["python", "-c", "import sys, urllib.request; sys.exit(urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4).status != 200)"]
+ENTRYPOINT ["python", "/app/mirrorhub-importer.pyz"]
+CMD ["serve"]

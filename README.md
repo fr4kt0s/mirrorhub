@@ -576,6 +576,12 @@ Example:
 
 Webhooks in the generic JSON format receive the same fields.
 
+### Importer web UI
+
+`python3 mirrorhub-importer.pyz --config importer.toml serve` (or the Docker image
+from `make importer-image`) offers all importer commands in a browser, with live
+output: [docs/importer-ui.md](docs/importer-ui.md).
+
 ### Checkmk on the receiving side
 
 `contrib/checkmk/mirrorhub_events.py` is a Checkmk local check for the receiving

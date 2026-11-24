@@ -178,6 +178,17 @@ def _parser() -> argparse.ArgumentParser:
     take.add_argument(
         "--hash", action="store_true", help="also compare SHA-256 (reads every file once)"
     )
+    web = commands.add_parser(
+        "serve",
+        parents=[common],
+        help="web UI for all commands (no login by default; see docs/importer-ui.md)",
+    )
+    web.add_argument(
+        "--listen",
+        default=os.environ.get("MIRRORHUB_IMPORTER_UI_LISTEN", "127.0.0.1:8080"),
+        metavar="HOST:PORT",
+        help="address to listen on (default 127.0.0.1:8080 or MIRRORHUB_IMPORTER_UI_LISTEN)",
+    )
     return parser
 
 
@@ -630,6 +641,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         events.configure(config.events_dir, config.events_keep_days)
         if arguments.command == "status":
             return _status(config, arguments.slug)
+        if arguments.command == "serve":
+            from mirrorhub.importer import webui  # only the UI needs http.server
+
+            try:
+                return webui.serve(config, Path(location), arguments.listen)
+            except (ValueError, OSError) as exc:
+                raise ConfigError(f"cannot start the web UI: {exc}") from exc
         if arguments.command == "check":
             return _check(config, arguments)
         if arguments.command == "adopt":
