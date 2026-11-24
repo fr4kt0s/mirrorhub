@@ -1,4 +1,4 @@
-"""Dashboard card "Next schedules"."""
+"""Dashboard card "Next schedules" (full width, above "Recent failures")."""
 
 import re
 from datetime import timedelta
@@ -28,7 +28,7 @@ def _schedule(db: Session, slug: str, name: str, *, job_type: str, enabled: bool
 
 
 def _next_schedules_card(html: str) -> str:
-    match = re.search(r"<h2>Next schedules</h2>(.*?)</article>", html, re.S)
+    match = re.search(r"<h2>Next schedules</h2>(.*?)</section>", html, re.S)
     assert match, "card 'Next schedules' missing"
     return match.group(1)
 
@@ -48,3 +48,15 @@ def test_next_schedules_show_the_repository(admin: TestClient) -> None:
 
 def test_next_schedules_empty(admin: TestClient) -> None:
     assert "Nothing scheduled." in _next_schedules_card(admin.get("/").text)
+
+
+def test_next_schedules_full_width_above_failures(admin: TestClient) -> None:
+    with Session(get_engine()) as db:
+        _schedule(db, "dash-layout", "Layout repo", job_type="sync", enabled=True)
+    html = admin.get("/").text
+    grid = re.search(r'<section class="grid">(.*?)</section>', html, re.S)
+    assert grid and "Next schedules" not in grid.group(1)  # not squeezed into the grid
+    assert html.index("<h2>Next schedules</h2>") < html.index("<h2>Recent failures</h2>")
+    # phones: rows stacked with labels instead of a table that scrolls sideways
+    assert html.count('class="table stack"') == 2
+    assert 'data-label="Next run"' in _next_schedules_card(html)
