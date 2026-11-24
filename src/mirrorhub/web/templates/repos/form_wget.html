@@ -45,7 +45,7 @@
     </label>
   </fieldset>
 
-  <fieldset class="wget-tree-only">
+  <fieldset class="wget-tree-only wget-generator-input">
     <legend>Architectures</legend>
     <label>Architectures to keep
       <input name="wget_keep_arches" value="{{ values.wget_keep_arches }}" placeholder="amd64, i386">
@@ -59,7 +59,7 @@
     {% if generated %}<p class="muted">Generated exclude regex (combined with the exclude regex below): <code>{{ generated }}</code></p>{% endif %}
   </fieldset>
 
-  <fieldset class="wget-tree-only">
+  <fieldset class="wget-tree-only wget-generator-input">
     <legend>Optional regex filters</legend>
     <p class="muted">POSIX regular expressions are matched against the complete URL.</p>
     <label>Include regex
@@ -69,6 +69,8 @@
       <input name="exclude_regex" value="{{ values.exclude_regex }}" placeholder="https://example\\.com/pool/.*\\.sig$">
     </label>
   </fieldset>
+
+  {% include "repos/_wget_command.html" %}
 
   {% include "repos/_retry.html" %}
   {% include "repos/_export.html" %}

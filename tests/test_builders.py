@@ -270,7 +270,10 @@ def _wget_tree(**overrides: Any) -> Repository:
 
 
 def _reject_regex(argv: list[str]) -> str | None:
-    return argv[argv.index("--reject-regex") + 1] if "--reject-regex" in argv else None
+    for item in argv:
+        if item.startswith("--reject-regex="):
+            return item.partition("=")[2]
+    return None
 
 
 def test_wget_tree_keep_arches_builds_reject_regex(configured: Settings) -> None:
@@ -289,13 +292,13 @@ def test_wget_tree_keep_arches_combines_with_exclude_regex(configured: Settings)
     regex = _reject_regex(argv)
     assert regex is not None
     assert regex.startswith("(/(test|nightly)/)|(")
-    assert argv.count("--reject-regex") == 1
+    assert sum(item.startswith("--reject-regex") for item in argv) == 1
 
 
 def test_wget_tree_without_filters_has_no_regex(configured: Settings) -> None:
     repo = _wget_tree()
     argv = list(_build(repo, _job(repo), get_settings()).steps[-1].argv)
-    assert "--reject-regex" not in argv
+    assert not any(item.startswith("--reject-regex") for item in argv)
     assert "--regex-type=posix" not in argv
 
 
@@ -324,3 +327,36 @@ def test_wget_tree_dry_run_keeps_listings(configured: Settings) -> None:
     argv = list(plan.steps[0].argv)
     assert "--spider" in argv
     assert "--timestamping" not in argv
+
+
+def test_wget_tree_custom_args_replace_generated(configured: Settings) -> None:
+    repo = _wget_tree(
+        wget_custom_args=["--recursive", "--level=8", "--no-parent", "--wait=2"],
+        wget_keep_arches=["amd64"],
+        exclude_regex="/test/",
+    )
+    plan = _build(repo, _job(repo), get_settings())
+    argv = list(plan.steps[-1].argv)
+    assert argv == [
+        "wget",
+        "--recursive",
+        "--level=8",
+        "--no-parent",
+        "--wait=2",
+        f"--directory-prefix={plan.target}",
+        "--timestamping",
+        "https://download.docker.com/linux/ubuntu/",
+    ]
+
+
+def test_wget_tree_custom_args_dry_run_uses_spider(configured: Settings) -> None:
+    repo = _wget_tree(wget_custom_args=["--recursive"])
+    argv = list(_build(repo, _job(repo, dry_run=True), get_settings()).steps[-1].argv)
+    assert "--spider" in argv
+    assert "--timestamping" not in argv
+
+
+def test_wget_tree_invalid_custom_args_are_a_build_error(configured: Settings) -> None:
+    repo = _wget_tree(wget_custom_args=["--use-askpass=/bin/sh"])
+    with pytest.raises(BuildError):
+        _build(repo, _job(repo), get_settings())

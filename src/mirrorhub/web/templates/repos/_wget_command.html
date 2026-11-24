@@ -1,0 +1,24 @@
+{# wget command of a directory-tree mirror. Re-rendered by POST /repos/wget-preview
+   whenever a field of the form changes (htmx), so the generated command stays current. #}
+<fieldset id="wget-command" class="wget-tree-only"
+          hx-post="/repos/wget-preview" hx-trigger="change from:closest form"
+          hx-include="closest form" hx-target="this" hx-swap="outerHTML">
+  <legend>wget command</legend>
+  <div class="wget-generated">
+    <p class="muted">MirrorHub runs this command (generated from the fields above):</p>
+    <pre class="command"><code>{{ values.wget_generated }}</code></pre>
+  </div>
+  <label class="check"><input type="checkbox" name="wget_custom" {% if values.wget_custom %}checked{% endif %}>
+    Edit the command by hand</label>
+  <div class="wget-custom-only">
+    <textarea name="wget_command" rows="8" spellcheck="false" aria-label="wget command">{{ values.wget_command }}</textarea>
+    <small>Saved as written and used instead of the generated command; <em>Architectures</em>
+      and <em>regex filters</em> are then ignored. Checked on save: only long options from the
+      allowlist (operations handbook 4.6), e.g. <code>--wait=2</code>, <code>--accept=deb,gz</code>,
+      <code>--exclude-directories=/a,/b</code>. MirrorHub keeps the URL,
+      <code>--directory-prefix</code>, <code>--timestamping</code> (sync) and <code>--spider</code>
+      (dry run). Untick to go back to the generated command.</small>
+    <button type="button" class="btn btn-secondary" hx-post="/repos/wget-preview?reset=1"
+            hx-include="closest form" hx-target="#wget-command" hx-swap="outerHTML">Reset to generated command</button>
+  </div>
+</fieldset>

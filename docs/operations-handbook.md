@@ -61,7 +61,7 @@ Run all commands in the project directory on the Docker host.
    docker compose ps          # all healthy, init-volumes "exited (0)"
    ```
 
-5. Check the database revision (must match the newest file in `migrations/versions`, currently `0009`):
+5. Check the database revision (must match the newest file in `migrations/versions`, currently `0010`):
 
    ```sh
    docker compose exec web python -c "import sqlite3; print(sqlite3.connect('/var/lib/mirrorhub/db/mirrorhub.sqlite3').execute('select version_num from alembic_version').fetchone()[0])"
@@ -284,7 +284,7 @@ The practical tests 3.1–3.4 are referenced here, not repeated. The P1 tests al
 #### A. Sender: deployment, login, security
 
 - [ ] **A1** (P1) `docker compose ps` → all services `healthy`, `init-volumes` `exited (0)`.
-- [ ] **A2** (P1) Database revision (1.1 step 5) → `0009`.
+- [ ] **A2** (P1) Database revision (1.1 step 5) → `0010`.
 - [ ] **A3** (P1) Smoke test → 8/8.
 - [ ] **A4** (P1) Commit in the footer and in `web`, `worker` and `worker-export` equals `git rev-parse --short=12 HEAD`:
   `for s in web worker worker-export; do docker compose exec $s python -c "from mirrorhub import buildinfo; print('$s', buildinfo.describe())"; done`
@@ -327,6 +327,7 @@ The practical tests 3.1–3.4 are referenced here, not repeated. The P1 tests al
 - [ ] **C9** (P2) wget repository, mode *Whole directory tree* → saves without a file list (#51), sync succeeds, tree below the upstream root complete.
 - [ ] **C26** (P2) wget tree `download.docker.com` `/linux/ubuntu` with *Architectures to keep* `amd64` → `/data/<slug>/dists/*/pool/stable/` contains only `amd64`; `binary-arm64` etc. missing; edit page shows the generated regex; include/exclude regex survive editing.
 - [ ] **C27** (P2) Preset *Docker CE (Ubuntu)* with the Docker key imported → debmirror sync (dry run, then real) succeeds.
+- [ ] **C28** (P2) wget tree: the form shows the full command and updates it when root path or *Architectures to keep* change; *Edit the command by hand* + `--wait=2` → saved, job log shows `--wait=2`; `--use-askpass=/bin/sh` or `-r` → form error, nothing saved; untick → generated command again.
 - [ ] **C10** (P1) Configuration error (e.g. invalid option) → job `failed` at once, no retry, the message names the cause and does not contain "exit code None".
 - [ ] **C11** (P2) Unreachable host → retries as configured, then `failed` and a `retry_exhausted` notification.
 - [ ] **C12** (P2) Cancel a running sync → job `cancelled`, no sync process left (`docker compose exec worker ps aux`).
@@ -694,6 +695,14 @@ How a file-list sync runs, and what follows from it:
 - The first file that fails (404, timeout) stops the job; the remaining files are not tried. The retry policy then starts the whole job again. Check the job log for the last `$ wget …` line to find the file.
 - Every sync downloads all files again (`wget -O` cannot compare timestamps). For large files or long lists, schedule the sync accordingly.
 - Switching a repository from *File list* to *Whole directory tree* clears the stored list; files already in `/data/<slug>/` stay.
+
+**wget command** (tree mode, from migration `0010`): the form shows the complete command MirrorHub runs, updated while you change the fields. Tick *Edit the command by hand* to change it; the text is checked on save and then used instead of the generated options (*Architectures* and *regex filters* are ignored while it is on; untick to generate the command from the fields again, *Reset to generated command* refills the text field).
+
+- MirrorHub keeps control of the URL (change host, root path or method instead), `--directory-prefix` (always the repository directory), `--timestamping` (every sync) and `--spider` (dry runs), and of the preceding `find … -name index.html -delete` step. `--directory-prefix=<shown value>` and `--timestamping` may stay in the text; other values are refused.
+- Only long options (`--recursive`, not `-r`); values as `--wait=2` or `--wait 2`; quoting as in a shell (`'--accept-regex=\.deb$'`); a trailing `\` continues the line.
+- Allowed: recursion and layout (`--recursive`, `--mirror`, `--level` 0–100 or `inf`, `--no-parent`, `--no-host-directories`, `--cut-dirs` 0–50, `--force-directories`, `--protocol-directories`, `--relative`, `--page-requisites`, `--adjust-extension`, `--convert-links`, `--trust-server-names`, `--restrict-file-names`, `--no-remove-listing`), filters (`--accept`, `--reject`, `--accept-regex`, `--reject-regex`, `--regex-type` posix/pcre, `--include-directories`, `--exclude-directories`, `--ignore-case`), network (`--tries` 1–50, `--timeout`, `--dns-timeout`, `--connect-timeout`, `--read-timeout` 1–3600, `--wait` 0–300, `--waitretry` 0–600, `--random-wait`, `--limit-rate` e.g. `2048k`, `--retry-connrefused`, `--inet4-only`, `--inet6-only`, `--prefer-family`, `--no-dns-cache`, `--no-cache`, `--no-cookies`, `--no-http-keep-alive`, `--ignore-length`, `--no-iri`, `--user-agent`) and output (`--no-verbose`, `--verbose`, `--quiet`, `--continue`). The list is `ALLOWED` in `src/mirrorhub/wgetcmd.py`.
+- Refused on purpose, among others: options that run programs or read/write files outside the repository directory (`--use-askpass`, `--execute`, `--config`, `--output-document`, `--output-file`, `--append-output`, `--input-file`, `--post-file`, `--body-file`, `--load-cookies`, `--save-cookies`, `--certificate`, `--private-key`, `--ca-certificate`, `--warc-file`), options that leave the upstream host (`--span-hosts`, `--domains`), credentials and headers (`--user`, `--password`, `--header`), `--no-check-certificate`, `--background`, `--no-clobber` (conflicts with `--timestamping`).
+- YAML: `wget_custom_args: [--recursive, --level=inf, …]` (options only, as stored); empty = generated.
 
 In the YAML configuration there is no mode field: an empty or missing `extra_files` means the whole tree, entries mean only those files (`extra_files: [{url: …, path: …}]`, path always explicit). Tree filters: `include_regex`, `exclude_regex`, `wget_keep_arches: [amd64, i386]` (before PR #51 the two regex fields were missing from the YAML export and were cleared when a wget repository was edited in the web interface).
 

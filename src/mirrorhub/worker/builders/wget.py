@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mirrorhub import archfilter
+from mirrorhub import archfilter, wgetcmd
 from mirrorhub.models import Job, Repository
 from mirrorhub.security import validators
 
@@ -67,61 +67,40 @@ def build(repo: Repository, job: Job, target: Path, cwd: Path) -> BuildPlan:
 
         return BuildPlan(steps=steps, cwd=cwd, target=target)
 
-    root = repo.upstream_root.strip("/")
-    depth = 0 if not root else len(root.split("/"))
-    url = (
-        f"{repo.method}://{repo.upstream_host}/{root}/"
-        if root
-        else f"{repo.method}://{repo.upstream_host}/"
-    )
-
-    argv = [
-        "wget",
-        "--recursive",
-        # wget stops at depth 5 by default; package pools are often deeper
-        # (dists/<suite>/pool/<channel>/<arch>/<file> below the root). --no-parent
-        # already keeps the walk below the upstream root.
-        "--level=inf",
-        "--no-parent",
-        "--no-host-directories",
-        f"--cut-dirs={depth}",
-        f"--directory-prefix={target}",
-        "--no-verbose",
-        "--tries=3",
-        "--timeout=60",
-    ]
-    error = archfilter.validate_keep(list(repo.wget_keep_arches or []))
-    if error:
-        raise BuildError(error)
-    reject = archfilter.combine_reject(repo.exclude_regex, list(repo.wget_keep_arches or []))
-    if repo.include_regex or reject:
-        argv.append("--regex-type=posix")
-    if repo.include_regex:
-        argv.extend(["--accept-regex", repo.include_regex])
-    if reject:
-        argv.extend(["--reject-regex", reject])
-    if repo.bwlimit_kbps:
-        argv.append(f"--limit-rate={repo.bwlimit_kbps}k")
-    argv.extend(repo.extra_args)
+    url = wgetcmd.tree_url(repo.method, repo.upstream_host, repo.upstream_root)
+    custom_args = list(repo.wget_custom_args or [])
+    if custom_args:
+        error = wgetcmd.validate_args(custom_args)
+        if error:
+            raise BuildError(error)
+        options = custom_args
+    else:
+        error = archfilter.validate_keep(list(repo.wget_keep_arches or []))
+        if error:
+            raise BuildError(error)
+        options = wgetcmd.generated_args(
+            upstream_root=repo.upstream_root,
+            include_regex=repo.include_regex,
+            exclude_regex=repo.exclude_regex,
+            keep_arches=list(repo.wget_keep_arches or []),
+            bwlimit_kbps=repo.bwlimit_kbps,
+            extra_args=repo.extra_args,
+        )
+    argv = wgetcmd.full_argv(options, target=str(target), url=url, dry_run=job.dry_run)
 
     tree_steps: list[Step] = []
-    if job.dry_run:
-        argv.append("--spider")
-    else:
-        # Only fetch files that changed upstream (Last-Modified / size), as --mirror does.
-        argv.append("--timestamping")
-        if target.is_dir():
-            # With --timestamping wget neither re-downloads nor re-parses an unchanged
-            # directory listing, so the walk would stop at the first stored index.html
-            # and new files below it would never be found. Listings are small: drop
-            # them so every run reads them fresh; files keep their timestamps.
-            tree_steps.append(
-                Step(
-                    ("find", str(target), "-type", "f", "-name", "index.html", "-delete"),
-                    "drop stored directory listings",
-                )
+    # full_argv adds --timestamping to a sync: only files that changed upstream are fetched.
+    if not job.dry_run and target.is_dir():
+        # With --timestamping wget neither re-downloads nor re-parses an unchanged
+        # directory listing, so the walk would stop at the first stored index.html
+        # and new files below it would never be found. Listings are small: drop
+        # them so every run reads them fresh; files keep their timestamps.
+        tree_steps.append(
+            Step(
+                ("find", str(target), "-type", "f", "-name", "index.html", "-delete"),
+                "drop stored directory listings",
             )
-    argv.append(url)
+        )
     tree_steps.append(Step(tuple(argv), f"mirror tree {repo.upstream_host}{repo.upstream_root}"))
 
     return BuildPlan(

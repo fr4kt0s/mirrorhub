@@ -243,3 +243,41 @@ repositories:
     response = _post(admin, csrf_token, {"yaml_text": document, "apply": "1"})
     assert "architectures to keep: unknown" in response.text
     assert _repos() == []
+
+
+def test_wget_custom_args_round_trip(admin: TestClient, csrf_token: str) -> None:
+    document = """\
+mirrorhub_config: 1
+repositories:
+  - slug: tree
+    name: Tree
+    kind: generic
+    tool: wget
+    method: https
+    upstream_host: example.org
+    upstream_root: /pub
+    wget_custom_args: [--recursive, --level=inf, --no-parent, --wait=2]
+"""
+    applied = _post(admin, csrf_token, {"yaml_text": document, "apply": "1"})
+    assert applied.status_code == 200
+    assert _repos()[0].wget_custom_args == ["--recursive", "--level=inf", "--no-parent", "--wait=2"]
+    exported = yaml.safe_load(admin.get("/config/export.yaml").text)["repositories"][0]
+    assert exported["wget_custom_args"][-1] == "--wait=2"
+
+
+def test_wget_custom_args_are_checked_on_import(admin: TestClient, csrf_token: str) -> None:
+    document = """\
+mirrorhub_config: 1
+repositories:
+  - slug: tree
+    name: Tree
+    kind: generic
+    tool: wget
+    method: https
+    upstream_host: example.org
+    upstream_root: /pub
+    wget_custom_args: [--recursive, --use-askpass=/bin/sh]
+"""
+    response = _post(admin, csrf_token, {"yaml_text": document, "apply": "1"})
+    assert "--use-askpass is not allowed" in response.text
+    assert _repos() == []

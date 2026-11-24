@@ -42,6 +42,7 @@ REPO_FIELDS: tuple[str, ...] = (
     "include_regex",
     "exclude_regex",
     "wget_keep_arches",
+    "wget_custom_args",
     "extra_args",
     "retry_policy",
     "export_mode",
@@ -83,6 +84,7 @@ def _defaults() -> dict[str, Any]:
         "include_regex": "",
         "exclude_regex": "",
         "wget_keep_arches": [],
+        "wget_custom_args": [],
         "extra_args": [],
         "retry_policy": default_retry_policy(),
         "export_mode": "incr",
@@ -190,6 +192,7 @@ def build_plan(
             "exclude_patterns",
             "extra_args",
             "wget_keep_arches",
+            "wget_custom_args",
         ):
             data[list_field] = _as_list(data[list_field])
         for text_field in ("include_regex", "exclude_regex"):

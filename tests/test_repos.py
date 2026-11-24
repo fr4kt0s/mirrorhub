@@ -5,8 +5,10 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlmodel import Session, select
 
+from mirrorhub import wgetcmd
 from mirrorhub.db import get_engine
 from mirrorhub.models import AuditLog, Preset, Repository
+from mirrorhub.settings import get_settings
 
 BASE_FORM: dict[str, str] = {
     "slug": "debian-bookworm",
@@ -503,3 +505,107 @@ def test_pages_require_login(client: TestClient, path: str) -> None:
     response = client.get(path)
     assert response.status_code == 303
     assert response.headers["location"] == "/login"
+
+
+# --- wget command field ----------------------------------------------------------
+
+
+def _generated_line(**overrides: object) -> str:
+    fields: dict[str, object] = {"upstream_root": "/pub"}
+    fields.update(overrides)
+    return wgetcmd.display(
+        wgetcmd.generated_args(**fields),  # type: ignore[arg-type]
+        target=str(get_settings().data_dir / "files"),
+        url="https://example.org/pub/",
+    )
+
+
+def test_wget_edit_page_shows_full_command(admin: TestClient, csrf_token: str) -> None:
+    form = _wget_form(wget_mode="tree", wget_keep_arches="amd64")
+    assert _post(admin, csrf_token, "/repos", form).status_code == 303
+    page = admin.get(f"/repos/{_repos()[0].id}/edit").text
+    assert "wget --recursive --level=inf --no-parent" in page
+    assert f"--directory-prefix={get_settings().data_dir / 'files'}" in page
+    assert "--timestamping https://example.org/pub/" in page
+    assert 'name="wget_custom" >' in page or 'name="wget_custom">' in page
+
+
+def test_wget_custom_command_saved_and_shown(admin: TestClient, csrf_token: str) -> None:
+    command = _generated_line() + " --wait=2"
+    form = _wget_form(wget_mode="tree", wget_custom="on", wget_command=command)
+    assert _post(admin, csrf_token, "/repos", form).status_code == 303
+    repo = _repos()[0]
+    assert "--wait=2" in repo.wget_custom_args
+    assert "--recursive" in repo.wget_custom_args
+    assert not any(arg.startswith("--directory-prefix") for arg in repo.wget_custom_args)
+    page = admin.get(f"/repos/{repo.id}/edit").text
+    assert 'name="wget_custom" checked' in page
+    assert "--wait=2" in page
+
+    # Saving the edit page unchanged keeps the command.
+    form = _wget_form(
+        wget_mode="tree",
+        wget_custom="on",
+        wget_command=wgetcmd.display(
+            repo.wget_custom_args,
+            target=str(get_settings().data_dir / "files"),
+            url="https://example.org/pub/",
+        ),
+    )
+    assert _post(admin, csrf_token, f"/repos/{repo.id}", form).status_code == 303
+    assert _repos()[0].wget_custom_args == repo.wget_custom_args
+
+
+def test_wget_custom_command_rejects_dangerous_options(admin: TestClient, csrf_token: str) -> None:
+    command = "wget --recursive --use-askpass=/bin/sh --output-document=/etc/passwd"
+    form = _wget_form(wget_mode="tree", wget_custom="on", wget_command=command)
+    response = _post(admin, csrf_token, "/repos", form)
+    assert response.status_code == 400
+    assert "--use-askpass is not allowed" in response.text
+    assert "--output-document is not allowed" in response.text
+    assert _repos() == []
+
+
+def test_wget_unticking_custom_goes_back_to_generated(admin: TestClient, csrf_token: str) -> None:
+    form = _wget_form(wget_mode="tree", wget_custom="on", wget_command="wget --recursive")
+    assert _post(admin, csrf_token, "/repos", form).status_code == 303
+    repo = _repos()[0]
+    assert repo.wget_custom_args == ["--recursive"]
+    form = _wget_form(wget_mode="tree", wget_command="wget --recursive")
+    assert _post(admin, csrf_token, f"/repos/{repo.id}", form).status_code == 303
+    assert _repos()[0].wget_custom_args == []
+
+
+def test_wget_file_mode_ignores_custom_command(admin: TestClient, csrf_token: str) -> None:
+    form = _wget_form(
+        wget_mode="files",
+        extra_files="https://example.org/pub/a.iso",
+        wget_custom="on",
+        wget_command="wget --use-askpass=/bin/sh",
+    )
+    assert _post(admin, csrf_token, "/repos", form).status_code == 303
+    assert _repos()[0].wget_custom_args == []
+
+
+def test_wget_preview_follows_the_fields(admin: TestClient, csrf_token: str) -> None:
+    form = _wget_form(upstream_root="/linux/ubuntu", wget_keep_arches="amd64")
+    response = _post(admin, csrf_token, "/repos/wget-preview", form)
+    assert response.status_code == 200
+    assert 'id="wget-command"' in response.text
+    assert "--cut-dirs=2" in response.text
+    assert "arm64" in response.text
+    assert "<html" not in response.text.lower()
+
+
+def test_wget_preview_keeps_edited_text_and_resets(admin: TestClient, csrf_token: str) -> None:
+    form = _wget_form(wget_custom="on", wget_command="wget --recursive --wait=7")
+    kept = _post(admin, csrf_token, "/repos/wget-preview", form).text
+    assert "wget --recursive --wait=7</textarea>" in kept
+    reset = _post(admin, csrf_token, "/repos/wget-preview?reset=1", form).text
+    assert "--wait=7</textarea>" not in reset
+    assert "--cut-dirs=1" in reset
+
+
+def test_wget_preview_requires_login(client: TestClient) -> None:
+    response = client.post("/repos/wget-preview", data={}, follow_redirects=False)
+    assert response.status_code in (303, 401, 403)
