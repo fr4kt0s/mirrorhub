@@ -76,7 +76,7 @@ def emit(kind: str, repo: str | None, **fields: object) -> Path | None:
     document: dict[str, object] = {
         "schema": SCHEMA,
         "event": kind,
-        "time": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "time": now.isoformat(timespec="microseconds").replace("+00:00", "Z"),
         "source": "importer",
         "host": socket.gethostname(),
         "repo": repo,
