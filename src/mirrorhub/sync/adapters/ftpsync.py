@@ -24,8 +24,10 @@ class FtpsyncAdapter(SyncAdapter):
         if plan.dry_run:
             raise SyncConfigurationError("ftpsync does not support dry runs")
 
-        if not plan.architectures or "none" in plan.architectures:
-            raise SyncConfigurationError("ftpsync requires at least one architecture")
+        # Empty ARCH_INCLUDE and ARCH_EXCLUDE means "all architectures" (form hint,
+        # builder); the plan model rejects both-set and "none".
+        if plan.architectures and plan.arch_exclude:
+            raise SyncConfigurationError("ftpsync supports either ARCH_INCLUDE or ARCH_EXCLUDE")
 
     def build_plan(
         self,

@@ -20,7 +20,13 @@
   <article class="card">
     <h2>Next schedules</h2>
     <ul class="plain">
-      {% for s in upcoming %}<li><code>{{ s.cron_expr }}</code> {{ s.next_fire_at | ts }}</li>
+      {% for s in upcoming %}
+        {% set repo = repos.get(s.repo_id) %}
+        <li>
+          {% if repo %}<strong title="{{ repo.name }}">{{ repo.slug }}</strong>{% else %}<strong>#{{ s.repo_id }}</strong>{% endif %}
+          <span class="muted">{{ s.job_type }}</span>
+          <code>{{ s.cron_expr }}</code> {{ s.next_fire_at | ts }}
+        </li>
       {% else %}<li class="muted">Nothing scheduled.</li>{% endfor %}
     </ul>
     <a href="/schedules">Schedules</a>

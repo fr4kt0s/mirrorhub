@@ -3,31 +3,38 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false, "allowScriptTags": false, "selfRequestsOnly": true}'>
   <title>{% block title %}MirrorHub{% endblock %} - MirrorHub</title>
+  <script src="/static/theme.js"></script>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
-<body hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+<body hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}' class="{% if user %}with-sidebar{% else %}no-sidebar{% endif %}">
 {% if user %}
-  <header class="topbar">
-    <a class="brand" href="/">MirrorHub</a>
-    <nav>
+  <aside class="sidebar">
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span>MirrorHub</a>
+    <nav aria-label="Main">
       {% for label, href in nav %}
-        <a href="{{ href }}"{% if request.url.path == href %} class="active"{% endif %}>{{ label }}</a>
+        <a href="{{ href }}"{% if request.url.path == href or (href != "/" and request.url.path.startswith(href ~ "/")) %} class="active" aria-current="page"{% endif %}>{{ label }}</a>
       {% endfor %}
     </nav>
-    <form method="post" action="/logout" class="logout">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <span class="muted">{{ user.admin.username }}</span>
-      <button type="submit" class="btn btn-secondary">Log out</button>
-    </form>
-  </header>
+    <div class="sidebar-foot">
+      <button type="button" id="theme-toggle" class="btn btn-ghost">Theme: auto</button>
+      <form method="post" action="/logout" class="logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <span class="user">{{ user.admin.username }}</span>
+        <button type="submit" class="btn btn-ghost">Log out</button>
+      </form>
+    </div>
+  </aside>
 {% endif %}
-  <main class="container">
-    {% block content %}{% endblock %}
-  </main>
-  <footer class="footer muted">MirrorHub {{ version }}</footer>
+  <div class="page">
+    <main class="container">
+      {% block content %}{% endblock %}
+    </main>
+    <footer class="footer muted">MirrorHub {{ version }}</footer>
+  </div>
 </body>
 </html>

@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-import os
 import re
 import secrets
 from functools import lru_cache
@@ -13,7 +12,7 @@ from urllib.parse import urlsplit
 
 from fastapi import Request
 
-from mirrorhub.settings import get_secret_key
+from mirrorhub.settings import get_secret_key, get_settings
 
 log = logging.getLogger("mirrorhub.security")
 
@@ -104,7 +103,7 @@ def origin_ok(request: Request) -> bool:
     if source is None:
         return False
 
-    configured = os.environ.get("MIRRORHUB_PUBLIC_ORIGIN", "")
+    configured = get_settings().public_origin
     if configured:
         target = _parse_origin(configured)
         if target is None or target[0] != "https":

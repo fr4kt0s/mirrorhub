@@ -12,6 +12,10 @@ consistency, secure deployment, or compliance with all project requirements.
 
 Review docs/release-checklist.md before deployment.
 
+Operations (deployment, updates, tests to tick off, key commands, what to do
+when something goes wrong): docs/operations-handbook.md. The P1 tests alone, as
+a sign-off sheet: docs/acceptance-p1.md.
+
 ## Stack
 
 - Python 3.12.
@@ -67,11 +71,13 @@ uses it for variable substitution.
 | MIRRORHUB_GLOBAL_CONCURRENCY | 2 | Initial global limit of parallel jobs; later changed on the Settings page. |
 | MIRRORHUB_HEARTBEAT_INTERVAL_S | 10 | Initial worker heartbeat interval; Settings page afterwards. |
 | MIRRORHUB_HEARTBEAT_STALE_S | 60 | Initial stale-job threshold; Settings page afterwards. |
-| MIRRORHUB_LOG_RETENTION_DAYS | 30 | Initial job-log retention; Settings page afterwards. |
+| MIRRORHUB_LOG_RETENTION_DAYS | 30 | Initial retention of job logs and finished jobs; Settings page afterwards. |
+| MIRRORHUB_EXPORT_META_KEEP | 30 | Export metadata copies kept per repository on the state volume (minimum 1). Each can be the base of an "incremental since" export. |
 | MIRRORHUB_SESSION_TTL_S | 28800 | Login session lifetime (minimum 300). |
 | MIRRORHUB_LOGIN_MAX_ATTEMPTS | 5 | Failed logins per username and client IP before a lockout. |
 | MIRRORHUB_LOGIN_LOCKOUT_S | 300 | First lockout; doubles with each further failure, capped at one hour. |
 | MIRRORHUB_MAX_GPG_UPLOAD_BYTES | 2097152 | Maximum size of an uploaded key file. |
+| MIRRORHUB_MAX_REQUEST_BODY | 16MB | Largest request body Caddy passes to the web container (Caddy size syntax). Keep it above MIRRORHUB_MAX_GPG_UPLOAD_BYTES and the 1 MiB YAML import limit. |
 | MIRRORHUB_TAG | dev | Image tag. |
 
 ### Proxy network
@@ -306,6 +312,21 @@ Changing the Caddy CA volume changes the CA identity. Back up that volume.
   (MIRRORHUB_PROXY_IP). Browsers on the Docker host itself appear as the
   network gateway, for example 172.31.254.1; remote clients appear with their
   own address.
+- Each client IP gets at most 10 login attempts per minute. Further attempts are
+  rejected without a password check, and only the first rejection per address and
+  minute is written to the audit log. At most four password checks (argon2,
+  64 MiB each) run at the same time.
+- Caddy rejects request bodies larger than MIRRORHUB_MAX_REQUEST_BODY before they
+  reach the web container.
+- Only the web container receives MIRRORHUB_ADMIN_PASSWORD and
+  MIRRORHUB_SECRET_KEY; docker-compose.yml blanks both for the workers, which
+  process data from foreign upstreams. Remove MIRRORHUB_ADMIN_PASSWORD from
+  `.env` after the first start.
+- Expired sessions and login lockout entries older than 24 hours are removed by
+  the scheduler every 30 seconds. A live job log stops streaming when the
+  session ends.
+- `scripts/reset_password.sh` sets a new password, ends all sessions and lifts
+  all login lockouts.
 
 ## UID/GID and NFS
 
@@ -369,7 +390,9 @@ rules.
 
 ## Repository setup
 
-Create a repository directly or clone an editable preset.
+Create a repository directly or clone an editable preset. Deleted seed presets
+stay deleted, also across restarts; *Restore missing seed presets* on the Presets
+page brings them back.
 
 For APT, configure suites, components and architectures explicitly.
 
@@ -378,7 +401,12 @@ Import the relevant archive verification keys through the Keys page.
 Keep signature checking enabled unless a documented exception is necessary.
 Disabling it requires explicit confirmation and produces an audit entry.
 
-For generic wget repositories, provide URL-to-relative-path entries.
+For generic wget repositories, choose the download mode: *Whole directory tree*
+mirrors everything below the upstream root (optionally filtered by regex);
+*File list* downloads only the listed files, one URL per line. A plain URL is
+stored under its URL path; `URL -> relative/path` sets the target path.
+In tree mode, *Architectures to keep* (e.g. `amd64, i386`) skips all other
+known architectures; details in `docs/operations-handbook.md` 4.6.
 
 The web data mount is read-only. Workers write mirror data.
 
@@ -438,8 +466,11 @@ Stopping a subprocess sends SIGTERM, followed by SIGKILL after its grace period.
 
 Exports cancel cooperatively until publication begins.
 
-Job history is retained independently of log-file retention. Deleting a job
-also deletes its log file.
+Finished jobs are deleted together with their logs after the job and log
+retention from the Settings page (default 30 days; checked once an hour). The
+newest finished job of each repository and job type is always kept, and so is
+any job whose notification has not been queued yet. Deleting a job by hand also
+deletes its log file.
 
 Job ids are never reused (SQLite `AUTOINCREMENT`, migration 0006), and each job
 log is `<state>/logs/jobs/<id>.log`. Every run starts with a header line such as
@@ -462,6 +493,11 @@ the export succeeded. Leftovers older than seven days are removed automatically.
 ## Notifications
 
 1. Create a channel: SMTP, webhook (generic JSON, ntfy, Gotify, Slack) or file.
+   An SMTP channel with a username requires TLS (STARTTLS, or implicit TLS on port
+   465); without it the password would travel in clear text. Older channels saved
+   with a username but without TLS now fail with "smtp login without TLS refused"
+   until TLS is enabled. Gotify tokens are sent in the `X-Gotify-Key` header, not
+   in the URL.
 2. Send a channel test.
 3. Create event rules for the events that should use the channel, optionally for
    one repository only.
@@ -612,10 +648,16 @@ timestamp-only filter.
 What MirrorHub keeps on the local state volume:
 
 - `export-meta/<slug>/<export-id>/`: files.json, manifest.json,
-  MANIFEST.sha256(.sig) and deleted.txt of each export, written before .done.
-  The next incremental export reads its base from here and does not need or
-  hash the previous archive. The newest 30 copies per repository and the newest
-  published one are kept.
+  MANIFEST.sha256(.sig) and deleted.txt of each export, written before .done,
+  plus a `.published` marker written after .done. The next incremental export
+  reads its base from the newest marked copy and does not need or hash the
+  previous archive. The newest `MIRRORHUB_EXPORT_META_KEEP` copies (default 30)
+  per repository and the newest published one are kept.
+- The export history in the database is restored from the marked copies when
+  rows are missing (scheduler, before each incremental export, or by hand with
+  `docker compose exec web python -m mirrorhub.export.reconcile [--slug <slug>] [--dry-run]`).
+  A lost database therefore does not force a full export as long as the state
+  volume with export-meta/ is intact.
 - `manifests/hashcache-<slug>.json`: SHA-256 cache for unchanged files (same
   inode, size, mtime and ctime). Incremental exports use it; full exports
   rehash every file and rebuild it.
@@ -631,11 +673,45 @@ Automatic cleanup in the drop folder (scheduler, about every 30 seconds):
 shows for each export whether it is `present`, `partial` or `picked up`.
 
 Exports that still contain archive parts are deleted only by the retention rule
-on the Exports page, which also removes their metadata copies.
+on the Exports page, which also removes their metadata copies. With "chains to
+keep" above 0 the scheduler applies the rule once an hour (audit
+`exports.retention`, actor `scheduler`); 0 keeps everything.
+
+### Incremental export since an earlier export
+
+If an export was lost on the way to the receiver, do not start over with a full
+export:
+
+1. On the receiver, `python -m mirrorhub.importer status --slug <slug>` shows the
+   last applied export.
+2. On the Exports page, open *Incremental since* for the repository and select
+   that export. The new export contains everything that changed since then and
+   the deletions.
+3. The receiver applies it; exports published in between are skipped as
+   superseded when they arrive later.
+
+Only exports whose metadata copy is still kept can be selected. If the
+receiver's state is older, run a full export and import it with `--rebase`.
 
 If the base of an incremental export is gone (no metadata copy and no export
 directory), the export fails with "run a full export". Run a full export and
-import it on the receiver with `--rebase`.
+import it on the receiver with `--rebase`, or an incremental export since an
+export the receiver has applied.
+
+### Importer on the receiver
+
+The receiver needs only the importer, not the application. `make importer` builds
+`dist/mirrorhub-importer.pyz` (plus `.sha256`), one file that runs with the Python
+3.12 standard library: `python3 mirrorhub-importer.pyz --config importer.toml import --slug <slug>`.
+The `check` workflow publishes the same file as artifact `mirrorhub-importer`.
+Build it from the same checkout that runs the sender: `--version` and the page
+footer show the commit, and the importer warns when an export comes from another
+commit. After each import it compares the whole tree with the export's file list
+and exits with 11 if files were deleted, changed or added by hand; run
+`python3 mirrorhub-importer.pyz --config importer.toml check --all` regularly (for
+example weekly from a timer) to find such changes in between. `--output-dir DIR`
+writes the complete lists, one file per kind (`missing.txt`, `extra.txt`, …). See
+docs/importer.md.
 
 Verify an export:
 
@@ -681,14 +757,58 @@ Also preserve:
 - Mirror data according to your retention policy.
 
 The state volume also holds export metadata copies (export-meta/) and the hash
-cache. Back up export-meta/ together with the database, otherwise the next
-incremental export after a restore needs a full export first.
+cache (manifests/). Back up export-meta/ together with the database, to a place
+outside the project directory and outside the state volume. export-meta/ alone
+is enough to restore the export history; without it the next export after a
+restore needs a full export first. A missing hash cache only costs time.
 
 Database and filesystem backups taken at different times are not automatically
 a consistent application snapshot. For a coordinated recovery point, stop jobs
 and services before taking the complete volume/filesystem backup.
 
 Keep signing keys and application secrets encrypted in backup storage.
+
+### Database size and VACUUM
+
+Removed rows (finished jobs, exports, notification deliveries, sessions, login
+lockouts) free space inside mirrorhub.sqlite3, which SQLite reuses for new rows;
+the file itself does not shrink. The audit log is append-only; only the operator
+command below prunes it. To give freed space back to the disk, back up the database, then run
+VACUUM with the services stopped:
+
+```sh
+docker compose stop worker worker-export web
+docker compose run --rm --no-deps web python -m mirrorhub.db vacuum
+docker compose up -d
+```
+
+It prints the size before and after and runs an integrity check. VACUUM needs
+free space of about the database size next to the database (temporary files go
+there, not to the small /tmp). Usually only worth it after deleting a lot, for
+example many jobs at once.
+
+### Pruning the audit log
+
+Database triggers reject every UPDATE and DELETE on audit_log, so neither the web
+interface nor the application can remove entries. An operator with access to the
+Docker host can prune entries older than N days (at least 90):
+
+```sh
+docker compose stop worker worker-export web
+docker compose run --rm --no-deps web python -m mirrorhub.audit purge --older-than-days 365 --dry-run
+docker compose run --rm --no-deps web python -m mirrorhub.audit purge --older-than-days 365
+docker compose up -d
+```
+
+In one transaction the command writes the removed entries to a JSON Lines
+archive (default `/var/lib/mirrorhub/backups/audit-archive-<UTC time>.jsonl`,
+mode 0600; `--archive PATH` to choose another file, which must not exist), drops
+the delete trigger, deletes the entries, creates the trigger again and records
+`audit.purge` (actor `cli`) with the cut-off, the count, the id range and the
+archive path. If any step fails, nothing is deleted and the trigger stays. It
+refuses to run when the trigger is missing. Copy the archive off the host like a
+database backup and check it against your retention obligations. Run VACUUM
+afterwards to shrink the file.
 
 ## Restore
 
@@ -759,6 +879,9 @@ upstream mirror correctness.
 
 ### Acceptance checks after deployment or upgrade
 
+The full test catalogue (P1–P3) is in docs/operations-handbook.md, section 3;
+the P1 sign-off sheet in docs/acceptance-p1.md.
+
 Container health and restarts:
 
 ```sh
@@ -805,8 +928,9 @@ docker compose exec worker-export grep -o '"base_export_id": *"[^"]*"' /export/$
 
 The incremental export must succeed with base_export_id equal to $FULL, and the
 Exports page must show the full export as `picked up`. The deleted export never
-reached the receiver: if the receiver uses this repository, start a new full
-export afterwards.
+reached the receiver: if the receiver uses this repository, create an
+*Incremental since* export with the receiver's last applied export (see Data
+diode exports) instead of a full export.
 
 Drop-folder cleanup. The directory must disappear within about a minute, and
 the Audit log shows `exports.drop_folder_cleanup`:
@@ -820,6 +944,68 @@ Login lockout (optional): five wrong passwords from client A lock only A; a
 correct login from client B must still work.
 
 Login/logout and rejected requests may create audit records.
+
+#### Build commit, export markers and receiver importer
+
+Sender and receiver importer must come from the same commit. The page footer
+shows the sender's commit; the containers must report the checked-out commit:
+
+```sh
+git rev-parse --short=12 HEAD
+docker compose exec web python -c "from mirrorhub import buildinfo; print(buildinfo.describe())"
+```
+
+Every published export's metadata copy carries a `.published` marker (existing
+copies get one on the first scheduler tick after the upgrade; the Audit log shows
+`exports.reconcile`). Both numbers should be equal:
+
+```sh
+docker compose exec web sh -c 'ls -d /var/lib/mirrorhub/export-meta/*/*/ | grep -vc "\.tmp/$"'
+docker compose exec web sh -c 'ls /var/lib/mirrorhub/export-meta/*/*/.published | wc -l'
+```
+
+An export directory without marker belongs to an export that was never
+published; the count may differ by those. The Exports page shows *Incremental
+since …* for every repository with kept copies.
+
+Build the receiver importer from the same checkout and check it on the receiver:
+
+```sh
+make importer                                         # sender host
+sha256sum -c mirrorhub-importer.pyz.sha256            # receiver
+python3 mirrorhub-importer.pyz --version              # same commit as the footer
+python3 mirrorhub-importer.pyz --config importer.toml check --all --output-dir /tmp/mh-check
+```
+
+`check` must exit with 0 and leave only empty lists in `/tmp/mh-check/<slug>/`.
+
+#### Receiver: detection (practical test)
+
+Rename one unimportant file in a receiver tree, check, rename it back:
+
+```sh
+mv /srv/mirrorhub/mirror/<slug>/<path> /srv/mirrorhub/mirror/<slug>/<path>.moved
+python3 mirrorhub-importer.pyz --config importer.toml check --slug <slug> --output-dir /tmp/mh-check
+echo "exit $?"                                        # 11
+cat /tmp/mh-check/<slug>/missing.txt /tmp/mh-check/<slug>/extra.txt
+mv /srv/mirrorhub/mirror/<slug>/<path>.moved /srv/mirrorhub/mirror/<slug>/<path>
+python3 mirrorhub-importer.pyz --config importer.toml check --slug <slug>   # exit 0
+```
+
+`missing.txt` lists `<path>`, `extra.txt` lists `<path>.moved`.
+
+#### Lost export and "incremental since" (practical test)
+
+Start on a receiver whose state is current (`status` shows the newest export as
+`last`, call it E0):
+
+1. Sender: start an incremental export (E1).
+2. Receiver: move E1 out of the inbox before importing it (simulated loss).
+3. Sender: on the Exports page use *Incremental since …* with E0 (export E2).
+4. Receiver: `import --slug <slug>` applies E2; `status` shows `last=E2`.
+5. Receiver: move E1 back into the inbox and run `import --slug <slug>` again. It
+   reports E1 as `superseded`, exits with 0, and `status` shows `superseded=1`.
+   The sender's Exports page marks E1 as superseded.
 
 ## Troubleshooting
 
@@ -869,8 +1055,24 @@ exists.
 ### Incremental export fails with "run a full export"
 
 Neither the metadata copy on the state volume nor the previous export directory
-exists, for example after restoring the database without export-meta/. Start a
+exists, for example after restoring the database without export-meta/, while the
+database still lists that export as published. Use *Incremental since* with the
+last export the receiver has applied, if its copy is kept; otherwise start a
 full export and import it on the receiver with --rebase.
+
+### Receiver lost its state file
+
+If the importer's state file is gone but the mirror tree is intact, do not import
+a full export again. On the receiver:
+
+```sh
+python3 mirrorhub-importer.pyz --config importer.toml adopt --slug <slug> --auto
+```
+
+`adopt` compares the tree with the newest published export in the inbox whose
+files.json it matches exactly (paths, types, sizes, mtimes, symlink targets;
+`--hash` also compares SHA-256) and writes the state. Only the export's metadata
+files are needed, not its archive. See docs/importer.md.
 
 ### Login or forms fail with 403 "CSRF validation failed"
 

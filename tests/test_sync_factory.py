@@ -94,3 +94,34 @@ def test_build_sync_plan_rejects_unsupported_tool(tmp_path: Path) -> None:
 
     with pytest.raises(SyncConfigurationError):
         build_sync_plan(job, repository, settings)
+
+
+def test_build_ftpsync_plan_allows_all_architectures(tmp_path: Path) -> None:
+    settings = cast(Settings, _Settings(tmp_path))
+
+    plan = build_ftpsync_plan(_job(), _repository(architectures=[]), settings)
+
+    assert plan.architectures == ()
+    assert plan.arch_exclude == ()
+
+
+def test_build_ftpsync_plan_maps_arch_exclude(tmp_path: Path) -> None:
+    settings = cast(Settings, _Settings(tmp_path))
+
+    plan = build_ftpsync_plan(
+        _job(), _repository(architectures=[], arch_exclude=["armel", "armhf"]), settings
+    )
+
+    assert plan.architectures == ()
+    assert plan.arch_exclude == ("armel", "armhf")
+
+
+def test_build_ftpsync_plan_reports_one_readable_line(tmp_path: Path) -> None:
+    settings = cast(Settings, _Settings(tmp_path))
+
+    with pytest.raises(SyncConfigurationError) as caught:
+        build_ftpsync_plan(_job(), _repository(arch_exclude=["armel"]), settings)
+
+    message = str(caught.value)
+    assert "\n" not in message
+    assert message == "use either ARCH_INCLUDE or ARCH_EXCLUDE, not both"

@@ -15,6 +15,9 @@ import os
 import re
 import shutil
 import time
+from collections.abc import Collection, Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +34,9 @@ META_FILES = (
     "deleted.txt",
 )
 REQUIRED_FILES = ("files.json", "manifest.json", "MANIFEST.sha256")
+# Written into a copy after the export's .done marker. A copy without it may belong to an
+# export that never got published (failure between storing the copy and .done).
+PUBLISHED_MARKER = ".published"
 EXPORT_ID_RE = re.compile(r"^\d{8}T\d{6}Z-(?:full|incr)$")
 DEFAULT_KEEP = 30
 STALE_TMP_S = 3600
@@ -159,17 +165,168 @@ def load_base(settings: Settings, slug: str, export_id: str) -> Inventory:
     )
 
 
+@dataclass(frozen=True)
+class PublishedCopy:
+    """What the marker of a published copy records; enough to pick a base."""
+
+    export_id: str
+    created_at: str
+    mode: str
+    base_export_id: str | None
+
+
+def _write_atomic(path: Path, document: dict[str, Any]) -> None:
+    temporary = path.with_name(f"{path.name}.tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        json.dump(document, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+    _fsync_directory(path.parent)
+
+
+def mark_published(
+    settings: Settings,
+    slug: str,
+    export_id: str,
+    *,
+    metadata: dict[str, Any] | None = None,
+    job_id: int | None = None,
+) -> Path:
+    """Record in the copy that the export was published (idempotent).
+
+    metadata is the export's manifest.json; read from the copy when not given.
+    """
+    target = directory(settings, slug, export_id)
+    marker = target / PUBLISHED_MARKER
+    if marker.is_file():
+        return marker
+    if not target.is_dir():
+        raise ExportError(f"no metadata copy of {export_id} to mark as published")
+    if metadata is None:
+        try:
+            metadata = json.loads((target / "manifest.json").read_text("utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ExportError(f"{export_id}: manifest.json is unreadable: {exc}") from exc
+    if not isinstance(metadata, dict) or metadata.get("export_id") != export_id:
+        raise ExportError(f"{export_id}: manifest.json does not describe this export")
+    _write_atomic(
+        marker,
+        {
+            "export_id": export_id,
+            "created_at": str(metadata.get("created_at") or ""),
+            "mode": str(metadata.get("mode") or ""),
+            "base_export_id": metadata.get("base_export_id"),
+            "published_at": datetime.now(UTC).isoformat(),
+            "job_id": job_id,
+        },
+    )
+    return marker
+
+
+def _read_marker(path: Path) -> PublishedCopy | None:
+    try:
+        raw = json.loads((path / PUBLISHED_MARKER).read_text("utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict) or raw.get("export_id") != path.name:
+        return None
+    base = raw.get("base_export_id")
+    return PublishedCopy(
+        export_id=path.name,
+        created_at=str(raw.get("created_at") or ""),
+        mode=str(raw.get("mode") or ""),
+        base_export_id=base if isinstance(base, str) and base else None,
+    )
+
+
+def _copies(settings: Settings, slug: str) -> list[Path]:
+    if validate_slug(slug) is not None:
+        raise ExportError(f"invalid repository slug: {slug!r}")
+    repo_dir = root(settings) / slug
+    if not repo_dir.is_dir() or repo_dir.is_symlink():
+        return []
+    return sorted(
+        path
+        for path in repo_dir.iterdir()
+        if EXPORT_ID_RE.fullmatch(path.name) and path.is_dir() and not path.is_symlink()
+    )
+
+
+def slugs(settings: Settings) -> list[str]:
+    base = root(settings)
+    if not base.is_dir():
+        return []
+    return sorted(
+        path.name
+        for path in base.iterdir()
+        if path.is_dir() and not path.is_symlink() and validate_slug(path.name) is None
+    )
+
+
+def published_copies(settings: Settings, slug: str) -> list[PublishedCopy]:
+    """Marked copies of a repository, oldest first."""
+    found = [copy for path in _copies(settings, slug) if (copy := _read_marker(path))]
+    return sorted(found, key=lambda copy: (copy.created_at, copy.export_id))
+
+
+def latest_published(settings: Settings, slug: str) -> str | None:
+    """The export the next incremental export builds on, from the markers alone.
+
+    Candidates are copies no other published copy uses as its base (the heads of the
+    chains); the newest of them wins. Following the base links keeps the choice right
+    even if the host clock once went backwards.
+    """
+    copies = published_copies(settings, slug)
+    if not copies:
+        return None
+    used_as_base = {copy.base_export_id for copy in copies if copy.base_export_id}
+    heads = [copy for copy in copies if copy.export_id not in used_as_base] or copies
+    return max(heads, key=lambda copy: (copy.created_at, copy.export_id)).export_id
+
+
+def backfill_markers(
+    settings: Settings,
+    slug: str,
+    published: Collection[str],
+) -> list[str]:
+    """Mark copies that predate markers, if the export is known to be published.
+
+    Published means: the database says so, or the export in the drop folder has .done.
+    """
+    marked: list[str] = []
+    for path in _copies(settings, slug):
+        if (path / PUBLISHED_MARKER).is_file():
+            continue
+        done = settings.export_dir / slug / path.name / ".done"
+        if path.name not in published and not done.is_file():
+            continue
+        try:
+            mark_published(settings, slug, path.name)
+        except ExportError:
+            continue
+        marked.append(path.name)
+    return marked
+
+
 def remove(settings: Settings, slug: str, export_id: str) -> None:
     target = directory(settings, slug, export_id)
     if target.is_dir() and not target.is_symlink():
         shutil.rmtree(target)
 
 
-def prune(settings: Settings, protected: dict[str, str], keep: int = DEFAULT_KEEP) -> int:
-    """Keep the newest `keep` metadata copies per repository plus the protected base.
+def prune(
+    settings: Settings,
+    protected: Mapping[str, str | Collection[str]],
+    keep: int = DEFAULT_KEEP,
+) -> int:
+    """Keep the newest `keep` metadata copies per repository plus the protected bases.
 
-    protected maps slug -> export_id of the newest published export, which the next
-    incremental export needs regardless of `keep`.
+    protected maps slug -> export_id(s) the next incremental export may need (newest
+    published export by database and by markers), kept regardless of `keep`.
     """
     base = root(settings)
     if not base.is_dir():
@@ -182,8 +339,10 @@ def prune(settings: Settings, protected: dict[str, str], keep: int = DEFAULT_KEE
             (path for path in repo_dir.iterdir() if EXPORT_ID_RE.fullmatch(path.name)),
             key=lambda path: path.name,
         )
+        guarded = protected.get(repo_dir.name, ())
+        keep_ids = {guarded} if isinstance(guarded, str) else set(guarded)
         for path in exports[: max(len(exports) - max(keep, 1), 0)]:
-            if path.name == protected.get(repo_dir.name) or path.is_symlink():
+            if path.name in keep_ids or path.is_symlink():
                 continue
             shutil.rmtree(path)
             removed += 1

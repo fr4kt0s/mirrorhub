@@ -21,3 +21,6 @@ htmlcov/
 *.log
 *.bck
 *.backup-*
+
+# Build output (scripts/build_importer.py)
+dist/

@@ -5,13 +5,14 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
 from sqlmodel import Session, col, select
 
+from mirrorhub import archfilter
 from mirrorhub.enums import (
     CleanupMode,
     DiffMode,
-    JobStatus,
     Method,
     RepoKind,
     Tool,
@@ -30,6 +31,7 @@ LIST_FIELDS = (
     "include_patterns",
     "exclude_patterns",
     "extra_args",
+    "wget_keep_arches",
 )
 TEXT_FIELDS = (
     "slug",
@@ -73,15 +75,33 @@ def _split_architectures(raw: str) -> list[str]:
     return [part for part in re.split(r"[,\s]+", raw) if part.strip()]
 
 
+WGET_MODES = ("tree", "files")
+
+
+def wget_mode_for(extra_files: list[dict[str, str]] | None) -> str:
+    """A wget repository with file entries downloads those files; otherwise the whole tree."""
+    return "files" if extra_files else "tree"
+
+
 def parse_extra_files(raw: str) -> list[dict[str, str]]:
+    """One file per line: 'URL' (stored under the URL's path) or 'URL -> relative/path'."""
     items: list[dict[str, str]] = []
     for line in raw.splitlines():
         text = line.strip()
         if not text:
             continue
-        if "->" not in text:
-            raise FormError([f"extra files: expected 'URL -> relative/path', got {text[:60]!r}"])
-        url, path = (part.strip() for part in text.split("->", 1))
+        if "->" in text:
+            url, path = (part.strip() for part in text.split("->", 1))
+        else:
+            url = text
+            path = urlsplit(url).path.strip("/")
+            if not path or url.split("?", 1)[0].endswith("/"):
+                raise FormError(
+                    [
+                        f"file list: cannot derive a file name from {text[:60]!r}; "
+                        "write 'URL -> relative/path'"
+                    ]
+                )
         items.append({"url": url, "path": path})
     return items
 
@@ -102,8 +122,11 @@ def parse_form(form: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, str]]
     for name in LIST_FIELDS:
         raw[name] = get(name)
         data[name] = _split(get(name))
-    for name in ("architectures", "arch_exclude"):
+    for name in ("architectures", "arch_exclude", "wget_keep_arches"):
         data[name] = _split_architectures(get(name))
+    data["wget_keep_arches"] = list(
+        dict.fromkeys(archfilter.canonical(name) or name for name in data["wget_keep_arches"])
+    )
     for name in BOOL_FIELDS:
         data[name] = bool(form.get(name))
         raw[name] = "on" if data[name] else ""
@@ -117,11 +140,27 @@ def parse_form(form: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, str]]
             data[name] = 0
 
     raw["extra_files"] = get("extra_files")
-    try:
-        data["extra_files"] = parse_extra_files(get("extra_files"))
-    except FormError as exc:
-        messages.extend(exc.messages)
+    wget_mode = get("wget_mode")
+    if data.get("tool") == "wget" and wget_mode:
+        # The form switch decides; the hidden file list is ignored in tree mode.
+        raw["wget_mode"] = wget_mode
+        data["wget_mode"] = wget_mode
+    if data.get("wget_mode") == "tree":
         data["extra_files"] = []
+    elif data.get("wget_mode") == "files":
+        # Filters apply to the directory tree only.
+        data["wget_keep_arches"] = []
+        data["extra_files"] = []
+        try:
+            data["extra_files"] = parse_extra_files(get("extra_files"))
+        except FormError as exc:
+            messages.extend(exc.messages)
+    else:
+        try:
+            data["extra_files"] = parse_extra_files(get("extra_files"))
+        except FormError as exc:
+            messages.extend(exc.messages)
+            data["extra_files"] = []
 
     policy = default_retry_policy()
     for key, field in (
@@ -165,6 +204,7 @@ def form_values(data: dict[str, Any], raw: dict[str, str]) -> dict[str, str]:
     values["extra_files"] = "\n".join(
         f"{item['url']} -> {item['path']}" for item in data.get("extra_files") or []
     )
+    values["wget_mode"] = raw.get("wget_mode") or wget_mode_for(data.get("extra_files"))
     values["retry_exit_codes"] = ",".join(
         str(code) for code in (data.get("retry_policy") or {}).get("retryable_exit_codes", [])
     )
@@ -183,6 +223,7 @@ def preset_values(config: dict[str, Any]) -> dict[str, str]:
     values["extra_files"] = "\n".join(
         f"{item['url']} -> {item['path']}" for item in config.get("extra_files") or []
     )
+    values["wget_mode"] = wget_mode_for(config.get("extra_files"))
     policy = config.get("retry_policy") or default_retry_policy()
     values["retry_max_attempts"] = str(policy.get("max_attempts", 3))
     values["retry_backoff"] = str(policy.get("backoff", "exponential"))
@@ -278,8 +319,22 @@ def validate(data: dict[str, Any]) -> list[str]:
     elif tool == "wget":
         if method not in ("http", "https"):
             errors.append("method: wget supports http and https only")
-        if not data["extra_files"]:
-            errors.append("wget mirrors need at least one URL and relative path entry")
+        mode = data.get("wget_mode") or wget_mode_for(data["extra_files"])
+        error = archfilter.validate_keep(data.get("wget_keep_arches") or [])
+        if error:
+            errors.append(error)
+        if mode not in WGET_MODES:
+            errors.append("download: choose the whole directory tree or a file list")
+        elif mode == "files":
+            if not data["extra_files"]:
+                errors.append("file list: enter at least one file URL, one per line")
+            paths = [item.get("path", "") for item in data["extra_files"]]
+            duplicates = sorted({path for path in paths if paths.count(path) > 1})
+            if duplicates:
+                errors.append(
+                    "file list: several entries write to the same path: "
+                    + ", ".join(duplicates[:5])
+                )
 
     elif tool == "ftpsync":
         if method != "rsync":
@@ -293,6 +348,16 @@ def validate(data: dict[str, Any]) -> list[str]:
                 "architecture selection: use either ARCH_INCLUDE or ARCH_EXCLUDE, not both"
             )
 
+        # Both empty is valid: ftpsync then mirrors all architectures.
+        if "none" in include or "none" in exclude:
+            errors.append(
+                "architecture selection: 'none' is not an ftpsync architecture; "
+                "leave both fields empty to mirror all architectures"
+            )
+        if include:
+            error = validators.validate_list_field("architectures to include", include)
+            if error:
+                errors.append(error)
         if exclude:
             error = validators.validate_list_field("architectures to exclude", exclude)
             if error:
@@ -301,7 +366,21 @@ def validate(data: dict[str, Any]) -> list[str]:
     return errors
 
 
-def _ensure_unique_slug(db: Session, slug: str, repo_id: int | None) -> str | None:
+# Tools that fix the repository kind; rsync keeps the kind chosen in the form.
+TOOL_KINDS: dict[str, str] = {"debmirror": "apt", "ftpsync": "apt", "wget": "generic"}
+
+
+def apply_tool_rules(data: dict[str, Any], current: Repository | None) -> None:
+    """Derive tool-dependent fields: the kind, and signature checking (debmirror only)."""
+    kind = TOOL_KINDS.get(str(data.get("tool") or ""))
+    if kind is not None:
+        data["kind"] = kind
+    if data.get("tool") != "debmirror":
+        data["verify_signatures"] = current.verify_signatures if current is not None else True
+
+
+def slug_conflict(db: Session, slug: str, repo_id: int | None) -> str | None:
+    """Error message if another repository already uses the slug."""
     existing = db.exec(select(Repository).where(Repository.slug == slug)).first()
     if existing is not None and existing.id != repo_id:
         return f"slug: '{slug}' is already used by another repository"
@@ -426,7 +505,3 @@ def get(db: Session, repo_id: int) -> Repository | None:
 
 def list_all(db: Session) -> list[Repository]:
     return list(db.exec(select(Repository).order_by(col(Repository.slug))).all())
-
-
-def active_job_statuses() -> tuple[str, ...]:
-    return (JobStatus.QUEUED.value, JobStatus.RUNNING.value, JobStatus.CANCELLING.value)

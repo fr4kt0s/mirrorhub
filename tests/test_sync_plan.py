@@ -85,11 +85,41 @@ def test_ftpsync_plan_accepts_valid_configuration() -> None:
     assert plan.bwlimit_kbps == 0
 
 
-def test_ftpsync_plan_requires_at_least_one_architecture() -> None:
+def test_ftpsync_plan_allows_all_architectures() -> None:
     kwargs = _ftpsync_plan_kwargs()
     kwargs["architectures"] = ()
 
-    with pytest.raises(ValidationError):
+    plan = FtpsyncPlan(**kwargs)
+
+    assert plan.architectures == ()
+    assert plan.arch_exclude == ()
+
+
+def test_ftpsync_plan_allows_exclude_only() -> None:
+    kwargs = _ftpsync_plan_kwargs()
+    kwargs["architectures"] = ()
+    kwargs["arch_exclude"] = ("armel", "armhf")
+
+    plan = FtpsyncPlan(**kwargs)
+
+    assert plan.arch_exclude == ("armel", "armhf")
+
+
+def test_ftpsync_plan_rejects_include_and_exclude() -> None:
+    kwargs = _ftpsync_plan_kwargs()
+    kwargs["arch_exclude"] = ("armel",)
+
+    with pytest.raises(ValidationError, match="either ARCH_INCLUDE or ARCH_EXCLUDE"):
+        FtpsyncPlan(**kwargs)
+
+
+@pytest.mark.parametrize("field", ["architectures", "arch_exclude"])
+def test_ftpsync_plan_rejects_none(field: str) -> None:
+    kwargs = _ftpsync_plan_kwargs()
+    kwargs["architectures"] = ()
+    kwargs[field] = ("none",)
+
+    with pytest.raises(ValidationError, match="not an ftpsync architecture"):
         FtpsyncPlan(**kwargs)
 
 

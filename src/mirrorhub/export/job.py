@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import platform
 import shutil
@@ -14,13 +15,15 @@ from typing import Any
 
 from sqlmodel import Session, col, select
 
-from mirrorhub import __version__
+from mirrorhub import __version__, buildinfo
 from mirrorhub.db import get_engine
-from mirrorhub.export import manifest, metadata_store, pack
+from mirrorhub.export import manifest, metadata_store, pack, reconcile
 from mirrorhub.export.manifest import ExportError, Inventory, Pulse
 from mirrorhub.models import Export, Job, Repository
 from mirrorhub.services import audit
 from mirrorhub.settings import Settings
+
+log = logging.getLogger(__name__)
 
 FORMAT_VERSION = 1
 CHECKSUM_EXCLUSIONS = frozenset({"MANIFEST.sha256", "MANIFEST.sha256.sig", ".done"})
@@ -150,7 +153,16 @@ def _previous(
     settings: Settings,
     slug: str,
 ) -> tuple[str | None, Inventory]:
+    """Base of the next incremental export: the newest published export.
+
+    The marked metadata copies on the state volume decide; the database is checked
+    against them. Missing rows are restored from the copies, so a lost database does
+    not force a full export. If the database knows a newer published export than the
+    copies and the drop folder no longer holds it, the export stops instead of falling
+    back to an older base the receiver may already have passed.
+    """
     with Session(get_engine()) as db:
+        reconcile.reconcile(db, settings, slug=slug, actor="worker")
         row = db.exec(
             select(Export)
             .where(
@@ -159,13 +171,45 @@ def _previous(
             )
             .order_by(col(Export.id).desc())
         ).first()
-        if row is None:
-            return None, {}
-        export_id = row.export_id
+        db_latest = row.export_id if row is not None else None
 
+    marked = {copy.export_id for copy in metadata_store.published_copies(settings, slug)}
+    if db_latest is not None and db_latest not in marked:
+        # Copy missing or unmarked: load_base falls back to the drop folder and stores a
+        # copy; without either it asks for a full export.
+        try:
+            metadata_store.load_base(settings, slug, db_latest)
+        except ExportError as exc:
+            raise ExportError(
+                f"{exc}; or start an incremental export since an earlier export "
+                "the receiver has applied"
+            ) from exc
+        metadata_store.mark_published(settings, slug, db_latest)
+
+    export_id = metadata_store.latest_published(settings, slug)
+    if export_id is None:
+        return None, {}
     # The base comes from the metadata copy on the state volume, so the drop folder
     # may be emptied by the pickup tool. Archive parts are neither needed nor hashed.
     return export_id, metadata_store.load_base(settings, slug, export_id)
+
+
+def _chosen_base(job: Job, settings: Settings, slug: str) -> str | None:
+    """Base picked by the operator ("incremental since"), validated again at run time."""
+    value = job.params.get("base")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not metadata_store.EXPORT_ID_RE.fullmatch(value):
+        raise ExportError("invalid base export id")
+    if job.params.get("sync_snapshot"):
+        raise ExportError("a chained export cannot use a chosen base")
+    marked = {copy.export_id for copy in metadata_store.published_copies(settings, slug)}
+    if value not in marked:
+        raise ExportError(
+            f"base export {value} has no published metadata copy; "
+            "run a full export and import it with --rebase"
+        )
+    return value
 
 
 def _record_failure(row_id: int | None, export_id: str, slug: str) -> None:
@@ -222,9 +266,15 @@ def execute(
         if manifest.load(expected) != current:
             raise ExportError("repository changed after sync; run sync and export again")
 
-    if requested == "full":
-        base_id: str | None = None
-        previous: Inventory = {}
+    chosen = _chosen_base(job, settings, repo.slug)
+    if chosen is not None:
+        if requested != "incr":
+            raise ExportError("an export since an earlier export is always incremental")
+        base_id: str | None = chosen
+        previous: Inventory = metadata_store.load_base(settings, repo.slug, chosen)
+    elif requested == "full":
+        base_id = None
+        previous = {}
     else:
         base_id, previous = _previous(repo.id or 0, settings, repo.slug)
 
@@ -300,6 +350,7 @@ def execute(
             },
             "tool_versions": {
                 "mirrorhub": __version__,
+                "mirrorhub_commit": buildinfo.commit(),
                 "python": platform.python_version(),
                 "archive_writer": "Python tarfile",
             },
@@ -331,6 +382,13 @@ def execute(
             handle.flush()
             os.fsync(handle.fileno())
         _fsync_directory(final)
+        try:
+            metadata_store.mark_published(
+                settings, repo.slug, export_id, metadata=metadata, job_id=job.id
+            )
+        except (OSError, ExportError):
+            # .done exists, so the export is published; reconcile marks the copy later.
+            log.warning("could not mark metadata copy of %s as published", export_id)
 
         with Session(get_engine()) as db:
             published = db.get(Export, row_id)

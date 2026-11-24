@@ -3,6 +3,7 @@
 Runtime-tunable values can be overridden by the setting table.
 """
 
+import contextlib
 import os
 import secrets
 from functools import lru_cache
@@ -27,6 +28,8 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_password: str = ""
     secret_key: str = ""
+    # Exact origin of the web interface (https://host:port), used for CSRF checks.
+    public_origin: str = ""
 
     log_format: Literal["text", "json"] = "text"
     log_level: str = "INFO"
@@ -35,6 +38,9 @@ class Settings(BaseSettings):
     heartbeat_interval_s: int = Field(default=10, ge=1)
     heartbeat_stale_s: int = Field(default=60, ge=5)
     log_retention_days: int = Field(default=30, ge=1)
+    # Metadata copies kept per repository on the state volume; each one can serve as
+    # the base of an "incremental since" export.
+    export_meta_keep: int = Field(default=30, ge=1, le=10000)
 
     session_ttl_s: int = Field(default=8 * 3600, ge=300)
     login_max_attempts: int = Field(default=5, ge=1)
@@ -78,7 +84,11 @@ def get_settings() -> Settings:
 
 
 def get_secret_key(settings: Settings | None = None) -> str:
-    """Return the configured secret or the persistent generated secret."""
+    """Return the configured secret or the persistent generated secret.
+
+    The generated key is written to a temporary file and then hard-linked into place,
+    so a concurrent caller sees either no file or the complete key, never an empty one.
+    """
     current = settings or get_settings()
     if current.secret_key:
         return current.secret_key
@@ -87,16 +97,20 @@ def get_secret_key(settings: Settings | None = None) -> str:
     key_file = current.state_dir / "secret_key"
 
     if not key_file.exists():
+        temporary = current.state_dir / f".secret_key.{os.getpid()}.{secrets.token_hex(4)}"
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
-            descriptor = os.open(
-                key_file,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                0o600,
-            )
-        except FileExistsError:
-            pass
-        else:
             with os.fdopen(descriptor, "w") as handle:
                 handle.write(secrets.token_urlsafe(48))
+                handle.flush()
+                os.fsync(handle.fileno())
+            # FileExistsError: another process won the race; use its key.
+            with contextlib.suppress(FileExistsError):
+                os.link(temporary, key_file)
+        finally:
+            temporary.unlink(missing_ok=True)
 
-    return key_file.read_text().strip()
+    key = key_file.read_text().strip()
+    if not key:
+        raise RuntimeError(f"{key_file} is empty; delete it or set MIRRORHUB_SECRET_KEY")
+    return key

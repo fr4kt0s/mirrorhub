@@ -22,7 +22,26 @@ class RepoState:
     history: list[dict[str, Any]] = field(default_factory=list)
 
     def applied(self, export_id: str) -> bool:
-        return any(item.get("export_id") == export_id for item in self.history)
+        """True if the export was applied (or its state adopted); skipped ones are not."""
+        return any(
+            item.get("export_id") == export_id and item.get("status") != "superseded"
+            for item in self.history
+        )
+
+    def superseded(self, export_id: str) -> bool:
+        return any(
+            item.get("export_id") == export_id and item.get("status") == "superseded"
+            for item in self.history
+        )
+
+    def is_superseded_by_state(self, export_id: str) -> bool:
+        """An unapplied export older than the last applied one was skipped by a later
+        export with an earlier base (or a full with --rebase). Export ids sort by time."""
+        return (
+            self.last_export_id is not None
+            and export_id < self.last_export_id
+            and not self.applied(export_id)
+        )
 
 
 class StateStore:
@@ -52,6 +71,42 @@ class StateStore:
         ):
             raise ImporterError(f"state file is invalid: {self.path}")
         return RepoState(self.slug, last, history)
+
+    @property
+    def inventory_dir(self) -> Path:
+        return self.state_dir / "inventories" / self.slug
+
+    def save_inventory(self, export_id: str, source: Path) -> Path:
+        """Keep a copy of the files.json that describes the tree after export_id.
+
+        `importer check` compares the tree with it, also after the export has left
+        the inbox. Only the copy for the current state is kept.
+        """
+        self.inventory_dir.mkdir(parents=True, exist_ok=True)
+        target = self.inventory_dir / f"{export_id}.json"
+        temporary = self.inventory_dir / f".{export_id}.json.tmp"
+        with source.open("rb") as reader, temporary.open("wb") as writer:
+            for chunk in iter(lambda: reader.read(1024 * 1024), b""):
+                writer.write(chunk)
+            writer.flush()
+            os.fsync(writer.fileno())
+        os.replace(temporary, target)
+        for other in self.inventory_dir.glob("*.json"):
+            if other != target:
+                other.unlink(missing_ok=True)
+        return target
+
+    def load_inventory(self, export_id: str) -> dict[str, Any] | None:
+        path = self.inventory_dir / f"{export_id}.json"
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as exc:
+            raise ImporterError(f"cannot read inventory copy {path}: {exc}") from exc
+        if not isinstance(value, dict):
+            raise ImporterError(f"inventory copy is invalid: {path}")
+        return value
 
     def save(self, state: RepoState) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)

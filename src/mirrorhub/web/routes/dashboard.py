@@ -33,7 +33,8 @@ def dashboard(
             .limit(5)
         ).all()
     )
-    repo_names = {repo.id: repo.slug for repo in db.exec(select(Repository)).all()}
+    repos = {repo.id: repo for repo in db.exec(select(Repository)).all()}
+    repo_names = {repo_id: repo.slug for repo_id, repo in repos.items()}
     upcoming = scheduler.upcoming(db, 5)
     return render(
         request,
@@ -42,6 +43,7 @@ def dashboard(
             "counts": counts,
             "failures": failures,
             "repo_names": repo_names,
+            "repos": repos,
             "upcoming": upcoming,
             "usage": storage.mount_usage(),
         },

@@ -49,6 +49,12 @@ class JobStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+# A job in one of these states no longer runs and can be deleted.
+TERMINAL_JOB_STATUSES = frozenset(
+    {JobStatus.SUCCEEDED.value, JobStatus.FAILED.value, JobStatus.CANCELLED.value}
+)
+
+
 class Trigger(StrEnum):
     MANUAL = "manual"
     SCHEDULE = "schedule"

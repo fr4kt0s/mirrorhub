@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pydantic import ValidationError
+
 from mirrorhub.enums import Method, Tool
 from mirrorhub.models import Job, Repository
 from mirrorhub.settings import Settings
@@ -14,6 +16,18 @@ from mirrorhub.sync.plan import (
     WgetPlan,
 )
 from mirrorhub.worker.builders.base import resolve_paths
+
+
+def _configuration_error(exc: ValueError) -> SyncConfigurationError:
+    """One readable line per problem instead of pydantic's multi-line report."""
+    if isinstance(exc, ValidationError):
+        parts = []
+        for error in exc.errors():
+            message = str(error.get("msg", "invalid value")).removeprefix("Value error, ")
+            location = ".".join(str(item) for item in error.get("loc", ()))
+            parts.append(f"{location}: {message}" if location else message)
+        return SyncConfigurationError("; ".join(parts) or str(exc))
+    return SyncConfigurationError(str(exc))
 
 
 def build_ftpsync_plan(
@@ -52,12 +66,13 @@ def build_ftpsync_plan(
             dry_run=job.dry_run,
             attempt=job.attempt,
             architectures=tuple(repository.architectures),
+            arch_exclude=tuple(repository.arch_exclude),
             exclude_patterns=tuple(repository.exclude_patterns),
             bwlimit_kbps=repository.bwlimit_kbps,
             extra_args=tuple(repository.extra_args),
         )
     except ValueError as exc:
-        raise SyncConfigurationError(str(exc)) from exc
+        raise _configuration_error(exc) from exc
 
 
 def build_rsync_plan(
@@ -104,7 +119,7 @@ def build_rsync_plan(
             extra_args=tuple(repository.extra_args),
         )
     except ValueError as exc:
-        raise SyncConfigurationError(str(exc)) from exc
+        raise _configuration_error(exc) from exc
 
 
 def build_debmirror_plan(
@@ -158,7 +173,7 @@ def build_debmirror_plan(
             extra_args=tuple(repository.extra_args),
         )
     except ValueError as exc:
-        raise SyncConfigurationError(str(exc)) from exc
+        raise _configuration_error(exc) from exc
 
 
 def build_wget_plan(
@@ -203,7 +218,7 @@ def build_wget_plan(
             extra_args=tuple(repository.extra_args),
         )
     except ValueError as exc:
-        raise SyncConfigurationError(str(exc)) from exc
+        raise _configuration_error(exc) from exc
 
 
 def build_sync_plan(

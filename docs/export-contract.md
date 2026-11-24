@@ -21,7 +21,9 @@ An export contains:
 
 - data.tar or data.tar.zst, optionally split into numbered parts.
 - MANIFEST.sha256, covering archive parts and JSON/text metadata files.
-- manifest.json, describing the export identity, base and payload.
+- manifest.json, describing the export identity, base and payload. Its
+  `tool_versions` include the MirrorHub version and, when known, the sender's
+  commit (`mirrorhub_commit`, 12 hex digits); receivers only compare it and warn.
 - files.json, containing the complete repository inventory.
 - deleted.txt, containing one removed relative path per line.
 - MANIFEST.sha256.sig, if signing is configured.
@@ -57,9 +59,19 @@ preferred.
 MirrorHub does not need a published export after publication. Before writing
 .done it stores a copy of the export's metadata (files.json, manifest.json,
 MANIFEST.sha256, MANIFEST.sha256.sig, deleted.txt) on its state volume under
-`export-meta/<slug>/<export-id>/`. The next incremental export reads its base
-inventory from there and checks files.json and manifest.json against
-MANIFEST.sha256. Archive parts of the base are neither required nor hashed.
+`export-meta/<slug>/<export-id>/`. After .done it writes a `.published` marker
+into that copy (export id, created_at, mode, base, publication time). The next
+incremental export reads its base inventory from there and checks files.json and
+manifest.json against MANIFEST.sha256. Archive parts of the base are neither
+required nor hashed.
+
+The marked copies are the authority for which exports were published. The base
+of the next incremental export is the newest marked copy that no other marked
+copy uses as its base. The database export history is restored from the copies
+when rows are missing. If the database lists a newer published export than the
+copies and the drop folder no longer holds it, the export fails instead of
+falling back to an older base. Copies that predate markers get one when the
+database or the drop folder (.done) shows the export was published.
 
 Exports published before this behaviour existed are read once from the drop
 folder, and a copy is stored then. If neither the copy nor the directory exists,
@@ -75,8 +87,8 @@ Drop-folder housekeeping (every scheduler tick, about 30 s):
   running.
 - `<export-id>.tmp` directories and unexpected content are never touched.
 
-Metadata copies are kept for the newest 30 exports per repository, and always for
-the newest published one. Applying the retention rule also removes the copies of
+Metadata copies are kept for the newest `MIRRORHUB_EXPORT_META_KEEP` exports per
+repository (default 30), and always for the newest published one. Applying the retention rule also removes the copies of
 the deleted exports.
 
 The appearance of .done is the publication signal, not the mere existence of
@@ -108,6 +120,13 @@ The first incremental request produces a full export.
 
 Subsequent incremental exports compare the complete current inventory with the
 inventory of the last successfully published export.
+
+An operator may instead choose an earlier published export as the base (an
+"incremental since" export), as long as its metadata copy is kept. The export
+format is unchanged; only base_export_id points further back. Exports published
+between that base and the new export are superseded: a receiver that applied the
+new export skips them (see docs/importer.md). The next regular incremental export
+builds on the new export.
 
 The inventory includes relative path, type, size, nanosecond mtime and SHA-256.
 Symlink entries also contain their relative target.
@@ -216,7 +235,14 @@ A failure before .done leaves no consumable export.
 Temporary directories are retained.
 
 If a worker dies after creating .done but before recording publication in SQLite,
-a retry verifies and recovers that job's already published export.
+a retry verifies and recovers that job's already published export and writes the
+`.published` marker of its metadata copy if it is missing.
+
+If the database is lost, the export history is restored from the marked metadata
+copies (scheduler, before each incremental export, or
+`python -m mirrorhub.export.reconcile`); incremental exports continue from the
+newest marked copy. Only the loss of the state volume's export-meta/ forces a full
+export.
 
 A final directory without .done remains incomplete and must not be picked up.
 

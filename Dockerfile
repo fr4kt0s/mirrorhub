@@ -26,6 +26,8 @@ WORKDIR /app
 COPY alembic.ini /app/alembic.ini
 COPY migrations /app/migrations
 COPY src /app/src
+# Filtered by .dockerignore to HEAD and branch refs: mirrorhub.buildinfo reads the commit.
+COPY .git /app/.git
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh
 USER mirror

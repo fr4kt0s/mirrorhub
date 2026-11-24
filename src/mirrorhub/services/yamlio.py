@@ -39,6 +39,9 @@ REPO_FIELDS: tuple[str, ...] = (
     "keyring_name",
     "include_patterns",
     "exclude_patterns",
+    "include_regex",
+    "exclude_regex",
+    "wget_keep_arches",
     "extra_args",
     "retry_policy",
     "export_mode",
@@ -77,6 +80,9 @@ def _defaults() -> dict[str, Any]:
         "keyring_name": "trustedkeys.gpg",
         "include_patterns": [],
         "exclude_patterns": [],
+        "include_regex": "",
+        "exclude_regex": "",
+        "wget_keep_arches": [],
         "extra_args": [],
         "retry_policy": default_retry_policy(),
         "export_mode": "incr",
@@ -183,13 +189,21 @@ def build_plan(
             "include_patterns",
             "exclude_patterns",
             "extra_args",
+            "wget_keep_arches",
         ):
             data[list_field] = _as_list(data[list_field])
+        for text_field in ("include_regex", "exclude_regex"):
+            value = data[text_field]
+            data[text_field] = "" if value is None else str(value)
         if not isinstance(data["retry_policy"], dict):
             data["retry_policy"] = default_retry_policy()
 
         if data["tool"] == "rsync":
             data["method"] = "rsync"
+        if data["tool"] == "ftpsync" and "architectures" not in entry:
+            # The debmirror default ["none"] would become ARCH_INCLUDE=none;
+            # an omitted ARCH_INCLUDE means "all architectures" for ftpsync.
+            data["architectures"] = []
 
         slug = str(data.get("slug") or "")
         if slug in seen:

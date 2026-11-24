@@ -46,6 +46,18 @@ jobs:
       - name: Tests
         run: .venv/bin/python -m pytest
 
+      - name: Build receiver importer
+        run: .venv/bin/python scripts/build_importer.py
+
+      - name: Upload receiver importer
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirrorhub-importer
+          path: |
+            dist/mirrorhub-importer.pyz
+            dist/mirrorhub-importer.pyz.sha256
+          if-no-files-found: error
+
       - name: Validate Compose file
         run: |
           cp .env.example .env
@@ -123,6 +135,15 @@ jobs:
           actual=$(docker compose exec -T web python -c "import sqlite3; print(sqlite3.connect('/var/lib/mirrorhub/db/mirrorhub.sqlite3').execute('select version_num from alembic_version').fetchone()[0])")
           echo "expected=$expected actual=$actual"
           test "$expected" = "$actual"
+
+      - name: Images report the commit they were built from
+        run: |
+          expected="$(git rev-parse --short=12 HEAD)"
+          for service in web worker worker-export; do
+            actual="$(docker compose exec -T "$service" python -c 'from mirrorhub import buildinfo; print(buildinfo.commit())')"
+            echo "$service: $actual (expected $expected)"
+            test "$actual" = "$expected"
+          done
 
       - name: Web trusts only the proxy
         run: |

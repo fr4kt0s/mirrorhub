@@ -9,8 +9,7 @@ from typing import Any
 from croniter import croniter
 
 MAX_LIST_ITEMS = 64
-MAX_EXTRA_FILES = 32
-MAX_STRING = 200
+MAX_EXTRA_FILES = 500
 
 SLUG_RE = re.compile(
     r"(?=.{1,253}$)"
@@ -29,26 +28,12 @@ URL_RE = re.compile(
 REL_PATH_RE = re.compile(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$")
 ARG_RE = re.compile(r"^--[a-z0-9][a-z0-9-]{0,40}(?:=[A-Za-z0-9._:/-]{1,64})?$")
 
-COMMON_ARCHES = (
-    "amd64",
-    "arm64",
-    "armhf",
-    "i386",
-    "ppc64el",
-    "riscv64",
-    "s390x",
-    "x86_64",
-    "aarch64",
-    "none",
-)
-
 
 @dataclass(frozen=True)
 class ArgSpec:
-    kind: str
+    kind: str  # "flag" or "int"
     lo: int = 0
     hi: int = 0
-    values: tuple[str, ...] = ()
 
 
 ALLOWED_ARGS: dict[str, dict[str, ArgSpec]] = {
@@ -202,8 +187,6 @@ def validate_extra_args(tool: str, args: list[str]) -> str | None:
             and (not value.isdigit() or not spec.lo <= int(value) <= spec.hi)
         ):
             return f"extra arguments: '{name}' must be an integer {spec.lo}-{spec.hi}"
-        if spec.kind == "enum" and value not in spec.values:
-            return f"extra arguments: '{name}' must be one of {', '.join(spec.values)}"
 
     return None
 

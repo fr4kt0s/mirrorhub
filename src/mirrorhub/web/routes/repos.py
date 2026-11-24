@@ -1,6 +1,5 @@
 """Repository list, create, edit, delete."""
 
-from collections.abc import Mapping
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -44,6 +43,7 @@ def _blank_values() -> dict[str, str]:
     values.update(
         {
             "extra_files": "",
+            "wget_mode": "tree",
             "retry_max_attempts": "3",
             "retry_backoff": "exponential",
             "retry_base_seconds": "60",
@@ -82,13 +82,9 @@ def new_page(
         if row is not None:
             values.update(repos.preset_values(row.config))
             values["preset_source"] = row.name
-    template = _template_for(str(values.get("tool") or tool))
-    if template == "repos/form.html":
-        return render(request, template, {"values": values, "errors": []})
-
     return render(
         request,
-        template,
+        _template_for(str(values.get("tool") or tool)),
         {"values": values, "errors": [], "repo": None, "mode": "create"},
     )
 
@@ -129,13 +125,6 @@ def _form_template(data: dict[str, Any], repo: Repository | None) -> str:
     return "repos/form.html"
 
 
-async def _form_data(
-    form: Mapping[str, Any],
-) -> tuple[dict[str, Any], dict[str, str]]:
-    data, raw = repos.parse_form(form)
-    return data, repos.form_values(data, raw)
-
-
 async def _save(
     request: Request,
     db: Session,
@@ -144,7 +133,7 @@ async def _save(
 ) -> Response:
     form = await request.form()
     try:
-        data, values = await _form_data(form)
+        data, raw = repos.parse_form(form)
     except repos.FormError as exc:
         values = {name: str(form.get(name) or "") for name in form}
         template = _form_template(values, repo)
@@ -159,21 +148,14 @@ async def _save(
             },
             400,
         )
-    values = {**_blank_values(), **values}
+    values = {**_blank_values(), **repos.form_values(data, raw)}
     if repo is not None:
         data["slug"] = repo.slug
         values["slug"] = repo.slug
-    if data["tool"] == "debmirror":
-        data["kind"] = "apt"
-    elif data["tool"] == "wget":
-        data["kind"] = "generic"
-    elif data["tool"] == "ftpsync":
-        data["kind"] = "apt"
-    if data["tool"] != "debmirror":
-        data["verify_signatures"] = repo.verify_signatures if repo is not None else True
+    repos.apply_tool_rules(data, repo)
     errors = repos.validate(data)
 
-    slug_error = repos._ensure_unique_slug(db, data["slug"], repo.id if repo else None)
+    slug_error = repos.slug_conflict(db, data["slug"], repo.id if repo else None)
     if slug_error:
         errors.append(slug_error)
 

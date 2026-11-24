@@ -7,7 +7,10 @@ from typing import Any
 from sqlmodel import Session, col, select
 
 from mirrorhub.models import Preset, Repository, default_retry_policy
-from mirrorhub.services import audit
+from mirrorhub.services import appsettings, audit
+
+# Names of seed presets the admin deleted; seed() does not bring them back.
+REMOVED_SEEDS_KEY = "presets_removed_seeds"
 
 DEBIAN_SECTIONS = ["main", "contrib", "non-free", "non-free-firmware"]
 UBUNTU_SECTIONS = ["main", "restricted", "universe", "multiverse"]
@@ -72,6 +75,38 @@ SEED_PRESETS: list[dict[str, Any]] = [
         },
     },
     {
+        # Docker's APT repository: one component per channel (stable, test), packages
+        # under dists/<suite>/pool/. Import https://download.docker.com/linux/ubuntu/gpg
+        # on the Keys page before the first sync. Adjust the suites to your Ubuntu releases.
+        "name": "Docker CE (Ubuntu)",
+        "kind": "apt",
+        "config": {
+            "kind": "apt",
+            "tool": "debmirror",
+            "method": "https",
+            "upstream_host": "download.docker.com",
+            "upstream_root": "/linux/ubuntu",
+            "suites": ["noble"],
+            "sections": ["stable"],
+            "architectures": ["amd64"],
+            "arch_exclude": [],
+            "include_source": False,
+            "diff_mode": "none",
+            "cleanup_mode": "post",
+            "verify_signatures": True,
+            "rsync_extra": [],
+            "include_patterns": [],
+            "exclude_patterns": [],
+            "extra_args": [],
+            "bwlimit_kbps": 0,
+            "export_mode": "incr",
+            "export_format": "tar.zst",
+            "export_split_mb": 0,
+            "chain_export": False,
+            "enabled": True,
+        },
+    },
+    {
         "name": "Arch Linux (x86_64)",
         "kind": "arch",
         "config": {
@@ -106,10 +141,24 @@ SEED_PRESETS: list[dict[str, Any]] = [
 # add a second repository for bookworm-security rather than mixing hosts.
 
 
-def seed(db: Session) -> int:
-    """Insert missing seed presets. Idempotent; existing presets are never overwritten."""
+def _removed_seeds(db: Session) -> list[str]:
+    value = appsettings.get(db, REMOVED_SEEDS_KEY, [])
+    return [str(name) for name in value] if isinstance(value, list) else []
+
+
+def seed(db: Session, *, restore: bool = False) -> int:
+    """Insert missing seed presets. Idempotent; existing presets are never overwritten.
+
+    Seed presets the admin deleted stay deleted unless ``restore`` is set (the
+    "Restore missing seed presets" button), which also forgets those deletions.
+    """
+    removed: set[str] = set() if restore else set(_removed_seeds(db))
+    if restore and _removed_seeds(db):
+        appsettings.set_value(db, REMOVED_SEEDS_KEY, [], commit=False)
     created = 0
     for item in SEED_PRESETS:
+        if item["name"] in removed:
+            continue
         existing = db.exec(select(Preset).where(Preset.name == item["name"])).first()
         if existing is not None:
             continue
@@ -117,8 +166,7 @@ def seed(db: Session) -> int:
         config.setdefault("retry_policy", default_retry_policy())
         db.add(Preset(name=item["name"], kind=item["kind"], config=config, is_seed=True))
         created += 1
-    if created:
-        db.commit()
+    db.commit()
     return created
 
 
@@ -148,6 +196,9 @@ def config_for_repo(repo: Repository) -> dict[str, Any]:
         "rsync_extra": repo.rsync_extra,
         "include_patterns": repo.include_patterns,
         "exclude_patterns": repo.exclude_patterns,
+        "include_regex": repo.include_regex,
+        "exclude_regex": repo.exclude_regex,
+        "wget_keep_arches": repo.wget_keep_arches,
         "extra_args": repo.extra_args,
         "extra_files": repo.extra_files,
         "bwlimit_kbps": repo.bwlimit_kbps,
@@ -216,5 +267,10 @@ def delete(db: Session, preset: Preset, *, actor: str, ip: str = "") -> None:
         detail={"was_seed": preset.is_seed},
         commit=False,
     )
+    seed_names = {item["name"] for item in SEED_PRESETS}
+    if preset.is_seed and preset.name in seed_names:
+        removed = _removed_seeds(db)
+        if preset.name not in removed:
+            appsettings.set_value(db, REMOVED_SEEDS_KEY, [*removed, preset.name], commit=False)
     db.delete(preset)
     db.commit()

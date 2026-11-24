@@ -5,16 +5,27 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import os
+import re
 import shutil
 import subprocess
+import sys
 import tarfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from mirrorhub import verify as verify_module
+from mirrorhub.importer import apply as apply_module
+from mirrorhub.importer import checks as checks_module
+from mirrorhub.importer import logs as logs_module
+from mirrorhub.importer import progress as progress_module
+from mirrorhub.importer import tree as tree_module
+from mirrorhub.importer.adopt import adopt
 from mirrorhub.importer.apply import Options, import_export
 from mirrorhub.importer.cli import main
 from mirrorhub.importer.config import Config, load_config
@@ -23,6 +34,7 @@ from mirrorhub.importer.errors import (
     ConfigError,
     IoFailure,
     LockError,
+    PostCheckError,
     ToolMissingError,
     UnsafeArchiveError,
     VerificationFailed,
@@ -299,7 +311,9 @@ def test_tampered_archive_fails_checksum(config: Config) -> None:
     archive.write_bytes(bytes(raw))
     with pytest.raises(VerificationFailed, match="checksum mismatch"):
         import_export(export, config, Options())
-    assert not config.mirror_root.exists()
+    assert read_tree(config.mirror_root / "ubuntu") == {}
+    assert not (config.staging_dir / "ubuntu").exists()
+    assert StateStore(config.state_dir, "ubuntu").load().last_export_id is None
 
 
 def test_tampered_manifest_checksum(config: Config) -> None:
@@ -524,3 +538,883 @@ def test_import_all_continues_after_a_failing_slug(tmp_path: Path) -> None:
     assert read_tree(tmp_path / "out" / "ubuntu")["pool/b.deb"] == "bbb"
     assert StateStore(tmp_path / "st", "broken").load().last_export_id is None
     assert main([*base, "import", "--all", "--rebase"]) == 2
+
+
+# Superseded exports ("incremental since" on the sender) and adopt
+
+
+T3: Tree = {
+    "dists/Release": fnode("r3", BASE_MTIME + 9),
+    "pool/a.deb": fnode("aaa"),
+    "pool/d.deb": fnode("ddd"),
+    "latest": lnode("pool/d.deb"),
+}
+SINCE = "20261104T000000Z-incr"
+
+
+def _inbox_cli(tmp_path: Path) -> tuple[Path, list[str]]:
+    settings = tmp_path / "importer.toml"
+    settings.write_text('export_dir = "in"\nmirror_root = "out"\nstate_dir = "st"\n')
+    return tmp_path / "in", ["--config", str(settings)]
+
+
+def test_export_since_skips_the_one_it_replaces(tmp_path: Path) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    build_export(inbox, "20261104T000000Z", "incr", T3, T1, base=ID1)
+
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+
+    tree = read_tree(tmp_path / "out" / "ubuntu")
+    assert tree["pool/d.deb"] == "ddd" and "pool/c.deb" not in tree
+    state = StateStore(tmp_path / "st", "ubuntu").load()
+    assert state.last_export_id == SINCE
+    assert [(item["export_id"], item.get("status")) for item in state.history] == [
+        (ID1, None),
+        (ID2, "superseded"),
+        (SINCE, None),
+    ]
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0  # nothing left, no error
+
+
+def test_late_export_is_skipped_as_superseded(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    build_export(inbox, "20261104T000000Z", "incr", T3, T1, base=ID1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+
+    late = build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    assert main([*base, "import", "--slug", "ubuntu", "--dry-run"]) == 0
+    assert not StateStore(tmp_path / "st", "ubuntu").load().superseded(ID2)
+
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    assert main([*base, "import", "--export", str(late)]) == 0
+    state = StateStore(tmp_path / "st", "ubuntu").load()
+    assert state.last_export_id == SINCE
+    assert state.superseded(ID2) and not state.applied(ID2)
+    assert sum(1 for item in state.history if item["export_id"] == ID2) == 1
+    assert read_tree(tmp_path / "out" / "ubuntu")["pool/d.deb"] == "ddd"
+
+    capsys.readouterr()
+    assert main([*base, "status", "--slug", "ubuntu"]) == 0
+    assert "applied=2 superseded=1" in capsys.readouterr().out
+
+
+def test_explicit_rebase_of_an_older_full_is_not_superseded(config: Config) -> None:
+    full = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    newer = build_export(config.export_dir, "20261105T000000Z", "full", T2)
+    import_export(newer, config, Options())
+
+    outcome = import_export(full, config, Options(rebase=True))
+
+    assert outcome.status == "applied"
+    assert StateStore(config.state_dir, "ubuntu").load().last_export_id == ID1
+
+
+def _applied_then_state_lost(config: Config) -> Path:
+    full = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    incr = build_export(config.export_dir, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    import_export(full, config, Options())
+    import_export(incr, config, Options())
+    (config.state_dir / "ubuntu.json").unlink()
+    return incr
+
+
+def test_adopt_restores_a_lost_state_file(config: Config) -> None:
+    _applied_then_state_lost(config)
+
+    result = adopt(config, "ubuntu", export_id=ID2)
+
+    assert result.export_id == ID2 and not result.hashed
+    state = StateStore(config.state_dir, "ubuntu").load()
+    assert state.last_export_id == ID2
+    assert state.history[-1]["status"] == "adopted"
+    nxt = build_export(config.export_dir, "20261103T000000Z", "incr", T3, T2, base=ID2)
+    assert import_export(nxt, config, Options()).status == "applied"
+
+
+def test_adopt_auto_picks_the_newest_matching_export(config: Config) -> None:
+    full = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    import_export(full, config, Options())
+    build_export(config.export_dir, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    (config.state_dir / "ubuntu.json").unlink()
+
+    assert adopt(config, "ubuntu").export_id == ID1  # the tree is at T1, not T2
+
+
+def test_adopt_needs_only_the_metadata(config: Config) -> None:
+    incr = _applied_then_state_lost(config)
+    (incr / "data.tar").unlink()
+
+    assert adopt(config, "ubuntu", export_id=ID2).export_id == ID2
+
+
+def test_adopt_lists_differences_and_writes_nothing(config: Config) -> None:
+    _applied_then_state_lost(config)
+    root = config.mirror_root / "ubuntu"
+    (root / "pool/a.deb").unlink()
+    (root / "pool/extra.deb").write_text("x")
+
+    with pytest.raises(PostCheckError) as caught:
+        adopt(config, "ubuntu", export_id=ID2)
+
+    assert "missing: pool/a.deb" in str(caught.value)
+    assert "extra: pool/extra.deb" in str(caught.value)
+    assert not (config.state_dir / "ubuntu.json").exists()
+
+
+def test_adopt_hash_finds_changed_content(config: Config) -> None:
+    _applied_then_state_lost(config)
+    path = config.mirror_root / "ubuntu" / "pool/c.deb"
+    path.write_text("cCc")  # same size
+    os.utime(path, ns=(BASE_MTIME, BASE_MTIME))
+
+    assert adopt(config, "ubuntu", export_id=ID2).export_id == ID2  # quick check passes
+    (config.state_dir / "ubuntu.json").unlink()
+    with pytest.raises(PostCheckError, match=r"sha256: pool/c\.deb"):
+        adopt(config, "ubuntu", export_id=ID2, hash_contents=True)
+
+
+def test_adopt_refuses_an_existing_state(tmp_path: Path) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+
+    assert main([*base, "adopt", "--slug", "ubuntu", "--export-id", ID1]) == 5
+    (tmp_path / "st" / "ubuntu.json").unlink()
+    assert main([*base, "adopt", "--slug", "ubuntu", "--auto", "--hash"]) == 0
+    assert StateStore(tmp_path / "st", "ubuntu").load().last_export_id == ID1
+
+
+def test_zipapp_runs_with_the_standard_library_alone(tmp_path: Path) -> None:
+    """scripts/build_importer.py: one file, reproducible, no application dependencies."""
+    script = Path(__file__).resolve().parents[1] / "scripts" / "build_importer.py"
+    archive = tmp_path / "mirrorhub-importer.pyz"
+    again = tmp_path / "again.pyz"
+    for target in (archive, again):
+        subprocess.run([sys.executable, str(script), "--output", str(target)], check=True)
+
+    assert archive.read_bytes() == again.read_bytes()
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    sidecar = archive.with_name("mirrorhub-importer.pyz.sha256").read_text(encoding="ascii")
+    assert sidecar == f"{digest}  mirrorhub-importer.pyz\n"
+    with zipfile.ZipFile(archive) as bundle:
+        files = {name for name in bundle.namelist() if not name.endswith("/")}
+    assert {"__main__.py", "mirrorhub/__init__.py", "mirrorhub/verify.py"} <= files
+    assert "mirrorhub/importer/cli.py" in files
+    top_level = {
+        "__main__.py",
+        "mirrorhub/__init__.py",
+        "mirrorhub/verify.py",
+        "mirrorhub/buildinfo.py",
+        "mirrorhub/_build.py",
+    }
+    assert all(name in top_level or name.startswith("mirrorhub/importer/") for name in files)
+
+    inbox = tmp_path / "in"
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    settings = tmp_path / "importer.toml"
+    settings.write_text('export_dir = "in"\nmirror_root = "out"\nstate_dir = "st"\n')
+    # -S: no site-packages, so the installed application cannot be picked up.
+    command = [sys.executable, "-S", "-E", str(archive), "--config", str(settings)]
+    environment = {"PATH": os.environ.get("PATH", "")}
+
+    version = subprocess.run(
+        [*command[:4], "--version"], capture_output=True, text=True, env=environment
+    )
+    assert version.returncode == 0 and "mirrorhub.importer" in version.stdout
+    if "mirrorhub/_build.py" in files:  # built from a git checkout
+        head = subprocess.run(
+            ["git", "-C", str(script.parents[1]), "rev-parse", "--short=12", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        assert f"({head}" in version.stdout
+    result = subprocess.run(
+        [*command, "import", "--slug", "ubuntu"],
+        capture_output=True,
+        text=True,
+        env=environment,
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    assert read_tree(tmp_path / "out" / "ubuntu")["pool/a.deb"] == "aaa"
+
+
+def _with_sender_commit(directory: Path, commit: str) -> None:
+    manifest = json.loads((directory / "manifest.json").read_text())
+    manifest["tool_versions"] = {"mirrorhub": "0.1.0", "mirrorhub_commit": commit}
+    (directory / "manifest.json").write_text(json.dumps(manifest, sort_keys=True))
+    refresh(directory)
+
+
+def test_version_mismatch_is_a_warning(
+    config: Config, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from mirrorhub import buildinfo
+
+    monkeypatch.setenv("MIRRORHUB_COMMIT", "aaaaaaaaaaaa")
+    buildinfo.commit.cache_clear()
+    try:
+        same = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+        _with_sender_commit(same, "aaaaaaaaaaaa")
+        other = build_export(config.export_dir, "20261102T000000Z", "incr", T2, T1, base=ID1)
+        _with_sender_commit(other, "bbbbbbbbbbbb")
+
+        with caplog.at_level("WARNING", logger="mirrorhub.importer"):
+            assert import_export(same, config, Options()).status == "applied"
+            assert "different commits" not in caplog.text
+            assert import_export(other, config, Options()).status == "applied"
+        assert "different commits" in caplog.text
+    finally:
+        buildinfo.commit.cache_clear()
+
+
+# Detecting changes in the tree (#43): quick check after import, `check`
+
+
+def test_import_reports_changes_outside_the_export(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    (tmp_path / "out" / "ubuntu" / "pool/a.deb").unlink()  # untouched by the next export
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    capsys.readouterr()
+
+    assert main([*base, "import", "--slug", "ubuntu"]) == 11
+
+    output = capsys.readouterr().out
+    assert "applied 20261102T000000Z-incr" in output
+    assert "missing: pool/a.deb" in output
+    assert StateStore(tmp_path / "st", "ubuntu").load().last_export_id == ID2
+
+
+def test_tree_check_can_be_skipped(config: Config) -> None:
+    full = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    import_export(full, config, Options())
+    (config.mirror_root / "ubuntu" / "pool/a.deb").unlink()
+    incr = build_export(config.export_dir, "20261102T000000Z", "incr", T2, T1, base=ID1)
+
+    outcome = import_export(incr, config, Options(tree_check=False))
+
+    assert outcome.status == "applied" and outcome.drift == []
+
+
+def test_check_finds_deleted_extra_and_changed_files(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    capsys.readouterr()
+
+    assert main([*base, "check", "--slug", "ubuntu"]) == 0
+    assert f"ok ubuntu: 4 entries match {ID2}" in capsys.readouterr().out
+
+    root = tmp_path / "out" / "ubuntu"
+    changed = root / "pool/c.deb"
+    changed.write_text("cCc")  # same size and mtime: only --hash sees it
+    os.utime(changed, ns=(BASE_MTIME, BASE_MTIME))
+    assert main([*base, "check", "--slug", "ubuntu"]) == 0
+    assert main([*base, "check", "--slug", "ubuntu", "--hash"]) == 11
+    assert "sha256: pool/c.deb" in capsys.readouterr().out
+
+    (root / "pool/a.deb").unlink()
+    (root / "pool/stray.deb").write_text("x")
+    assert main([*base, "check", "--slug", "ubuntu"]) == 11
+    output = capsys.readouterr().out
+    assert "missing: pool/a.deb" in output and "extra: pool/stray.deb" in output
+
+
+def test_check_uses_the_local_inventory_copy(tmp_path: Path) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    copies = tmp_path / "st" / "inventories" / "ubuntu"
+    assert sorted(path.name for path in copies.iterdir()) == [f"{ID2}.json"]
+
+    shutil.rmtree(inbox / "ubuntu")  # the exports have left the inbox
+    assert main([*base, "check", "--slug", "ubuntu"]) == 0
+
+
+def test_check_falls_back_to_the_inbox_for_older_states(tmp_path: Path) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    copies = tmp_path / "st" / "inventories"
+    shutil.rmtree(copies)  # as written by an importer before inventory copies
+
+    assert main([*base, "check", "--slug", "ubuntu"]) == 0
+    assert (copies / "ubuntu" / f"{ID1}.json").is_file()
+
+    shutil.rmtree(copies)
+    shutil.rmtree(inbox / "ubuntu")
+    assert main([*base, "check", "--slug", "ubuntu"]) == 2
+
+
+def test_check_all_and_missing_state(tmp_path: Path) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1, slug="arch")
+    build_export(inbox, "20261101T000000Z", "full", T1, slug="ubuntu")
+    assert main([*base, "import", "--all"]) == 0
+    assert main([*base, "check", "--slug", "debian"]) == 5
+
+    assert main([*base, "check", "--all"]) == 0
+    (tmp_path / "out" / "arch" / "pool/b.deb").unlink()
+    assert main([*base, "check", "--all"]) == 11
+
+
+def test_adopt_writes_the_inventory_copy(config: Config) -> None:
+    _applied_then_state_lost(config)
+    shutil.rmtree(config.state_dir / "inventories")
+
+    adopt(config, "ubuntu", export_id=ID2)
+
+    assert (config.state_dir / "inventories" / "ubuntu" / f"{ID2}.json").is_file()
+
+
+REPORT_NAMES = [
+    "extra.txt",
+    "missing.txt",
+    "mtime.txt",
+    "sha256.txt",
+    "size.txt",
+    "summary.txt",
+    "symlink-target.txt",
+    "type.txt",
+]
+
+
+def test_check_writes_one_file_per_kind(tmp_path: Path) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    reports = tmp_path / "reports"
+
+    assert main([*base, "check", "--slug", "ubuntu", "--output-dir", str(reports)]) == 0
+    written = reports / "ubuntu"
+    assert sorted(path.name for path in written.iterdir()) == REPORT_NAMES
+    lists = [name for name in REPORT_NAMES if name != "summary.txt"]
+    assert all((written / name).read_text() == "" for name in lists)
+    assert "total=0\n" in (written / "summary.txt").read_text()
+
+    root = tmp_path / "out" / "ubuntu"
+    (root / "pool/a.deb").unlink()
+    (root / "pool/c.deb").unlink()
+    (root / "pool/z.deb").write_text("z")
+    (root / "pool/bad\nname.deb").write_text("x")
+    grown = root / "dists/Release"
+    grown.write_text("r2 and more")
+    os.utime(grown, ns=(BASE_MTIME + 5, BASE_MTIME + 5))
+
+    assert main([*base, "check", "--slug", "ubuntu", "--output-dir", str(reports)]) == 11
+    assert (written / "missing.txt").read_text() == "pool/a.deb\npool/c.deb\n"
+    assert (written / "extra.txt").read_text() == "pool/bad\\nname.deb\npool/z.deb\n"
+    assert (written / "size.txt").read_text() == "dists/Release\n"
+    assert (written / "mtime.txt").read_text() == ""
+    summary = (written / "summary.txt").read_text()
+    assert f"export_id={ID2}\n" in summary and "check=quick\n" in summary
+    assert "total=5\n" in summary and "missing=2\n" in summary and "extra=2\n" in summary
+
+
+def test_check_hash_reports_content_besides_quick_differences(tmp_path: Path) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    root = tmp_path / "out" / "ubuntu"
+    (root / "pool/a.deb").unlink()
+    changed = root / "pool/b.deb"
+    changed.write_text("bBb")  # same size and mtime
+    os.utime(changed, ns=(BASE_MTIME, BASE_MTIME))
+    reports = tmp_path / "reports"
+
+    command = [*base, "check", "--slug", "ubuntu", "--hash", "--output-dir", str(reports)]
+    assert main(command) == 11
+
+    assert (reports / "ubuntu" / "missing.txt").read_text() == "pool/a.deb\n"
+    assert (reports / "ubuntu" / "sha256.txt").read_text() == "pool/b.deb\n"
+    assert "check=quick+sha256\n" in (reports / "ubuntu" / "summary.txt").read_text()
+
+
+def test_import_writes_drift_files(tmp_path: Path) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    (tmp_path / "out" / "ubuntu" / "pool/a.deb").unlink()
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    reports = tmp_path / "drift"
+
+    assert main([*base, "import", "--slug", "ubuntu", "--drift-output", str(reports)]) == 11
+
+    assert (reports / "ubuntu" / "missing.txt").read_text() == "pool/a.deb\n"
+    assert f"export_id={ID2}\n" in (reports / "ubuntu" / "summary.txt").read_text()
+
+
+# --log-level
+
+
+def _log_lines(stderr: str) -> list[tuple[str, str]]:
+    lines = [json.loads(line) for line in stderr.splitlines() if line.startswith("{")]
+    return [(line["level"], line["event"]) for line in lines]
+
+
+@pytest.mark.parametrize(
+    ("level", "expect_debug", "expect_info"),
+    [("debug", True, True), ("info", False, True), ("warning", False, False)],
+)
+def test_log_level_controls_json_lines(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    level: str,
+    expect_debug: bool,
+    expect_info: bool,
+) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+
+    assert main([*base, "--log-level", level, "import", "--slug", "ubuntu"]) == 0
+
+    captured = capsys.readouterr()
+    lines = _log_lines(captured.err)
+    events = {event for _, event in lines}
+    assert any(lvl == "debug" for lvl, _ in lines) is expect_debug
+    assert ("applied" in events) is expect_info
+    if expect_debug:
+        assert {"config loaded", "export verified", "plan", "post-check passed"} <= events
+    assert f"applied {ID2}" in captured.out  # stdout does not depend on the level
+
+
+@pytest.mark.parametrize("command", ["import", "status", "check", "adopt"])
+def test_log_level_and_config_after_the_command(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], command: str
+) -> None:
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    if command == "adopt":
+        (tmp_path / "st" / "ubuntu.json").unlink()  # adopt needs a lost state file
+    capsys.readouterr()
+    extra = {
+        "import": ["--slug", "ubuntu"],
+        "status": [],
+        "check": ["--slug", "ubuntu"],
+        "adopt": ["--slug", "ubuntu", "--auto"],
+    }[command]
+
+    assert main([command, *extra, *base, "--log-level", "DEBUG"]) == 0
+
+    assert ("debug", "config loaded") in _log_lines(capsys.readouterr().err)
+
+
+def test_log_level_after_the_command_wins(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _, base = _inbox_cli(tmp_path)
+    assert main([*base, "--log-level", "debug", "status", "--log-level", "error"]) == 0
+    assert _log_lines(capsys.readouterr().err) == []
+    assert main([*base, "--log-level", "debug", "status"]) == 0
+    assert ("debug", "config loaded") in _log_lines(capsys.readouterr().err)
+
+
+# Performance of large first imports: one sync, one read of the archive, metadata
+# post-check, one tree walk per repository
+
+
+def _many_files(count: int) -> Tree:
+    tree: Tree = {f"pool/{i % 7}/{i % 3}/p{i}.deb": fnode(f"data {i}") for i in range(count)}
+    tree["dists/Release"] = fnode("r")
+    return tree
+
+
+def test_staging_is_synced_once_not_per_file(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export = build_export(config.export_dir, "20261101T000000Z", "full", _many_files(60))
+    fsyncs = {"count": 0}
+    real_fsync = os.fsync
+
+    def counting_fsync(descriptor: int) -> None:
+        fsyncs["count"] += 1
+        real_fsync(descriptor)
+
+    syncs: list[tuple[bool, bool]] = []
+    real_sync = apply_module._sync_filesystem
+
+    def recording_sync(path: Path) -> None:
+        staging = config.staging_dir / "ubuntu"
+        syncs.append(((staging / "journal.json").exists(), (path / "dists/Release").is_file()))
+        real_sync(path)
+
+    monkeypatch.setattr(os, "fsync", counting_fsync)
+    monkeypatch.setattr(apply_module, "_sync_filesystem", recording_sync)
+
+    assert import_export(export, config, Options()).status == "applied"
+
+    assert syncs == [(False, True)]  # once, after staging, before the journal
+    assert fsyncs["count"] < 10  # journal, inventory copy, state: not one per file
+
+
+def test_post_check_compares_metadata_and_rehashes_only_with_full_check(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hashed: list[str] = []
+    real_digest = apply_module._file_digest
+    real_content = tree_module.content_differences
+
+    def digest(path: Path) -> str:
+        hashed.append(path.name)
+        return real_digest(path)
+
+    def content(*args: Any, **kwargs: Any) -> list[str]:
+        hashed.append("<tree>")
+        return real_content(*args, **kwargs)
+
+    monkeypatch.setattr(apply_module, "_file_digest", digest)
+    monkeypatch.setattr(tree_module, "content_differences", content)
+    full = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    incr = build_export(config.export_dir, "20261102T000000Z", "incr", T2, T1, base=ID1)
+
+    import_export(full, config, Options())
+    import_export(incr, config, Options())
+    assert hashed == []
+
+    third = build_export(config.export_dir, "20261103T000000Z", "incr", T3, T2, base=ID2)
+    import_export(third, config, Options(full_check=True))
+    assert hashed == ["<tree>"]
+
+
+def test_full_post_check_finds_a_file_missing_after_apply(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_apply = apply_module.apply_journal
+
+    def losing_apply(target: Path, files: Path, journal: dict[str, Any], *rest: Any) -> None:
+        real_apply(target, files, journal, *rest)
+        (target / "pool/b.deb").unlink()
+
+    monkeypatch.setattr(apply_module, "apply_journal", losing_apply)
+    export = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    with pytest.raises(PostCheckError, match=re.escape("missing: pool/b.deb")):
+        import_export(export, config, Options())
+    assert StateStore(config.state_dir, "ubuntu").load().last_export_id is None
+
+
+def test_full_check_finds_content_changed_after_apply(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_apply = apply_module.apply_journal
+
+    def corrupting_apply(target: Path, files: Path, journal: dict[str, Any], *rest: Any) -> None:
+        real_apply(target, files, journal, *rest)
+        path = target / "pool/b.deb"
+        path.write_text("bXb")  # same size and mtime: only a re-hash sees it
+        os.utime(path, ns=(BASE_MTIME, BASE_MTIME))
+
+    monkeypatch.setattr(apply_module, "apply_journal", corrupting_apply)
+    export = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    with pytest.raises(PostCheckError, match=re.escape("sha256: pool/b.deb")):
+        import_export(export, config, Options(full_check=True))
+
+
+def test_archive_parts_are_hashed_once_unless_verify_first(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    real_verify = verify_module.verify
+
+    def counting_verify(directory: Path) -> dict[str, Any]:
+        calls.append(directory.name)
+        return real_verify(directory)
+
+    monkeypatch.setattr(checks_module, "verify", counting_verify)
+    full = build_export(config.export_dir, "20261101T000000Z", "full", T1, split=40)
+    incr = build_export(config.export_dir, "20261102T000000Z", "incr", T2, T1, base=ID1)
+
+    assert import_export(full, config, Options()).status == "applied"
+    assert calls == []
+    assert import_export(incr, config, Options(verify_first=True)).status == "applied"
+    assert calls == [ID2]
+
+
+@pytest.mark.parametrize("verify_first", [False, True])
+def test_damaged_file_data_is_reported_as_verification_failure(
+    config: Config, verify_first: bool
+) -> None:
+    export = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    archive = export / "data.tar"
+    raw = bytearray(archive.read_bytes())
+    offset = raw.index(b"bbb")  # file data, not a tar header
+    raw[offset] = ord("x")
+    archive.write_bytes(bytes(raw))
+
+    with pytest.raises(
+        VerificationFailed, match=r"checksum mismatch for (archive part )?data\.tar"
+    ):
+        import_export(export, config, Options(verify_first=verify_first))
+    assert read_tree(config.mirror_root / "ubuntu") == {}
+    assert not (config.staging_dir / "ubuntu").exists()
+
+
+def test_damaged_metadata_fails_before_extraction(config: Config) -> None:
+    export = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    with (export / "files.json").open("a") as handle:
+        handle.write(" ")
+    with pytest.raises(VerificationFailed, match=re.escape("checksum mismatch for files.json")):
+        import_export(export, config, Options())
+    assert not config.mirror_root.exists()
+
+
+def test_archive_part_must_be_listed_in_manifest(config: Config) -> None:
+    export = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    manifest = export / "MANIFEST.sha256"
+    lines = manifest.read_text().splitlines(keepends=True)
+    manifest.write_text("".join(line for line in lines if not line.endswith("data.tar\n")))
+    with pytest.raises(
+        VerificationFailed, match=re.escape("not covered by MANIFEST.sha256: data.tar")
+    ):
+        import_export(export, config, Options())
+
+
+def test_tree_has_entries_stops_at_the_first_entry(tmp_path: Path) -> None:
+    root = tmp_path / "tree"
+    assert not apply_module._tree_has_entries(root)
+    (root / "a" / "b").mkdir(parents=True)
+    (root / ".tmp").mkdir()
+    (root / ".tmp" / "partial").write_text("x")
+    assert not apply_module._tree_has_entries(root)  # empty dirs and skipped dirs
+    (root / "link").symlink_to("a")
+    assert apply_module._tree_has_entries(root)
+    (root / "link").unlink()
+    (root / "a" / "b" / "f").write_text("x")
+    assert apply_module._tree_has_entries(root)
+
+
+def test_symlinked_parent_is_refused_with_directory_cache(config: Config, tmp_path: Path) -> None:
+    full = build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    import_export(full, config, Options())
+    pool = config.mirror_root / "ubuntu" / "pool"
+    outside = tmp_path / "outside"
+    shutil.move(pool, outside)
+    pool.symlink_to(outside)
+    incr = build_export(config.export_dir, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    with pytest.raises(IoFailure, match="unsafe or conflicting parent"):
+        import_export(incr, config, Options())
+    assert not (outside / "c.deb").exists()
+
+
+def test_tree_check_runs_once_after_the_last_pending_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    scans = {"count": 0}
+    real_scan = tree_module.scan_tree
+
+    def counting_scan(root: Path, *rest: Any) -> Any:
+        scans["count"] += 1
+        return real_scan(root, *rest)
+
+    monkeypatch.setattr(tree_module, "scan_tree", counting_scan)
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    assert scans["count"] == 1  # the full export's post-check, no extra tree check
+
+    (tmp_path / "out" / "ubuntu" / "pool/a.deb").unlink()  # untouched by what follows
+    build_export(inbox, "20261102T000000Z", "incr", T2, T1, base=ID1)
+    build_export(inbox, "20261103T000000Z", "incr", T3, T2, base=ID2)
+    capsys.readouterr()
+    assert (
+        main([*base, "import", "--slug", "ubuntu", "--drift-output", str(tmp_path / "rep")]) == 11
+    )
+
+    assert scans["count"] == 2  # once for both incrementals
+    output = capsys.readouterr().out
+    assert output.count("missing: pool/a.deb") == 1
+    assert f"files.json of {ID3}" in output
+    assert (tmp_path / "rep" / "ubuntu" / "missing.txt").read_text() == "pool/a.deb\n"
+    assert main([*base, "import", "--slug", "ubuntu", "--no-tree-check"]) == 0
+    assert scans["count"] == 2
+
+
+# Progress lines for long phases
+
+
+class FakeClock:
+    def __init__(self, step: float) -> None:
+        self.now = 0.0
+        self.step = step
+
+    def __call__(self) -> float:
+        self.now += self.step
+        return self.now
+
+
+def _record_progress(monkeypatch: pytest.MonkeyPatch, step: float, interval: float) -> list[Any]:
+    events: list[Any] = []
+
+    def record(level: int, event: str, **fields: object) -> None:
+        events.append((level, event, fields))
+
+    monkeypatch.setattr(progress_module, "log_event", record)
+    monkeypatch.setattr(progress_module, "_clock", FakeClock(step))
+    monkeypatch.setattr(progress_module, "_interval", interval)
+    return events
+
+
+def test_progress_logs_once_per_interval_with_totals(monkeypatch: pytest.MonkeyPatch) -> None:
+    events = _record_progress(monkeypatch, step=4.0, interval=10.0)
+    progress = progress_module.Progress("staging", files_total=10, bytes_total=1000, slug="u")
+    for _ in range(10):
+        progress.advance(1, 100)  # started at 4; advances at 8, 12, 16, ... 44
+    progress.finish()
+
+    lines = [fields for _, event, fields in events if event == "progress"]
+    assert [line["files"] for line in lines] == [3, 6, 9]  # at 16, 28 and 40
+    first = lines[0]
+    assert first["phase"] == "staging" and first["slug"] == "u"
+    assert first["files_total"] == 10 and first["bytes_total"] == 1000
+    assert first["bytes"] == 300 and first["percent"] == 30.0
+    assert first["elapsed_s"] == 12 and first["eta_s"] == 28
+    level, event, done = events[-1]
+    assert (level, event) == (logging.INFO, "phase done") and done["files"] == 10
+
+
+def test_short_phase_and_interval_zero_stay_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
+    events = _record_progress(monkeypatch, step=1.0, interval=30.0)
+    short = progress_module.Progress("installing", files_total=3)
+    for _ in range(3):
+        short.advance()
+    short.finish()
+    assert [(level, event) for level, event, _ in events] == [(logging.DEBUG, "phase done")]
+
+    events.clear()
+    monkeypatch.setattr(progress_module, "_interval", 0.0)
+    off = progress_module.Progress("tree scan")
+    for _ in range(100):
+        off.advance()
+    assert [event for _, event, _ in events] == []
+    with pytest.raises(ValueError):
+        progress_module.configure(-1)
+
+
+def test_import_reports_progress_for_every_phase(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events = _record_progress(monkeypatch, step=1.0, interval=0.5)  # a line per step
+    tree = _many_files(20)
+    full = build_export(config.export_dir, "20261101T000000Z", "full", tree)
+    assert import_export(full, config, Options(full_check=True)).status == "applied"
+
+    phases = {fields["phase"] for _, event, fields in events if event == "progress"}
+    assert phases == {"staging", "installing", "tree scan", "content hash"}
+    staging = [f for _, e, f in events if e == "progress" and f["phase"] == "staging"]
+    assert staging[-1]["files"] == 21 and staging[-1]["files_total"] == 21
+    assert staging[-1]["bytes"] == staging[-1]["bytes_total"]
+    assert staging[-1]["export_id"] == ID1 and staging[-1]["slug"] == "ubuntu"
+    done = {f["phase"] for level, e, f in events if e == "phase done" and level == logging.INFO}
+    assert done == phases
+
+
+def test_progress_interval_option(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(progress_module, "_interval", progress_module.DEFAULT_INTERVAL)
+    inbox, base = _inbox_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu", "--progress-interval", "0"]) == 0
+    assert progress_module.interval() == 0
+    assert main([*base, "--progress-interval", "5", "status"]) == 0
+    assert progress_module.interval() == 5
+    with pytest.raises(SystemExit):
+        main([*base, "status", "--progress-interval", "-1"])
+
+
+# Log formats: readable text on a terminal, JSON otherwise
+
+
+def _record(event: str, level: int = logging.INFO, **fields: object) -> logging.LogRecord:
+    record = logging.LogRecord("mirrorhub.importer", level, __file__, 1, event, None, None)
+    record.fields = fields
+    return record
+
+
+def test_json_lines_start_with_time_level_event_and_context() -> None:
+    line = logs_module.JsonFormatter().format(
+        _record("applied", files=3, export_id=ID1, slug="ubuntu")
+    )
+    assert list(json.loads(line)) == ["ts", "level", "event", "slug", "export_id", "files"]
+
+
+def test_text_lines_are_readable() -> None:
+    formatter = logs_module.TextFormatter(colour=False)
+    line = formatter.format(
+        _record("chain check passed", logging.DEBUG, mode="full", export_id=ID1, slug="ubuntu")
+    )
+    assert line[8:] == f" DEBUG   chain check passed      ubuntu  {ID1}  mode=full"
+
+    line = formatter.format(_record("config loaded", logging.DEBUG, version="0.1.0 (abc)"))
+    assert line.endswith('config loaded           version="0.1.0 (abc)"')
+    line = formatter.format(_record("pending exports", export_ids=[ID1, ID2]))
+    assert line.endswith(f'export_ids=["{ID1}","{ID2}"]')
+
+
+def test_text_progress_lines() -> None:
+    formatter = logs_module.TextFormatter(colour=False)
+    progress = formatter.format(
+        _record(
+            "progress",
+            phase="staging",
+            files=120_000,
+            files_total=480_000,
+            bytes=48 * 1024**3,
+            bytes_total=200 * 1024**3,
+            percent=24.0,
+            rate_mib_s=81.9,
+            elapsed_s=600,
+            eta_s=1900,
+            slug="ubuntu",
+            export_id=ID1,
+        )
+    )
+    assert progress.endswith(
+        f"progress                ubuntu  {ID1}  staging   24.0 %  120000/480000 files"
+        "  48.0 GiB/200.0 GiB  81.9 MiB/s  elapsed 10m 00s  left 31m 40s"
+    )
+    done = formatter.format(
+        _record("phase done", phase="tree scan", files=421, elapsed_s=3725.0, slug="u")
+    )
+    assert done.endswith("phase done              u  tree scan  421 files  in 1h 02m")
+
+
+def test_text_colours_warnings_only_when_enabled() -> None:
+    record = _record("tree differs from inventory", logging.WARNING, differences=2)
+    assert "\033[33m" in logs_module.TextFormatter(colour=True).format(record)
+    assert "\033[" not in logs_module.TextFormatter(colour=False).format(record)
+    info = logs_module.TextFormatter(colour=True).format(_record("applied"))
+    assert "\033[" not in info
+
+
+def test_auto_log_format_is_json_unless_stderr_is_a_terminal(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class Terminal(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    assert logs_module.resolve_format("auto", io.StringIO()) == "json"
+    assert logs_module.resolve_format("auto", Terminal()) == "text"
+    assert logs_module.resolve_format("json", Terminal()) == "json"
+
+    _, base = _inbox_cli(tmp_path)
+    assert main([*base, "status", "--log-level", "debug"]) == 0
+    assert ("debug", "config loaded") in _log_lines(capsys.readouterr().err)
+    assert main([*base, "status", "--log-level", "debug", "--log-format", "text"]) == 0
+    err = capsys.readouterr().err
+    assert " DEBUG   config loaded " in err and not err.startswith("{")

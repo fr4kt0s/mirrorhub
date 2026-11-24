@@ -158,15 +158,19 @@ class Runner:
         last_tick = 0.0
         cancel_sent_at: float | None = None
         kill_sent = False
+        # Sticky: a process often closes stdout a moment before it exits. Checking
+        # "end of output and exited" only in the same iteration missed that window
+        # for silent, fast steps (e.g. find -delete) and looped forever, cancel included.
+        drained = False
 
         try:
             while True:
                 try:
                     line = stream.get(timeout=0.5)
-                    drained = line is None
+                    if line is None:
+                        drained = True
                 except queue.Empty:
                     line = None
-                    drained = False
 
                 now = time.monotonic()
                 if now - last_tick >= self._tick_interval:

@@ -175,12 +175,6 @@ def read_chunk(
         return "", 0, True
 
 
-def read_new(path: Path, offset: int) -> tuple[list[str], int]:
-    """Compatibility wrapper; reads are now bounded."""
-    text, next_offset, _eof = read_chunk(path, offset)
-    return text.splitlines(), next_offset
-
-
 def retention_sweep(
     settings: Settings | None = None,
     days: int = 30,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import logging
 import shutil
 import subprocess
 import tempfile
@@ -15,12 +16,17 @@ from typing import IO, Any
 
 from mirrorhub.importer.checks import Export
 from mirrorhub.importer.errors import ToolMissingError, UnsafeArchiveError, VerificationFailed
+from mirrorhub.importer.logs import log_event
 
 CHUNK = 1024 * 1024
 
 
 class PartReader(io.RawIOBase):
-    """Concatenate parts and compare each part's SHA-256 with MANIFEST.sha256 at its end."""
+    """Concatenate parts and compare each part's SHA-256 with MANIFEST.sha256 at its end.
+
+    This is where the archive is verified: a damaged part fails at its end, before
+    the journal is written, so nothing reaches the mirror tree.
+    """
 
     def __init__(self, parts: tuple[Path, ...], digests: tuple[str, ...]) -> None:
         super().__init__()
@@ -29,6 +35,7 @@ class PartReader(io.RawIOBase):
         self._index = 0
         self._handle: IO[bytes] | None = None
         self._hash = hashlib.sha256()
+        self._size = 0
 
     def readable(self) -> bool:
         return True
@@ -41,16 +48,24 @@ class PartReader(io.RawIOBase):
                     return 0
                 self._handle = self._parts[self._index].open("rb")
                 self._hash = hashlib.sha256()
+                self._size = 0
             chunk = self._handle.read(len(view))
             if chunk:
                 self._hash.update(chunk)
+                self._size += len(chunk)
                 view[: len(chunk)] = chunk
                 return len(chunk)
             self._handle.close()
             self._handle = None
             if self._hash.hexdigest() != self._digests[self._index]:
                 name = self._parts[self._index].name
-                raise VerificationFailed(f"archive part changed after verification: {name}")
+                raise VerificationFailed(f"checksum mismatch for archive part {name}")
+            log_event(
+                logging.DEBUG,
+                "archive part read and verified",
+                part=self._parts[self._index].name,
+                bytes=self._size,
+            )
             self._index += 1
 
     def close(self) -> None:
@@ -67,7 +82,7 @@ def _drain(stream: IO[bytes]) -> None:
 
 @contextmanager
 def open_archive(export: Export) -> Iterator[IO[bytes]]:
-    """Yield the uncompressed tar stream; after use all parts are fully read and re-verified."""
+    """Yield the uncompressed tar stream; after use all parts are fully read and verified."""
     reader = io.BufferedReader(PartReader(export.parts, export.part_digests), CHUNK)
     if not export.compressed:
         try:
@@ -82,6 +97,7 @@ def open_archive(export: Export) -> Iterator[IO[bytes]]:
         reader.close()
         raise ToolMissingError("zstd is not installed; it is required for .tar.zst exports")
 
+    log_event(logging.DEBUG, "decompressing with zstd", zstd=zstd)
     errors: list[BaseException] = []
     with tempfile.TemporaryFile() as stderr:
         process = subprocess.Popen(  # noqa: S603

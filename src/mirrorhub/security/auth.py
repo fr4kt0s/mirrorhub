@@ -3,8 +3,9 @@
 import hashlib
 import secrets
 import sys
+import threading
 import time
-from collections import defaultdict, deque
+from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
@@ -21,7 +22,12 @@ MAX_PASSWORD_LEN = 256
 # A (username, IP) pair without failures for this long starts again from zero.
 THROTTLE_RESET_S = 24 * 3600
 
+# argon2 needs 64 MiB per hash. Concurrent verifications are capped so that a burst
+# of login requests (up to 40 threadpool threads) cannot exhaust the container memory.
+ARGON2_CONCURRENCY = 4
+
 _hasher = PasswordHasher()
+_hash_slots = threading.BoundedSemaphore(ARGON2_CONCURRENCY)
 _DUMMY_HASH = _hasher.hash("mirrorhub-dummy-password")
 
 
@@ -36,7 +42,11 @@ class LoginLocked(Exception):
 
 
 class IpRateLimiter:
-    """Sliding-window limiter on login attempts per client IP (in-memory, single web instance)."""
+    """Sliding-window limiter on login attempts per client IP (in-memory, single web instance).
+
+    Memory stays bounded: each address keeps at most ``limit + 1`` timestamps, and
+    addresses without hits inside the window are dropped once per window.
+    """
 
     def __init__(
         self,
@@ -47,30 +57,70 @@ class IpRateLimiter:
         self.limit = limit
         self.window_s = window_s
         self._clock = clock
-        self._hits: dict[str, deque[float]] = defaultdict(deque)
+        self._lock = threading.Lock()
+        self._hits: dict[str, deque[float]] = {}
+        self._reported: dict[str, float] = {}
+        self._last_prune = clock()
 
     def allow(self, key: str) -> bool:
-        now = self._clock()
-        hits = self._hits[key]
-        while hits and now - hits[0] > self.window_s:
-            hits.popleft()
-        hits.append(now)
-        return len(hits) <= self.limit
+        with self._lock:
+            now = self._clock()
+            self._prune(now)
+            hits = self._hits.get(key)
+            if hits is None:
+                hits = deque(maxlen=self.limit + 1)
+                self._hits[key] = hits
+            while hits and now - hits[0] > self.window_s:
+                hits.popleft()
+            hits.append(now)
+            return len(hits) <= self.limit
+
+    def first_rejection(self, key: str) -> bool:
+        """True once per window for a rejected address, so only that one gets audited."""
+        with self._lock:
+            now = self._clock()
+            last = self._reported.get(key)
+            if last is not None and now - last <= self.window_s:
+                return False
+            self._reported[key] = now
+            return True
+
+    def _prune(self, now: float) -> None:
+        if now - self._last_prune <= self.window_s:
+            return
+        self._last_prune = now
+        self._hits = {
+            key: hits
+            for key, hits in self._hits.items()
+            if hits and now - hits[-1] <= self.window_s
+        }
+        self._reported = {
+            key: ts for key, ts in self._reported.items() if now - ts <= self.window_s
+        }
+
+    def tracked(self) -> int:
+        """Number of addresses currently held in memory."""
+        with self._lock:
+            return len(self._hits)
 
     def reset(self) -> None:
-        self._hits.clear()
+        with self._lock:
+            self._hits.clear()
+            self._reported.clear()
 
 
 ip_limiter = IpRateLimiter()
 
 
 def hash_password(password: str) -> str:
-    return _hasher.hash(password)
+    with _hash_slots:
+        return _hasher.hash(password)
 
 
 def verify_password(password_hash: str, password: str) -> bool:
     try:
-        return _hasher.verify(password_hash, password)
+        with _hash_slots:
+            return _hasher.verify(password_hash, password)
     except (VerificationError, InvalidHashError):
         return False
 
@@ -164,10 +214,6 @@ def attempt_login(
             lock_s = min(s.login_lockout_s * 2**exponent, MAX_LOCK_S)
             throttle.locked_until = now + timedelta(seconds=lock_s)
         db.add(throttle)
-        if admin is not None:
-            # Account-wide counter for visibility only; it no longer locks the account.
-            admin.failed_attempts += 1
-            db.add(admin)
         db.commit()
         if lock_s:
             raise LoginLocked(lock_s)
@@ -176,9 +222,7 @@ def attempt_login(
     assert admin is not None
     if _hasher.check_needs_rehash(admin.password_hash):
         admin.password_hash = hash_password(password)
-    admin.failed_attempts = 0
-    admin.locked_until = None
-    db.add(admin)
+        db.add(admin)
     existing = db.get(LoginThrottle, throttle.key)
     if existing is not None:
         db.delete(existing)

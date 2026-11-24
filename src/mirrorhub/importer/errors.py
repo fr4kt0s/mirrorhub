@@ -43,3 +43,9 @@ class IoFailure(ImporterError):
 
 class PostCheckError(ImporterError):
     exit_code = 10
+
+
+class DriftError(ImporterError):
+    """The mirror tree differs from the inventory of the last applied export."""
+
+    exit_code = 11

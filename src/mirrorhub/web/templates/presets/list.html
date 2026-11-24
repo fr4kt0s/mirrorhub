@@ -23,7 +23,8 @@
       <td class="row-actions">
         <a href="/repos/new?preset={{ p.id }}">Clone into new repository</a>
         <button class="btn btn-danger" hx-post="/presets/{{ p.id }}/delete"
-                hx-confirm="Delete preset {{ p.name }}?">Delete</button>
+                hx-confirm="Delete preset {{ p.name }}?"
+                hx-target="body">Delete</button>
       </td>
     </tr>
   {% else %}

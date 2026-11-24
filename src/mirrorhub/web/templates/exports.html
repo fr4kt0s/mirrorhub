@@ -11,6 +11,13 @@
     the pickup tool may move exports out of the drop folder. Directories the tool has
     emptied are removed automatically.
   </p>
+  <p class="muted">
+    If an export was lost on the way, use <em>Incremental since</em> with the last export
+    the receiver has applied (<code>python -m mirrorhub.importer status</code>). The
+    newest {{ meta_keep }} metadata copies per repository are kept
+    (<code>MIRRORHUB_EXPORT_META_KEEP</code>); an older receiver state needs a full
+    export imported with <code>--rebase</code>.
+  </p>
 
   <table class="table">
     <thead>
@@ -32,6 +39,25 @@
               Full export
             </button>
           </form>
+          {% set choices = base_choices.get(repo.id, []) %}
+          {% if choices %}
+          <details>
+            <summary>Incremental since &hellip;</summary>
+            <form method="post" action="/exports/{{ repo.id }}/start">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="mode" value="incr">
+              <label>Last export the receiver has applied
+                <select name="base" required>
+                {% for choice in choices %}
+                  <option value="{{ choice.export_id }}">{{ choice.export_id }} ({{ choice.drop_folder }})</option>
+                {% endfor %}
+                </select>
+              </label>
+              <button class="btn btn-secondary" type="submit">Create export</button>
+              <p class="muted">Exports published after the selected one are skipped by the receiver.</p>
+            </form>
+          </details>
+          {% endif %}
         </td>
       </tr>
     {% else %}
@@ -44,7 +70,8 @@
   <h2>Retention</h2>
   <p class="muted">
     A chain is one full export plus its incrementals. The newest chain of each
-    repository is always kept.
+    repository is always kept. The scheduler applies this rule once an hour;
+    "Apply retention now" does it immediately.
   </p>
   <form hx-post="/exports/retention/save" hx-target="body">
     <label>Chains to keep per repository (0 = never delete)
@@ -88,7 +115,7 @@
         <td>{{ repo_names.get(export.repo_id, export.repo_id) }}</td>
         <td>{{ export.mode }}</td>
         <td>{{ export.base_export_id or "-" }}</td>
-        <td>{{ export.status }}</td>
+        <td>{{ export.status }}{% if export.id in superseded %} (superseded){% endif %}</td>
         <td>{{ drop_folder.get(export.id, "-") }}</td>
         <td>{{ export.file_count }}</td>
         <td>{{ export.deleted_count }}</td>
