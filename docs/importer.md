@@ -64,17 +64,29 @@ The importer writes two kinds of output:
 - **stdout, plain text** for people: the plan (`--dry-run`), `applied …`,
   `nothing to import …`, `status`, `check` results and the first differences. It does
   not depend on the log level.
-- **stderr, one JSON object per line** for log collection (`ts`, `level`, `event`,
-  plus fields such as `slug` and `export_id`). Error messages (`error: …`) are also
-  printed as plain text on stderr.
+- **stderr, log lines**: time, level, event, then `slug` and `export_id`, then further
+  fields. Error messages (`error: …`) are also printed as plain text on stderr.
 
-`--log-level` (`debug`, `info` (default), `warning`, `error`) controls only the JSON
-lines. `--log-level` and `--config` may be given before or after the command; a value
+`--log-format` chooses how the log lines look: `auto` (default) writes readable text
+when stderr is a terminal and one JSON object per line otherwise (systemd journal,
+file, pipe), so collected logs stay machine-readable; `text` or `json` force one.
+Text lines show warnings in yellow and errors in red on a terminal (not with
+`NO_COLOR` set or `TERM=dumb`):
+
+    20:32:46 DEBUG   chain check passed      ubuntu  20261101T000000Z-full  mode=full  rebase=False
+    20:32:47 INFO    progress                ubuntu  20261101T000000Z-full  staging   49.1 %  14726/30001 files  28.8 MiB/58.6 MiB  28.8 MiB/s  elapsed 1s  left 1s
+    20:32:50 INFO    applied                 ubuntu  20261101T000000Z-full
+
+    {"ts": "2026-11-24T19:32:50+00:00", "level": "info", "event": "applied", "slug": "ubuntu", "export_id": "20261101T000000Z-full"}
+
+Text lines use local time, JSON lines UTC. `--log-level` (`debug`, `info` (default),
+`warning`, `error`) controls which lines appear in either format. `--log-level`,
+`--log-format` and `--config` may be given before or after the command; a value
 after the command wins:
 
     python -m mirrorhub.importer --config importer.toml import --slug ubuntu --log-level debug
 
-| Level | JSON lines on stderr |
+| Level | Log lines on stderr |
 |---|---|
 | `error` | failures only |
 | `warning` | plus unsigned exports, superseded exports, commit mismatch, tree differences, resumed imports |

@@ -22,6 +22,7 @@ import pytest
 from mirrorhub import verify as verify_module
 from mirrorhub.importer import apply as apply_module
 from mirrorhub.importer import checks as checks_module
+from mirrorhub.importer import logs as logs_module
 from mirrorhub.importer import progress as progress_module
 from mirrorhub.importer import tree as tree_module
 from mirrorhub.importer.adopt import adopt
@@ -1333,3 +1334,87 @@ def test_progress_interval_option(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert progress_module.interval() == 5
     with pytest.raises(SystemExit):
         main([*base, "status", "--progress-interval", "-1"])
+
+
+# Log formats: readable text on a terminal, JSON otherwise
+
+
+def _record(event: str, level: int = logging.INFO, **fields: object) -> logging.LogRecord:
+    record = logging.LogRecord("mirrorhub.importer", level, __file__, 1, event, None, None)
+    record.fields = fields
+    return record
+
+
+def test_json_lines_start_with_time_level_event_and_context() -> None:
+    line = logs_module.JsonFormatter().format(
+        _record("applied", files=3, export_id=ID1, slug="ubuntu")
+    )
+    assert list(json.loads(line)) == ["ts", "level", "event", "slug", "export_id", "files"]
+
+
+def test_text_lines_are_readable() -> None:
+    formatter = logs_module.TextFormatter(colour=False)
+    line = formatter.format(
+        _record("chain check passed", logging.DEBUG, mode="full", export_id=ID1, slug="ubuntu")
+    )
+    assert line[8:] == f" DEBUG   chain check passed      ubuntu  {ID1}  mode=full"
+
+    line = formatter.format(_record("config loaded", logging.DEBUG, version="0.1.0 (abc)"))
+    assert line.endswith('config loaded           version="0.1.0 (abc)"')
+    line = formatter.format(_record("pending exports", export_ids=[ID1, ID2]))
+    assert line.endswith(f'export_ids=["{ID1}","{ID2}"]')
+
+
+def test_text_progress_lines() -> None:
+    formatter = logs_module.TextFormatter(colour=False)
+    progress = formatter.format(
+        _record(
+            "progress",
+            phase="staging",
+            files=120_000,
+            files_total=480_000,
+            bytes=48 * 1024**3,
+            bytes_total=200 * 1024**3,
+            percent=24.0,
+            rate_mib_s=81.9,
+            elapsed_s=600,
+            eta_s=1900,
+            slug="ubuntu",
+            export_id=ID1,
+        )
+    )
+    assert progress.endswith(
+        f"progress                ubuntu  {ID1}  staging   24.0 %  120000/480000 files"
+        "  48.0 GiB/200.0 GiB  81.9 MiB/s  elapsed 10m 00s  left 31m 40s"
+    )
+    done = formatter.format(
+        _record("phase done", phase="tree scan", files=421, elapsed_s=3725.0, slug="u")
+    )
+    assert done.endswith("phase done              u  tree scan  421 files  in 1h 02m")
+
+
+def test_text_colours_warnings_only_when_enabled() -> None:
+    record = _record("tree differs from inventory", logging.WARNING, differences=2)
+    assert "\033[33m" in logs_module.TextFormatter(colour=True).format(record)
+    assert "\033[" not in logs_module.TextFormatter(colour=False).format(record)
+    info = logs_module.TextFormatter(colour=True).format(_record("applied"))
+    assert "\033[" not in info
+
+
+def test_auto_log_format_is_json_unless_stderr_is_a_terminal(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class Terminal(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    assert logs_module.resolve_format("auto", io.StringIO()) == "json"
+    assert logs_module.resolve_format("auto", Terminal()) == "text"
+    assert logs_module.resolve_format("json", Terminal()) == "json"
+
+    _, base = _inbox_cli(tmp_path)
+    assert main([*base, "status", "--log-level", "debug"]) == 0
+    assert ("debug", "config loaded") in _log_lines(capsys.readouterr().err)
+    assert main([*base, "status", "--log-level", "debug", "--log-format", "text"]) == 0
+    err = capsys.readouterr().err
+    assert " DEBUG   config loaded " in err and not err.startswith("{")
