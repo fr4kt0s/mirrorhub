@@ -25,7 +25,7 @@ from mirrorhub.importer.check import check_tree
 from mirrorhub.importer.checks import EXPORT_ID_RE, SLUG_RE
 from mirrorhub.importer.config import Config, load_config
 from mirrorhub.importer.errors import ConfigError, DriftError, ImporterError
-from mirrorhub.importer.logs import configure_logging, log_event
+from mirrorhub.importer.logs import FORMATS, configure_logging, log_event
 from mirrorhub.importer.state import StateStore
 
 CONFIG_ENV = "MIRRORHUB_IMPORTER_CONFIG"
@@ -45,8 +45,12 @@ PROGRESS_HELP = (
     "seconds between JSON progress lines on stderr during long phases (staging, "
     f"installing, tree scans, hashing); 0 turns them off (default: {progress.DEFAULT_INTERVAL:g})"
 )
+LOG_FORMAT_HELP = (
+    "log lines on stderr as readable text or JSON; auto (default): text on a terminal, "
+    "JSON otherwise (journal, file, pipe)"
+)
 LOG_LEVEL_HELP = (
-    "level of the JSON log lines on stderr (default: info); does not change the "
+    "level of the log lines on stderr (default: info); does not change the "
     "plain-text output on stdout"
 )
 
@@ -69,6 +73,13 @@ def _global_options(parser: argparse.ArgumentParser, *, defaults: bool) -> None:
         choices=LOG_LEVELS,
         default="info" if defaults else argparse.SUPPRESS,
         help=LOG_LEVEL_HELP,
+    )
+    parser.add_argument(
+        "--log-format",
+        type=str.lower,
+        choices=FORMATS,
+        default="auto" if defaults else argparse.SUPPRESS,
+        help=LOG_FORMAT_HELP,
     )
     parser.add_argument(
         "--progress-interval",
@@ -459,7 +470,7 @@ def _slug_of(arguments: argparse.Namespace) -> str | None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
-    configure_logging(arguments.log_level)
+    configure_logging(arguments.log_level, arguments.log_format)
     progress.configure(arguments.progress_interval)
     try:
         location = arguments.config or os.environ.get(CONFIG_ENV)
