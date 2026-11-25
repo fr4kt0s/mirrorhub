@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from mirrorhub.importer import permissions
+from mirrorhub.importer import permissions, tree
 from mirrorhub.importer.apply import Options, import_export
 from mirrorhub.importer.cli import main
 from mirrorhub.importer.config import Config
@@ -178,6 +178,12 @@ def test_check_and_adopt_warn_about_directories_this_user_cannot_change(
     assert "warning" not in capsys.readouterr().out
 
     _deny(monkeypatch, tmp_path / "out" / "ubuntu" / "pool")
+
+    def no_second_walk(root: Path) -> Any:
+        raise AssertionError(f"tree listed a second time: {root}")
+
+    # the warning reuses the directories of the tree scan instead of listing again
+    monkeypatch.setattr(permissions, "_walk", no_second_walk)
     assert main([*base, "check", "--slug", "ubuntu"]) == 0  # a warning, no failure
     out = capsys.readouterr().out
     assert "cannot change 1 directory" in out and f"{tmp_path / 'out' / 'ubuntu' / 'pool'}:" in out
@@ -186,6 +192,27 @@ def test_check_and_adopt_warn_about_directories_this_user_cannot_change(
     (tmp_path / "st" / "ubuntu.json").unlink()
     assert main([*base, "adopt", "--slug", "ubuntu", "--auto"]) == 0
     assert "cannot change 1 directory" in capsys.readouterr().out
+
+
+def test_tree_scan_hands_over_its_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "tree"
+    (root / "pool" / "main").mkdir(parents=True)
+    (root / "dists").mkdir()
+    (root / ".mirrorhub").mkdir()  # skipped like in the scan
+    (root / "link").symlink_to(root / "pool")  # not followed
+    (root / "pool" / "main" / "a.deb").write_text("a")
+    walked: list[Path] = []
+    entries = tree.scan_tree(root, directories=walked)
+    assert "pool/main/a.deb" in entries
+    assert sorted(walked) == sorted([root, root / "pool", root / "pool" / "main", root / "dists"])
+    assert permissions.unwritable_dirs(root) == (0, [])
+    _deny(monkeypatch, root / "pool" / "main")
+    assert permissions.unwritable_dirs(root) == permissions.unwritable_dirs(
+        root, directories=walked
+    )
+    assert permissions.unwritable_dirs(root, directories=walked) == (1, [root / "pool" / "main"])
 
 
 def test_cli_exit_code_and_message(

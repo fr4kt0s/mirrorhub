@@ -29,11 +29,18 @@ class TreeEntry:
     target: str | None
 
 
-def scan_tree(root: Path, progress: Progress | None = None) -> dict[str, TreeEntry]:
-    """lstat every entry below root once; symlinked directories count as entries."""
+def scan_tree(
+    root: Path, progress: Progress | None = None, directories: list[Path] | None = None
+) -> dict[str, TreeEntry]:
+    """lstat every entry below root once; symlinked directories count as entries.
+
+    If `directories` is given, every directory walked (root included) is appended,
+    so callers can check them later without listing the tree a second time."""
     found: dict[str, TreeEntry] = {}
     for directory, names, filenames in os.walk(root, followlinks=False):
         base = Path(directory)
+        if directories is not None:
+            directories.append(base)
         links = [name for name in names if (base / name).is_symlink()]
         names[:] = [n for n in names if n not in SKIP_DIRECTORIES and n not in links]
         for name in [*filenames, *links]:
@@ -99,10 +106,16 @@ def content_differences(
     return found
 
 
-def scan(root: Path, inventory: Inventory, slug: str, export_id: str) -> dict[str, TreeEntry]:
+def scan(
+    root: Path,
+    inventory: Inventory,
+    slug: str,
+    export_id: str,
+    directories: list[Path] | None = None,
+) -> dict[str, TreeEntry]:
     """scan_tree with progress lines; the inventory size is the expected total."""
     progress = Progress("tree scan", files_total=len(inventory), slug=slug, export_id=export_id)
-    entries = scan_tree(root, progress)
+    entries = scan_tree(root, progress, directories)
     progress.finish()
     return entries
 

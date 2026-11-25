@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from mirrorhub.importer import tree
 from mirrorhub.importer.checks import SLUG_RE, Inventory, load_metadata
@@ -27,6 +28,7 @@ class CheckResult:
     entries: int
     hashed: bool
     differences: list[str] = field(default_factory=list)
+    directories: list[Path] = field(default_factory=list)  # walked by the quick check
 
 
 def _inventory(config: Config, store: StateStore, export_id: str) -> Inventory:
@@ -59,7 +61,10 @@ def check_tree(config: Config, slug: str, *, hash_contents: bool = False) -> Che
                 raise ChainError(f"no export has been applied for {slug}; nothing to check")
             inventory = _inventory(config, store, state.last_export_id)
             export_id = state.last_export_id
-            entries = tree.scan(target, inventory, slug=slug, export_id=export_id)
+            walked: list[Path] = []
+            entries = tree.scan(
+                target, inventory, slug=slug, export_id=export_id, directories=walked
+            )
             found = tree.differences(inventory, entries)
             if hash_contents:
                 reported = frozenset(line.partition(": ")[2] for line in found)
@@ -68,4 +73,4 @@ def check_tree(config: Config, slug: str, *, hash_contents: bool = False) -> Che
                 )
     except OSError as exc:
         raise IoFailure(f"I/O error: {exc}") from exc
-    return CheckResult(slug, state.last_export_id, len(inventory), hash_contents, found)
+    return CheckResult(slug, state.last_export_id, len(inventory), hash_contents, found, walked)

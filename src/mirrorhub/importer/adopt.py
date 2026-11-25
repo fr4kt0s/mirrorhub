@@ -10,7 +10,7 @@ the tree; on an exact match only the state file is written.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -35,6 +35,7 @@ class Adopted:
     export_id: str
     entries: int
     hashed: bool
+    directories: list[Path] = field(default_factory=list)  # walked by the tree scan
 
 
 def _candidates(config: Config, slug: str, export_id: str | None) -> list[Path]:
@@ -95,7 +96,8 @@ def adopt(
 
             candidates = _candidates(config, slug, export_id)
             scanning = Progress("tree scan", slug=slug)
-            entries = tree.scan_tree(target, scanning)
+            walked: list[Path] = []
+            entries = tree.scan_tree(target, scanning, walked)
             scanning.finish()
             chosen: ExportMetadata | None = None
             first_failure = ""
@@ -156,4 +158,4 @@ def adopt(
         export_id=chosen.export_id,
         hashed=hash_contents,
     )
-    return Adopted(slug, chosen.export_id, len(chosen.inventory), hash_contents)
+    return Adopted(slug, chosen.export_id, len(chosen.inventory), hash_contents, walked)

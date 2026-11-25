@@ -568,7 +568,7 @@ def _check(config: Config, arguments: argparse.Namespace) -> int:
             worst = max(worst, exc.exit_code)
             continue
         kind = "quick check and SHA-256" if result.hashed else "quick check"
-        _warn_permissions(config, slug)
+        _warn_permissions(config, slug, result.directories)
         _emit_tree_check(
             slug,
             result.export_id,
@@ -606,11 +606,11 @@ def _check(config: Config, arguments: argparse.Namespace) -> int:
     return worst
 
 
-def _warn_permissions(config: Config, slug: str) -> None:
+def _warn_permissions(config: Config, slug: str, directories: list[Path]) -> None:
     """check/adopt: warn if the tree has directories the importer's user cannot
     change (the next import touching them would stop at the permission check)."""
     try:
-        warning = permissions.tree_warning(config.mirror_root / slug)
+        warning = permissions.tree_warning(config.mirror_root / slug, directories)
     except OSError:
         return
     if warning is None:
@@ -708,7 +708,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"adopted {result.export_id} for {result.slug}: "
                 f"{result.entries} entries match ({check})"
             )
-            _warn_permissions(config, result.slug)
+            _warn_permissions(config, result.slug, result.directories)
             return 0
         return _run_import_with_event(config, arguments)
     except ImporterError as exc:

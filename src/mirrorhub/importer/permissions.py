@@ -23,7 +23,7 @@ import os
 import posixpath
 import pwd
 import stat
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -180,16 +180,25 @@ def explain(exc: PermissionError, phase: str, hint: str = "") -> PermissionFailu
     return PermissionFailure("\n".join(lines))
 
 
-def unwritable_dirs(root: Path, limit: int = SHOWN) -> tuple[int, list[Path]]:
-    """Directories below root (root included) the running user cannot change:
-    their number and the first `limit` of them. Symlinks are not followed."""
-    count = 0
-    found: list[Path] = []
+def _walk(root: Path) -> Iterator[Path]:
     if not root.is_dir():
-        return 0, []
+        return
     for directory, names, _ in os.walk(root, followlinks=False):
         names[:] = [name for name in names if name not in SKIP_DIRECTORIES]
-        path = Path(directory)
+        yield Path(directory)
+
+
+def unwritable_dirs(
+    root: Path, limit: int = SHOWN, directories: Iterable[Path] | None = None
+) -> tuple[int, list[Path]]:
+    """Directories below root (root included) the running user cannot change:
+    their number and the first `limit` of them. Symlinks are not followed.
+
+    `directories` are the directories a tree scan already walked; without them
+    the tree is walked here."""
+    count = 0
+    found: list[Path] = []
+    for path in _walk(root) if directories is None else directories:
         if not writable(path):
             count += 1
             if len(found) < limit:
@@ -197,9 +206,9 @@ def unwritable_dirs(root: Path, limit: int = SHOWN) -> tuple[int, list[Path]]:
     return count, found
 
 
-def tree_warning(root: Path) -> str | None:
+def tree_warning(root: Path, directories: Iterable[Path] | None = None) -> str | None:
     """Warning text for check/adopt if directories of the tree are not changeable."""
-    count, found = unwritable_dirs(root)
+    count, found = unwritable_dirs(root, directories=directories)
     if not count:
         return None
     lines = [
