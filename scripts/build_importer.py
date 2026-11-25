@@ -51,10 +51,15 @@ def _sha256(path: Path) -> str:
 
 
 def _commit() -> str | None:
-    """Short commit of the checkout, with -dirty if tracked files are modified."""
+    """Short commit of the checkout, with -dirty if tracked files are modified.
+
+    Without git or a checkout (e.g. inside the Docker build of Dockerfile.importer),
+    the environment variable MIRRORHUB_COMMIT is used if set.
+    """
+    fallback = os.environ.get("MIRRORHUB_COMMIT", "").strip() or None
     git = shutil.which("git")
     if git is None:
-        return None
+        return fallback
     try:
         head = subprocess.run(  # noqa: S603 - fixed git arguments
             [git, "-C", str(ROOT), "rev-parse", "--short=12", "HEAD"],
@@ -69,8 +74,8 @@ def _commit() -> str | None:
             check=True,
         ).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
-        return None
-    return f"{head}-dirty" if changes else head or None
+        return fallback
+    return f"{head}-dirty" if changes else head or fallback
 
 
 def build(output: Path) -> Path:

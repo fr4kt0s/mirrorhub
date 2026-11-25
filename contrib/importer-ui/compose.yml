@@ -1,0 +1,28 @@
+# Receiver importer web UI in Docker (docs/importer-ui.md).
+#
+#   make importer-image                       # builds the image mirrorhub-importer
+#   docker compose -f contrib/importer-ui/compose.yml up -d
+#   open http://localhost:8080/
+#
+# Mount the host directories at the SAME paths inside the container, so the paths in
+# importer.toml (export_dir, mirror_root, state_dir, events_dir, ...) work unchanged
+# for the CLI on the host and in the container. Adjust the example paths below.
+services:
+  importer-ui:
+    image: mirrorhub-importer
+    restart: unless-stopped
+    # Owner of the mirror tree and state directory on the host (id -u / id -g).
+    user: "10001:10001"
+    ports:
+      # Only on this host. To reach it from elsewhere, bind to an address and set
+      # MIRRORHUB_IMPORTER_UI_PASSWORD (and MIRRORHUB_IMPORTER_UI_HOSTS for host names).
+      - "127.0.0.1:8080:8080"
+    environment:
+      MIRRORHUB_IMPORTER_CONFIG: /etc/mirrorhub/importer.toml
+      # MIRRORHUB_IMPORTER_UI_PASSWORD: change-me
+      # MIRRORHUB_IMPORTER_UI_HOSTS: importer.example.org
+    volumes:
+      - /etc/mirrorhub/importer.toml:/etc/mirrorhub/importer.toml:ro
+      - /mnt/repository/export:/mnt/repository/export:ro   # export_dir (inbox), read only
+      - /mnt/import:/mnt/import                              # mirror_root and state_dir
+      - /var/lib/mirrorhub-importer:/var/lib/mirrorhub-importer   # events_dir, reports

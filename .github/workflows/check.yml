@@ -49,6 +49,21 @@ jobs:
       - name: Build receiver importer
         run: .venv/bin/python scripts/build_importer.py
 
+      - name: Importer image serves the web UI
+        run: |
+          docker build -f Dockerfile.importer --build-arg MIRRORHUB_COMMIT=abc1234 -t mirrorhub-importer .
+          mkdir -p /tmp/ui/in /tmp/ui/st /tmp/ui/out
+          printf 'export_dir = "/tmp/ui/in"\nmirror_root = "/tmp/ui/out"\nstate_dir = "/tmp/ui/st"\n' > /tmp/ui/importer.toml
+          sudo chown -R 10001:10001 /tmp/ui
+          docker run --rm -v /tmp/ui:/tmp/ui mirrorhub-importer --config /tmp/ui/importer.toml --version | grep -F '(abc1234)'
+          docker run -d --name importer-ui -p 127.0.0.1:18080:8080 -v /tmp/ui:/tmp/ui \
+            -e MIRRORHUB_IMPORTER_CONFIG=/tmp/ui/importer.toml mirrorhub-importer
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:18080/health && break; sleep 1; done
+          curl -fsS http://localhost:18080/ | grep -q 'MirrorHub importer'
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' http://127.0.0.1:18080/)" = 403
+          docker logs importer-ui
+          docker rm -f importer-ui
+
       - name: Upload receiver importer
         uses: actions/upload-artifact@v4
         with:

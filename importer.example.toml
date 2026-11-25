@@ -20,3 +20,7 @@ state_dir = "/var/lib/mirrorhub-importer"
 # import, failure and tree check. Files older than events_keep_days are deleted.
 # events_dir = "/var/lib/mirrorhub-importer/events"
 # events_keep_days = 30
+
+# Optional: difference lists of every check and post-import tree check
+# (<reports_dir>/<slug>/missing.txt, extra.txt, ..., summary.txt); also shown by the web UI.
+# reports_dir = "/var/lib/mirrorhub-importer/reports"

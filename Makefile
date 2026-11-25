@@ -1,4 +1,4 @@
-.PHONY: help install-dev lock build up down logs ps lint format typecheck test check smoke root-cert importer
+.PHONY: help install-dev lock build up down logs ps lint format typecheck test check smoke root-cert importer importer-image
 
 COMPOSE ?= docker compose
 PY := $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
@@ -68,3 +68,9 @@ root-cert:
 # Receiver-side importer as one file: dist/mirrorhub-importer.pyz (+ .sha256).
 importer:
 	$(PY) scripts/build_importer.py
+
+# Docker image of the receiver importer with its web UI (Dockerfile.importer, docs/importer-ui.md).
+importer-image:
+	docker build -f Dockerfile.importer \
+		--build-arg MIRRORHUB_COMMIT=$$(git rev-parse --short=12 HEAD 2>/dev/null) \
+		-t mirrorhub-importer .

@@ -165,6 +165,13 @@ see the script's help). Run it on the receiver's disk type: an fsync costs about
 
 The export directory is never modified. File modes are 0644 as written by the sender.
 
+## Web UI
+
+`python3 mirrorhub-importer.pyz --config importer.toml serve` starts a small web
+interface with all commands of this page (no login by default, listens on
+127.0.0.1:8080); Docker image: `make importer-image`. See
+[importer-ui.md](importer-ui.md).
+
 ## Event files for monitoring
 
 With `events_dir` in `importer.toml` the importer writes one JSON file per event,
@@ -176,7 +183,7 @@ events_dir = "/var/lib/mirrorhub-importer/events"
 events_keep_days = 30   # older files are deleted on the next run; 0 keeps all
 ```
 
-| Event | When | Fields (besides `schema`, `event`, `time`, `source`, `host`, `repo`, `importer_version`) |
+| Event | When | Fields (besides `schema`, `event`, `time`, `source`, `host`, `repo`, `importer_version`, `trigger`) |
 |---|---|---|
 | `import_applied` | an export was applied | `export_id`, `export_mode`, `base_export_id`, `payload_count`, `deleted_count`, `duration_s`, `tree_verified` |
 | `import_superseded` | an export was skipped as superseded | `export_id`, `superseded_by` |
@@ -185,6 +192,9 @@ events_keep_days = 30   # older files are deleted on the next run; 0 keeps all
 | `tree_check` | after an import (`origin` `import` or `post-check`), `check`, `adopt` | `export_id`, `origin`, `hashed`, `differences`, `counts`, `entries` |
 | `check_failed` | `check` failed for a repository | `error`, `error_kind`, `exit_code` |
 | `import_run` | every `import` run, also with nothing pending | `scope`, `exit_code`, `duration_s` |
+
+`trigger` is `ui` for runs started from the web UI and `cli` otherwise (shell,
+timer); the variable `MIRRORHUB_IMPORTER_TRIGGER` sets it.
 
 Files are named `<UTC time>-<pid>-<n>-importer-<repo>-<event>.json`, written to a
 hidden temporary name first and renamed. Dry runs write no events. A failure to write
@@ -210,6 +220,10 @@ neither needs a return path to the sender:
   not already report, and finds silent corruption with unchanged size and mtime. It
   takes the repository lock, changes nothing and exits with 0 (match) or 11
   (differences). `--all` checks every repository with a state.
+
+With `reports_dir` in `importer.toml`, every `check` and every import tree check
+writes these lists there without `--output-dir`/`--drift-output` (a full export's
+post-check writes an empty report); the web UI shows them.
 
 The console shows the first 50 differences. For the complete lists, use
 `check --output-dir DIR` (or `import --drift-output DIR`): it writes one file per

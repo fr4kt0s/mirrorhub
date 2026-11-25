@@ -1572,3 +1572,29 @@ def test_events_keep_days_must_be_a_non_negative_integer(tmp_path: Path) -> None
         )
         with pytest.raises(ConfigError, match="events_keep_days"):
             load_config(settings)
+
+
+def test_reports_dir_is_the_default_for_check_and_import(tmp_path: Path) -> None:
+    _, base, _ = _events_cli(tmp_path, 'reports_dir = "rep"\n')
+    inbox = tmp_path / "in"
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    summary = tmp_path / "rep" / "ubuntu" / "summary.txt"
+    assert "total=0" in summary.read_text()  # full post-check: empty report
+
+    (tmp_path / "out" / "ubuntu" / "pool/a.deb").unlink()
+    assert main([*base, "check", "--slug", "ubuntu"]) == 11
+    assert (tmp_path / "rep" / "ubuntu" / "missing.txt").read_text() == "pool/a.deb\n"
+    assert main([*base, "check", "--slug", "ubuntu", "--output-dir", str(tmp_path / "x")]) == 11
+    assert (tmp_path / "x" / "ubuntu" / "missing.txt").is_file()
+
+
+def test_events_name_the_trigger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    inbox, base, directory = _events_cli(tmp_path)
+    build_export(inbox, "20261101T000000Z", "full", T1)
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    monkeypatch.setenv(events_module.TRIGGER_ENV, "ui")
+    assert main([*base, "status"]) == 0
+    assert main([*base, "import", "--slug", "ubuntu"]) == 0
+    triggers = [(event["event"], event["trigger"]) for event in _events(directory)]
+    assert triggers[0] == ("import_applied", "cli") and triggers[-1] == ("import_run", "ui")

@@ -41,6 +41,7 @@ from mirrorhub import buildinfo
 from mirrorhub.importer.logs import log_event
 
 SCHEMA = 1
+TRIGGER_ENV = "MIRRORHUB_IMPORTER_TRIGGER"
 DEFAULT_KEEP_DAYS = 30
 
 _directory: Path | None = None
@@ -81,6 +82,8 @@ def emit(kind: str, repo: str | None, **fields: object) -> Path | None:
         "host": socket.gethostname(),
         "repo": repo,
         "importer_version": buildinfo.describe(),
+        # who started the run: "ui" (web UI), otherwise "cli" (shell, timer)
+        "trigger": os.environ.get(TRIGGER_ENV) or "cli",
     }
     document.update(fields)
     target = _directory / _name(now, kind, repo)
