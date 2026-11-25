@@ -25,6 +25,7 @@ from mirrorhub.importer.checks import (
 from mirrorhub.importer.config import Config
 from mirrorhub.importer.errors import ChainError, ConfigError, IoFailure, PostCheckError
 from mirrorhub.importer.logs import log_event
+from mirrorhub.importer.progress import Progress
 from mirrorhub.importer.state import StateStore
 
 
@@ -93,7 +94,9 @@ def adopt(
                 raise ConfigError(f"no mirror tree for {slug!r}: {target}")
 
             candidates = _candidates(config, slug, export_id)
-            entries = tree.scan_tree(target)
+            scanning = Progress("tree scan", slug=slug)
+            entries = tree.scan_tree(target, scanning)
+            scanning.finish()
             chosen: ExportMetadata | None = None
             first_failure = ""
             log_event(
@@ -123,7 +126,9 @@ def adopt(
                 prefix = "" if export_id is not None else "no export in the inbox matches; "
                 raise PostCheckError(prefix + first_failure)
             if hash_contents:
-                found = tree.content_differences(chosen.inventory, target)
+                found = tree.hash_contents(
+                    chosen.inventory, target, slug=slug, export_id=chosen.export_id
+                )
                 if found:
                     raise PostCheckError(tree.summary(chosen.export_id, found))
 

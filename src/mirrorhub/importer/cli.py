@@ -12,9 +12,15 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from mirrorhub import buildinfo
-from mirrorhub.importer import tree
+from mirrorhub.importer import progress, tree
 from mirrorhub.importer.adopt import adopt
-from mirrorhub.importer.apply import Options, Outcome, import_export, skip_jumped
+from mirrorhub.importer.apply import (
+    Options,
+    Outcome,
+    import_export,
+    log_tree_check,
+    skip_jumped,
+)
 from mirrorhub.importer.check import check_tree
 from mirrorhub.importer.checks import EXPORT_ID_RE, SLUG_RE
 from mirrorhub.importer.config import Config, load_config
@@ -26,6 +32,19 @@ CONFIG_ENV = "MIRRORHUB_IMPORTER_CONFIG"
 
 
 LOG_LEVELS = ("debug", "info", "warning", "error")
+
+
+def _interval(value: str) -> float:
+    seconds = float(value)
+    if seconds < 0:
+        raise argparse.ArgumentTypeError("must be 0 (off) or a positive number of seconds")
+    return seconds
+
+
+PROGRESS_HELP = (
+    "seconds between JSON progress lines on stderr during long phases (staging, "
+    f"installing, tree scans, hashing); 0 turns them off (default: {progress.DEFAULT_INTERVAL:g})"
+)
 LOG_LEVEL_HELP = (
     "level of the JSON log lines on stderr (default: info); does not change the "
     "plain-text output on stdout"
@@ -51,6 +70,13 @@ def _global_options(parser: argparse.ArgumentParser, *, defaults: bool) -> None:
         default="info" if defaults else argparse.SUPPRESS,
         help=LOG_LEVEL_HELP,
     )
+    parser.add_argument(
+        "--progress-interval",
+        type=_interval,
+        metavar="SECONDS",
+        default=progress.DEFAULT_INTERVAL if defaults else argparse.SUPPRESS,
+        help=PROGRESS_HELP,
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -75,11 +101,23 @@ def _parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--dry-run", action="store_true", help="verify and print the plan only")
     run.add_argument("--rebase", action="store_true", help="allow a full export over existing data")
-    run.add_argument("--full-check", action="store_true", help="re-hash the whole tree afterwards")
+    run.add_argument(
+        "--full-check",
+        action="store_true",
+        help="read back and re-hash the whole tree afterwards (contents are hashed while "
+        "staging; without this option the post-check compares metadata only)",
+    )
+    run.add_argument(
+        "--verify-first",
+        action="store_true",
+        help="hash the archive parts before extracting (reads the archive twice; "
+        "by default they are hashed once, while extracting)",
+    )
     run.add_argument(
         "--no-tree-check",
         action="store_true",
-        help="skip the quick comparison of the whole tree with files.json after importing",
+        help="skip the quick comparison of the whole tree with files.json after importing "
+        "(with --slug/--all: once, after the last pending export of a repository)",
     )
     run.add_argument(
         "--drift-output",
@@ -189,12 +227,16 @@ def _print(outcome: Outcome, dry_run: bool) -> None:
         f"{outcome.status} {outcome.export_id}: "
         f"{len(plan.adds)} added, {len(plan.changes)} changed, {len(plan.deletes)} deleted"
     )
-    if outcome.drift:
+    _print_drift(outcome.export_id, outcome.drift)
+
+
+def _print_drift(export_id: str, drift: list[str]) -> None:
+    if drift:
         print(
-            f"warning: the tree differs from files.json of {outcome.export_id} "
-            f"in {len(outcome.drift)} places (not caused by this export):"
+            f"warning: the tree differs from files.json of {export_id} "
+            f"in {len(drift)} places (not caused by the import):"
         )
-        _print_differences(outcome.drift)
+        _print_differences(drift)
 
 
 def _base_of(path: Path) -> str | None:
@@ -217,11 +259,20 @@ def _jumped_by(path: Path, pending: list[Path], last: str | None) -> str | None:
     return None
 
 
-def _report(directory: Path | None, slug: str, outcome: Outcome) -> None:
-    if directory is None or not outcome.tree_checked:
+def _report(directory: Path | None, slug: str, export_id: str, drift: list[str]) -> None:
+    if directory is None:
         return
-    written = tree.write_report(directory, slug, outcome.export_id, outcome.drift, hashed=False)
+    written = tree.write_report(directory, slug, export_id, drift, hashed=False)
     print(f"differences written to {written}")
+
+
+def _tree_check_after(config: Config, slug: str, report: Path | None) -> bool:
+    """Quick comparison of the tree with the last applied export; True if it differs."""
+    result = check_tree(config, slug)
+    log_tree_check(slug, result.export_id, result.entries, result.differences)
+    _print_drift(result.export_id, result.differences)
+    _report(report, slug, result.export_id, result.differences)
+    return bool(result.differences)
 
 
 def _import_slug(config: Config, slug: str, options: Options, report: Path | None = None) -> bool:
@@ -230,10 +281,16 @@ def _import_slug(config: Config, slug: str, options: Options, report: Path | Non
     Exports are taken oldest first. One is skipped as superseded when it is older than
     the last applied export, or when a later pending export starts at the current state
     (an "incremental since" export that replaces it).
+
+    The quick tree check runs once, after the last applied export, not after each one:
+    every walk of a large tree costs one lstat per file. It is skipped when the last
+    applied export's post-check already compared the whole tree (full export).
     """
     store = StateStore(config.state_dir, slug)
     done = 0
-    drift = False
+    last_applied: Outcome | None = None
+    tree_check = options.tree_check
+    options = dataclasses.replace(options, tree_check=False)
     pending = pending_exports(config, slug)
     log_event(
         logging.DEBUG,
@@ -259,9 +316,9 @@ def _import_slug(config: Config, slug: str, options: Options, report: Path | Non
         else:
             outcome = import_export(path, config, options)
         _print(outcome, options.dry_run)
-        _report(report, slug, outcome)
         done += 1
-        drift = drift or bool(outcome.drift)
+        if outcome.status == "applied":
+            last_applied = outcome
         if outcome.status == "superseded":
             continue  # recorded (or, in a dry run, reported) and skipped
         if options.dry_run:
@@ -274,7 +331,9 @@ def _import_slug(config: Config, slug: str, options: Options, report: Path | Non
         options = dataclasses.replace(options, rebase=False, discard_staging=False)
     if done == 0:
         print(f"nothing to import for {slug}")
-    return drift
+    if tree_check and last_applied is not None and not last_applied.whole_tree_checked:
+        return _tree_check_after(config, slug, report)
+    return False
 
 
 def _import_all(config: Config, options: Options, report: Path | None = None) -> int:
@@ -310,12 +369,15 @@ def _run_import(config: Config, arguments: argparse.Namespace) -> int:
         full_check=arguments.full_check,
         discard_staging=arguments.discard_staging,
         tree_check=not arguments.no_tree_check,
+        verify_first=arguments.verify_first,
     )
     report = arguments.drift_output
     if arguments.export is not None:
         outcome = import_export(arguments.export, config, options)
         _print(outcome, options.dry_run)
-        _report(report, Path(os.path.abspath(arguments.export)).parent.name, outcome)
+        if outcome.tree_checked:
+            slug = Path(os.path.abspath(arguments.export)).parent.name
+            _report(report, slug, outcome.export_id, outcome.drift)
         return DriftError.exit_code if outcome.drift else 0
     if arguments.all_slugs:
         return _import_all(config, options, report)
@@ -398,6 +460,7 @@ def _slug_of(arguments: argparse.Namespace) -> str | None:
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     configure_logging(arguments.log_level)
+    progress.configure(arguments.progress_interval)
     try:
         location = arguments.config or os.environ.get(CONFIG_ENV)
         if not location:

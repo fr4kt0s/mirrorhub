@@ -22,7 +22,11 @@ CHUNK = 1024 * 1024
 
 
 class PartReader(io.RawIOBase):
-    """Concatenate parts and compare each part's SHA-256 with MANIFEST.sha256 at its end."""
+    """Concatenate parts and compare each part's SHA-256 with MANIFEST.sha256 at its end.
+
+    This is where the archive is verified: a damaged part fails at its end, before
+    the journal is written, so nothing reaches the mirror tree.
+    """
 
     def __init__(self, parts: tuple[Path, ...], digests: tuple[str, ...]) -> None:
         super().__init__()
@@ -55,10 +59,10 @@ class PartReader(io.RawIOBase):
             self._handle = None
             if self._hash.hexdigest() != self._digests[self._index]:
                 name = self._parts[self._index].name
-                raise VerificationFailed(f"archive part changed after verification: {name}")
+                raise VerificationFailed(f"checksum mismatch for archive part {name}")
             log_event(
                 logging.DEBUG,
-                "archive part read and re-verified",
+                "archive part read and verified",
                 part=self._parts[self._index].name,
                 bytes=self._size,
             )
@@ -78,7 +82,7 @@ def _drain(stream: IO[bytes]) -> None:
 
 @contextmanager
 def open_archive(export: Export) -> Iterator[IO[bytes]]:
-    """Yield the uncompressed tar stream; after use all parts are fully read and re-verified."""
+    """Yield the uncompressed tar stream; after use all parts are fully read and verified."""
     reader = io.BufferedReader(PartReader(export.parts, export.part_digests), CHUNK)
     if not export.compressed:
         try:

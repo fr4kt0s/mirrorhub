@@ -1,19 +1,26 @@
 """Plan, stage, apply and post-check an export against a local mirror tree.
 
 Flow: verify -> signature -> lock -> chain check -> plan -> stream into staging ->
-journal -> deletes -> per-file replace -> post-check -> state update -> cleanup.
+sync -> journal -> deletes -> per-file replace -> post-check -> state update -> cleanup.
 A failure after the journal exists is rolled forward by running the same import again.
 The export directory is only ever read.
+
+Every byte is hashed once on its way into staging (archive parts against
+MANIFEST.sha256, files against files.json). The post-check compares file system
+metadata; reading the tree back and hashing it again is --full-check.
 """
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
 import logging
 import os
+import posixpath
 import shutil
 import stat
+import tarfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,6 +35,7 @@ from mirrorhub.importer.checks import (
     load_export,
     load_metadata,
     safe_relative,
+    verify_parts,
 )
 from mirrorhub.importer.config import Config
 from mirrorhub.importer.errors import (
@@ -36,9 +44,12 @@ from mirrorhub.importer.errors import (
     ImporterError,
     IoFailure,
     PostCheckError,
+    UnsafeArchiveError,
+    VerificationFailed,
 )
 from mirrorhub.importer.extract import extract_payload
 from mirrorhub.importer.logs import log_event
+from mirrorhub.importer.progress import Progress
 from mirrorhub.importer.reader import open_archive
 from mirrorhub.importer.state import RepoState, StateStore
 
@@ -47,10 +58,13 @@ from mirrorhub.importer.state import RepoState, StateStore
 class Options:
     dry_run: bool = False
     rebase: bool = False
+    # Re-read and hash the whole tree after applying (otherwise: metadata only).
     full_check: bool = False
     discard_staging: bool = False
     # Quick comparison of the whole tree with files.json after each import.
     tree_check: bool = True
+    # Hash the archive parts before extracting (otherwise while streaming).
+    verify_first: bool = False
 
 
 @dataclass
@@ -69,6 +83,8 @@ class Outcome:
     # export did not touch, e.g. deleted by hand). The export itself was applied.
     drift: list[str] = field(default_factory=list)
     tree_checked: bool = False
+    # The post-check compared the whole tree (full export or --full-check).
+    whole_tree_checked: bool = False
 
 
 def _tree_paths(root: Path) -> set[str]:
@@ -82,6 +98,20 @@ def _tree_paths(root: Path) -> set[str]:
         for name in [*filenames, *links]:
             found.add((base / name).relative_to(root).as_posix())
     return found
+
+
+def _tree_has_entries(root: Path) -> bool:
+    """True as soon as one file or symlink is found (same rules as _tree_paths)."""
+    if not root.is_dir():
+        return False
+    for directory, names, filenames in os.walk(root, followlinks=False):
+        if filenames:
+            return True
+        base = Path(directory)
+        if any((base / name).is_symlink() for name in names):
+            return True
+        names[:] = [n for n in names if n not in SKIP_DIRECTORIES]
+    return False
 
 
 def build_plan(export: Export, target: Path, replace: bool) -> Plan:
@@ -120,7 +150,7 @@ def _file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _check_entry(root: Path, relative: str, entry: dict[str, Any]) -> None:
+def _check_entry(root: Path, relative: str, entry: dict[str, Any], hash_contents: bool) -> None:
     path = root / relative
     try:
         info = path.lstat()
@@ -132,27 +162,45 @@ def _check_entry(root: Path, relative: str, entry: dict[str, Any]) -> None:
     else:
         if not stat.S_ISREG(info.st_mode) or info.st_size != entry["size"]:
             raise PostCheckError(f"file type or size mismatch: {relative}")
-        if _file_digest(path) != entry["sha256"]:
+        if hash_contents and _file_digest(path) != entry["sha256"]:
             raise PostCheckError(f"sha256 mismatch: {relative}")
     if info.st_mtime_ns != entry["mtime_ns"]:
         raise PostCheckError(f"mtime mismatch: {relative}")
 
 
-def post_check(export: Export, target: Path, journal_deletes: list[str], full: bool) -> None:
-    """The resulting tree must match files.json (touched paths, or everything if full)."""
+def post_check(
+    export: Export,
+    target: Path,
+    journal_deletes: list[str],
+    *,
+    whole_tree: bool,
+    hash_contents: bool,
+) -> None:
+    """The resulting tree must match files.json (touched paths, or the whole tree).
+
+    Type, size, mtime and symlink targets are always compared. Contents were hashed
+    while staging; hash_contents (--full-check) reads every file back and hashes it
+    again, which also finds damage between writing and reading.
+    """
     for relative in journal_deletes:
         if os.path.lexists(target / relative):
             raise PostCheckError(f"deleted path still exists: {relative}")
-    if not full:
+    slug, export_id = export.slug, export.export_id
+    if not whole_tree:
+        progress = Progress(
+            "post-check", files_total=len(export.payload), slug=slug, export_id=export_id
+        )
         for relative in sorted(export.payload):
-            _check_entry(target, relative, export.inventory[relative])
+            _check_entry(target, relative, export.inventory[relative], hash_contents)
+            progress.advance()
+        progress.finish()
         return
-    present = _tree_paths(target)
-    extra = present - set(export.inventory)
-    if extra:
-        raise PostCheckError(f"{len(extra)} paths not in inventory, e.g. {sorted(extra)[0]}")
-    for relative, entry in export.inventory.items():
-        _check_entry(target, relative, entry)
+    entries = tree.scan(target, export.inventory, slug=slug, export_id=export_id)
+    found = tree.differences(export.inventory, entries)
+    if not found and hash_contents:
+        found = tree.hash_contents(export.inventory, target, slug=slug, export_id=export_id)
+    if found:
+        raise PostCheckError(tree.summary(f"files.json of {export.export_id}", found))
 
 
 def _parents(root: Path, relative: str, create: bool) -> bool:
@@ -211,8 +259,31 @@ def _read_journal(path: Path) -> dict[str, Any] | None:
     return raw
 
 
-def apply_journal(target: Path, files: Path, journal: dict[str, Any]) -> None:
-    """Idempotent: deletes first, then per-file replace from staging."""
+def _sync_filesystem(path: Path) -> None:
+    """Flush the file system holding path to disk: syncfs(2) where available
+    (Linux), else sync(2) for all file systems."""
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        syncfs = libc.syncfs
+    except (OSError, AttributeError):
+        os.sync()
+        return
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        if syncfs(descriptor) != 0:
+            os.sync()
+    finally:
+        os.close(descriptor)
+
+
+def apply_journal(
+    target: Path, files: Path, journal: dict[str, Any], progress: Progress | None = None
+) -> None:
+    """Idempotent: deletes first, then per-file replace from staging.
+
+    Parent directories of installs are checked (and created) once per directory;
+    after the deletes nothing removes directories any more.
+    """
     for relative in journal["deletes"]:
         if not _parents(target, relative, create=False):
             continue
@@ -225,15 +296,25 @@ def apply_journal(target: Path, files: Path, journal: dict[str, Any]) -> None:
             raise IoFailure(f"cannot delete, path is a directory: {relative}")
         path.unlink()
         _prune(target, relative)
+        if progress is not None:
+            progress.advance()
+    checked: set[str] = set()
     for relative in journal["installs"]:
         source = files / relative
         if not os.path.lexists(source):
             continue
-        _parents(target, relative, create=True)
+        parent = posixpath.dirname(relative)
+        if parent not in checked:
+            _parents(target, relative, create=True)
+            while parent and parent not in checked:
+                checked.add(parent)
+                parent = posixpath.dirname(parent)
         destination = target / relative
         if destination.is_dir() and not destination.is_symlink():
             raise IoFailure(f"cannot install over a directory: {relative}")
         os.replace(source, destination)
+        if progress is not None:
+            progress.advance()
 
 
 def _same_filesystem(first: Path, second: Path) -> bool:
@@ -259,7 +340,7 @@ def _apply_locked(
             "re-run that export or pass --discard-staging"
         )
     if not resuming:
-        target_has_entries = bool(_tree_paths(target))
+        target_has_entries = _tree_has_entries(target)
         check_chain(state, export, target_has_entries, options.rebase)
         log_event(
             logging.DEBUG,
@@ -309,11 +390,13 @@ def _apply_locked(
             staging=files,
         )
         try:
-            with open_archive(export) as stream:
-                extract_payload(export, stream, files)
+            _extract(export, files, options)
         except BaseException:
             shutil.rmtree(staging, ignore_errors=True)
             raise
+        # Staged data must be on disk before the journal makes it "to be installed".
+        _sync_filesystem(files)
+        log_event(logging.DEBUG, "staging synced", slug=export.slug, export_id=export.export_id)
         journal = {
             "export_id": export.export_id,
             "mode": export.mode,
@@ -329,7 +412,14 @@ def _apply_locked(
             files=len(export.payload),
         )
 
-    apply_journal(target, files, journal)
+    installing = Progress(
+        "installing",
+        files_total=len(journal["deletes"]) + len(journal["installs"]),
+        slug=export.slug,
+        export_id=export.export_id,
+    )
+    apply_journal(target, files, journal, installing)
+    installing.finish()
     log_event(
         logging.DEBUG,
         "journal applied",
@@ -341,7 +431,13 @@ def _apply_locked(
     )
     full_post_check = options.full_check or export.mode == "full"
     try:
-        post_check(export, target, journal["deletes"], full_post_check)
+        post_check(
+            export,
+            target,
+            journal["deletes"],
+            whole_tree=full_post_check,
+            hash_contents=options.full_check,
+        )
     except PostCheckError:
         shutil.rmtree(staging, ignore_errors=True)
         raise
@@ -351,6 +447,7 @@ def _apply_locked(
         slug=export.slug,
         export_id=export.export_id,
         scope="whole tree" if full_post_check else "touched paths",
+        contents="re-hashed" if options.full_check else "hashed while staging",
     )
 
     store.save_inventory(export.export_id, export.directory / "files.json")
@@ -371,28 +468,68 @@ def _apply_locked(
     if resuming:
         plan = Plan(changes=sorted(export.payload), deletes=list(journal["deletes"]))
     drift: list[str] = []
-    full = options.full_check or export.mode == "full"
-    checked = options.tree_check and not full  # a full post-check compared everything
+    checked = options.tree_check and not full_post_check  # that compared everything
     if checked:
-        drift = tree.differences(export.inventory, tree.scan_tree(target))
+        entries = tree.scan(target, export.inventory, slug=export.slug, export_id=export.export_id)
+        drift = tree.differences(export.inventory, entries)
+        log_tree_check(export.slug, export.export_id, len(export.inventory), drift)
+    return Outcome(export.export_id, "applied", plan, drift, checked, full_post_check)
+
+
+def log_tree_check(slug: str, export_id: str, entries: int, drift: list[str]) -> None:
+    log_event(
+        logging.DEBUG,
+        "tree check done",
+        slug=slug,
+        export_id=export_id,
+        entries=entries,
+        differences=len(drift),
+    )
+    if drift:
         log_event(
-            logging.DEBUG,
-            "tree check done",
-            slug=export.slug,
-            export_id=export.export_id,
-            entries=len(export.inventory),
+            logging.WARNING,
+            "tree differs from inventory",
+            slug=slug,
+            export_id=export_id,
             differences=len(drift),
+            first=drift[: tree.SHOWN_DIFFERENCES],
         )
-        if drift:
+
+
+def _extract(export: Export, files: Path, options: Options) -> None:
+    """Stream the archive into staging.
+
+    Without --verify-first the archive parts were not hashed yet. If extraction
+    fails, they are hashed now so that a damaged archive is reported as such
+    (verification failure) and not as whatever the damage looked like to tar or zstd.
+    """
+    staged = [export.inventory[path] for path in export.payload]
+    progress = Progress(
+        "staging",
+        files_total=len(staged),
+        bytes_total=sum(entry["size"] for entry in staged if entry["type"] == "file"),
+        slug=export.slug,
+        export_id=export.export_id,
+    )
+    try:
+        with open_archive(export) as stream:
+            extract_payload(export, stream, files, progress)
+        progress.finish()
+    except VerificationFailed:
+        raise
+    except (UnsafeArchiveError, tarfile.TarError, EOFError) as exc:
+        if not options.verify_first:
             log_event(
-                logging.WARNING,
-                "tree differs from inventory",
+                logging.DEBUG,
+                "extraction failed, hashing archive parts",
                 slug=export.slug,
                 export_id=export.export_id,
-                differences=len(drift),
-                first=drift[: tree.SHOWN_DIFFERENCES],
+                error=str(exc),
             )
-    return Outcome(export.export_id, "applied", plan, drift, checked)
+            verify_parts(export)
+        if isinstance(exc, UnsafeArchiveError):
+            raise
+        raise UnsafeArchiveError(f"unreadable archive: {exc}") from exc
 
 
 def warn_on_version_mismatch(export: Export) -> bool:
@@ -495,7 +632,7 @@ def import_export(export_dir: Path, config: Config, options: Options) -> Outcome
     """
     directory = Path(os.path.abspath(export_dir))
     try:
-        export = load_export(directory)
+        export = load_export(directory, verify_parts_first=options.verify_first)
         check_signature(directory, config.keyring, config.require_signature)
         warn_on_version_mismatch(export)
         store = StateStore(config.state_dir, export.slug)
@@ -508,7 +645,7 @@ def import_export(export_dir: Path, config: Config, options: Options) -> Outcome
                 return Outcome(export.export_id, "noop", Plan())
             if state.superseded(export.export_id) or _superseded(export, state, options):
                 return Outcome(export.export_id, "superseded", Plan())
-            check_chain(state, export, bool(_tree_paths(target)), options.rebase)
+            check_chain(state, export, _tree_has_entries(target), options.rebase)
             replace = options.rebase and export.mode == "full"
             return Outcome(export.export_id, "dry-run", build_plan(export, target, replace))
 
