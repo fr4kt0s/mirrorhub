@@ -511,7 +511,7 @@ pool/main/r/resolvelib/python3-resolvelib_0.5.4-2ppa~focal_all.deb
 | 6 | Unsafe/inconsistent archive. |
 | 7 | Lock held. |
 | 8 | External tool missing. |
-| 9 | I/O failure or unfinished import needs attention. |
+| 9 | I/O failure, permission check failed (the running user cannot change a directory the import needs; see docs/importer.md, "User and permissions"), or unfinished import needs attention. |
 | 10 | Post-check failure. |
 
 ### Audit script
