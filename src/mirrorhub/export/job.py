@@ -53,7 +53,9 @@ def capture_sync(
         raise ExportError("sync inventory already exists for this attempt")
     cache_path = hash_cache_path(settings, repo.slug)
     cache = manifest.load_hash_cache(cache_path)
-    inventory = manifest.snapshot(settings.data_dir / repo.slug, pulse, cache)
+    inventory = manifest.snapshot(
+        settings.data_dir / repo.slug, pulse, cache, workers=settings.export_workers
+    )
     manifest.save(path, inventory)
     manifest.save_hash_cache(cache_path, cache)
     return path
@@ -73,8 +75,46 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
         handle.write("\n")
 
 
-def _write_checksums(directory: Path, pulse: Pulse) -> None:
-    """Collect payload paths before creating the checksum manifest."""
+def _same_metadata(left: Inventory, right: Inventory) -> bool:
+    """Equal apart from file digests that are not known yet (empty)."""
+    if left.keys() != right.keys():
+        return False
+    for path, entry in left.items():
+        other = right[path]
+        if {k: v for k, v in entry.items() if k != "sha256"} != {
+            k: v for k, v in other.items() if k != "sha256"
+        }:
+            return False
+        if entry.get("sha256") and other.get("sha256") and entry["sha256"] != other["sha256"]:
+            return False
+    return True
+
+
+def _fill_digests(
+    current: Inventory,
+    digests: dict[str, str],
+    stat_keys: manifest.StatKeys,
+    cache: manifest.HashCache,
+) -> None:
+    """Put the digests computed while packing into the inventory and the hash cache."""
+    for path, entry in current.items():
+        if entry["type"] != "file":
+            continue
+        digest = digests.get(path)
+        if digest is None:
+            raise ExportError(f"file was not packed: {path}")
+        entry["sha256"] = digest
+        key, cacheable = stat_keys[path]
+        if cacheable:
+            cache[path] = [*key, digest]
+
+
+def _write_checksums(directory: Path, pulse: Pulse, known: dict[str, str] | None = None) -> None:
+    """Collect payload paths before creating the checksum manifest.
+
+    ``known`` holds digests computed while the archive parts were written; those
+    files are not read again.
+    """
     payloads = sorted(path for path in directory.iterdir() if path.name not in CHECKSUM_EXCLUSIONS)
     for path in payloads:
         if path.is_symlink() or not path.is_file():
@@ -85,7 +125,7 @@ def _write_checksums(directory: Path, pulse: Pulse) -> None:
         encoding="ascii",
     ) as handle:
         for path in payloads:
-            digest = manifest.file_hash(path, pulse)
+            digest = (known or {}).get(path.name) or manifest.file_hash(path, pulse)
             handle.write(f"{digest}  {path.name}\n")
         handle.flush()
         os.fsync(handle.fileno())
@@ -249,21 +289,34 @@ def execute(
     if root.resolve().parent != settings.data_dir.resolve():
         raise ExportError("repository path escapes the data directory")
 
-    # Full exports rehash every file and rebuild the cache from the results;
-    # incremental exports reuse cached hashes for files whose stat data is unchanged.
+    # Incremental exports reuse cached hashes for files whose stat data is unchanged.
+    # Full exports ignore the cache and hash every file, but while packing it: the
+    # inventory is built from stat data only, so the tree is read once (not twice).
     cache_path = hash_cache_path(settings, repo.slug)
-    cache = manifest.load_hash_cache(cache_path) if requested == "incr" else {}
+    full_request = requested == "full"
+    cache = {} if full_request else manifest.load_hash_cache(cache_path)
+    stat_keys: manifest.StatKeys = {}
 
     pulse(0, "Building repository inventory")
-    current = manifest.snapshot(root, pulse, cache)
-    manifest.save_hash_cache(cache_path, cache)
+    current = manifest.snapshot(
+        root,
+        pulse,
+        cache,
+        hash_files=not full_request,
+        workers=settings.export_workers,
+        stat_keys=stat_keys,
+    )
+    if not full_request:
+        manifest.save_hash_cache(cache_path, cache)
 
     expected_path = job.params.get("sync_snapshot")
+    expected_inventory: Inventory | None = None
     if expected_path:
         expected = Path(str(expected_path))
         if expected.resolve().parent != settings.manifest_dir.resolve():
             raise ExportError("sync inventory path is outside the manifest directory")
-        if manifest.load(expected) != current:
+        expected_inventory = manifest.load(expected)
+        if not _same_metadata(expected_inventory, current):
             raise ExportError("repository changed after sync; run sync and export again")
 
     chosen = _chosen_base(job, settings, repo.slug)
@@ -309,20 +362,21 @@ def execute(
         row_id = row.id
 
     try:
-        raw_archive = temporary / "data.tar"
-        pack.archive(root, raw_archive, current, changed, pulse)
-
-        payload = raw_archive
-        if repo.export_format == "tar.zst":
-            payload = temporary / "data.tar.zst"
-            pack.compress(raw_archive, payload, pulse)
-            raw_archive.unlink()
-
-        parts = pack.split(
-            payload,
-            repo.export_split_mb * 1024 * 1024,
+        part_digests, file_digests = pack.write_archive(
+            root,
+            temporary,
+            current,
+            changed,
             pulse,
+            compress=repo.export_format == "tar.zst",
+            part_bytes=repo.export_split_mb * 1024 * 1024,
         )
+        parts = [path for path, _digest in part_digests]
+        if full_request:
+            _fill_digests(current, file_digests, stat_keys, cache)
+            manifest.save_hash_cache(cache_path, cache)
+            if expected_inventory is not None and expected_inventory != current:
+                raise ExportError("repository changed after sync; run sync and export again")
         manifest.save(temporary / "files.json", current)
         (temporary / "deleted.txt").write_text(
             "".join(f"{path}\n" for path in deleted),
@@ -358,10 +412,10 @@ def execute(
         _write_json(temporary / "manifest.json", metadata)
 
         pulse(85, "Checking repository did not change during packing")
-        if manifest.snapshot(root, pulse, cache) != current:
+        if manifest.snapshot(root, pulse, cache, workers=settings.export_workers) != current:
             raise ExportError("repository changed during export; publication refused")
 
-        _write_checksums(temporary, pulse)
+        _write_checksums(temporary, pulse, {path.name: digest for path, digest in part_digests})
         signed = _sign(temporary, settings, pulse)
 
         for path in temporary.iterdir():

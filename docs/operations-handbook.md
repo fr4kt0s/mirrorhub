@@ -707,6 +707,31 @@ How a file-list sync runs, and what follows from it:
 
 In the YAML configuration there is no mode field: an empty or missing `extra_files` means the whole tree, entries mean only those files (`extra_files: [{url: …, path: …}]`, path always explicit). Tree filters: `include_regex`, `exclude_regex`, `wget_keep_arches: [amd64, i386]` (before PR #51 the two regex fields were missing from the YAML export and were cleared when a wget repository was edited in the web interface).
 
+### 4.7 Export performance (sender)
+
+How an export reads the data (from PR #63):
+
+| Step | Full export | Incremental export |
+| --- | --- | --- |
+| Inventory | `stat` of every file, **no reading** | `stat` of every file; only files whose inode/size/mtime/ctime changed are read and hashed (hash cache) |
+| Packing | every file read **once**: hashed while it is copied into the tar; the digests go into `files.json` and the hash cache | changed files read once, digest compared with the inventory |
+| Archive | written once, straight into the parts (no intermediate `data.tar`), each part hashed while written | same |
+| Compression (`tar.zst`) | `zstd -T0` (all cores) in the same stream | same |
+| Post-check (tree unchanged?) | `stat` of every file, cached digests | same |
+| `MANIFEST.sha256` | uses the digests of the parts; only the small metadata files are read | same |
+
+Data volume of a full export ≈ **1 × read + 1 × write** of the payload (before PR #63: ≈ 4 × read + 1 × write for `tar`, more with `tar.zst` and split). An incremental export reads only the changed files; its time is dominated by the two `stat` walks.
+
+What helps, in order:
+
+1. **Incremental exports.** Full exports only for the first transfer or after a loss (or "Incremental since" an older export, 4.1).
+2. **Format `tar` for package repositories** (`.deb`, `.rpm`, ISOs are already compressed); `tar.zst` only for compressible content.
+3. **No split** unless the medium needs it (FAT32: 4 GiB per file).
+4. **`MIRRORHUB_EXPORT_WORKERS`** (default 8): threads for the `stat`/hash walks. On NFS each `stat` is a network round trip; with 0.5 ms per `stat` a walk over 20 000 files took 12.7 s with 1 worker and 1.7 s with 8. On a local disk with a warm cache threads add overhead; use 1–4 there.
+5. **Storage:** `/data` and `/export` on different devices if possible. On NFS: NFSv4.1+, `nconnect=8` (Linux ≥ 5.3, several TCP connections), `rsize=1048576,wsize=1048576`, `noatime`; the attribute cache (`actimeo`) keeps repeated `stat` walks cheaper. A local disk for `/export` avoids sending the archive over the network twice (write here, read again by the pickup tool).
+
+Measure on the host (read-only for the mirror): `python3 scripts/bench_exporter.py inventory --root /mnt/repository/ubuntu --workers 1 8 16` (cached walk per worker count) and `python3 scripts/bench_exporter.py full --root … --out <empty scratch dir> --limit-mb 20000` (pack 20 GB; prints MiB/s and read/write volume). Run them inside the worker container or on a host with Python ≥ 3.12 and the checkout.
+
 ---
 
 ## 5. What to do when …

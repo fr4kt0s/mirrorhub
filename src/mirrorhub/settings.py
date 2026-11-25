@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     # Metadata copies kept per repository on the state volume; each one can serve as
     # the base of an "incremental since" export.
     export_meta_keep: int = Field(default=30, ge=1, le=10000)
+    # Threads that stat and hash files while building an export inventory. On NFS
+    # every stat and open is a network round trip, so several in flight help.
+    export_workers: int = Field(default=8, ge=1, le=64)
 
     session_ttl_s: int = Field(default=8 * 3600, ge=300)
     login_max_attempts: int = Field(default=5, ge=1)
