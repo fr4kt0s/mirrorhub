@@ -165,6 +165,31 @@ see the script's help). Run it on the receiver's disk type: an fsync costs about
 
 The export directory is never modified. File modes are 0644 as written by the sender.
 
+## Event files for monitoring
+
+With `events_dir` in `importer.toml` the importer writes one JSON file per event,
+like the sender's file notification channel. `contrib/checkmk/mirrorhub_events.py`
+reads both and creates Checkmk services; setup in [docs/checkmk.md](checkmk.md).
+
+```toml
+events_dir = "/var/lib/mirrorhub-importer/events"
+events_keep_days = 30   # older files are deleted on the next run; 0 keeps all
+```
+
+| Event | When | Fields (besides `schema`, `event`, `time`, `source`, `host`, `repo`, `importer_version`) |
+|---|---|---|
+| `import_applied` | an export was applied | `export_id`, `export_mode`, `base_export_id`, `payload_count`, `deleted_count`, `duration_s`, `tree_verified` |
+| `import_superseded` | an export was skipped as superseded | `export_id`, `superseded_by` |
+| `import_failed` | an import failed | `export_id` (if known), `error`, `error_kind`, `exit_code` |
+| `import_adopted` | `adopt` wrote a lost state file | `export_id`, `export_mode` |
+| `tree_check` | after an import (`origin` `import` or `post-check`), `check`, `adopt` | `export_id`, `origin`, `hashed`, `differences`, `counts`, `entries` |
+| `check_failed` | `check` failed for a repository | `error`, `error_kind`, `exit_code` |
+| `import_run` | every `import` run, also with nothing pending | `scope`, `exit_code`, `duration_s` |
+
+Files are named `<UTC time>-<pid>-<n>-importer-<repo>-<event>.json`, written to a
+hidden temporary name first and renamed. Dry runs write no events. A failure to write
+an event is logged as a warning and never fails the import.
+
 ## Detecting changes in the tree
 
 After an incremental import, the post-check covers only the paths the export

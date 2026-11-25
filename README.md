@@ -578,6 +578,15 @@ Example:
 
 Webhooks in the generic JSON format receive the same fields.
 
+### Checkmk on the receiving side
+
+`contrib/checkmk/mirrorhub_events.py` is a Checkmk local check for the receiving
+host. It reads the sender's event files (file channel, after the data diode) and
+the importer's event files (`events_dir` in `importer.toml`) and creates services
+for syncs, exports, sender disk, imports (including exports published but not yet
+imported), the receiver tree and the importer runs. Setup step by step, service and
+configuration reference: [docs/checkmk.md](docs/checkmk.md).
+
 Secrets are encrypted using the application secret. Back up that secret together
 with the database.
 

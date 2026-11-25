@@ -15,3 +15,8 @@ state_dir = "/var/lib/mirrorhub-importer"
 # Optional signature check with an independently provisioned trusted keyring (gpgv).
 # keyring = "/etc/mirrorhub/export-signers.gpg"
 # require_signature = false
+
+# Optional event files for monitoring (Checkmk, see docs/checkmk.md): one JSON file per
+# import, failure and tree check. Files older than events_keep_days are deleted.
+# events_dir = "/var/lib/mirrorhub-importer/events"
+# events_keep_days = 30

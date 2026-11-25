@@ -10,7 +10,16 @@ from typing import Any
 from mirrorhub.importer.errors import ConfigError
 
 KNOWN_KEYS = frozenset(
-    {"export_dir", "mirror_root", "state_dir", "staging_dir", "keyring", "require_signature"}
+    {
+        "export_dir",
+        "mirror_root",
+        "state_dir",
+        "staging_dir",
+        "keyring",
+        "require_signature",
+        "events_dir",
+        "events_keep_days",
+    }
 )
 
 
@@ -29,6 +38,9 @@ class Config:
     staging_dir: Path
     keyring: Path | None = None
     require_signature: bool = False
+    # Event files for monitoring (docs/checkmk.md); None = off.
+    events_dir: Path | None = None
+    events_keep_days: int = 30
 
 
 def _path(base: Path, value: Any, key: str) -> Path:
@@ -61,6 +73,10 @@ def load_config(path: Path) -> Config:
     if not isinstance(require, bool):
         raise ConfigError("config key 'require_signature' must be a boolean")
     keyring = raw.get("keyring")
+    events_dir = raw.get("events_dir")
+    keep_days = raw.get("events_keep_days", 30)
+    if not isinstance(keep_days, int) or isinstance(keep_days, bool) or keep_days < 0:
+        raise ConfigError("config key 'events_keep_days' must be a non-negative integer")
     return Config(
         export_dir=_path(base, raw["export_dir"], "export_dir"),
         mirror_root=mirror_root,
@@ -70,4 +86,6 @@ def load_config(path: Path) -> Config:
         ),
         keyring=_path(base, keyring, "keyring") if keyring else None,
         require_signature=require,
+        events_dir=_path(base, events_dir, "events_dir") if events_dir else None,
+        events_keep_days=keep_days,
     )
