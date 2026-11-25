@@ -104,6 +104,15 @@ No database, web application or additional Python packages are needed.
    - State directory: **outside** the mirror tree.
    - Staging (default `mirror/.mirrorhub-import`) must be on the same file system as `mirror`.
 
+   One user runs every importer command (import timer, `check`, web UI, manual runs); do not mix it with `sudo` runs, or the next run cannot change what the other user created (see 3.6 and `importer.md`, "User and permissions"). Example with a system user `mirrorhub`:
+
+   ```sh
+   sudo useradd --system --home-dir /var/lib/mirrorhub-importer --shell /usr/sbin/nologin mirrorhub
+   sudo chown -R mirrorhub: /srv/mirrorhub/mirror /var/lib/mirrorhub-importer
+   ```
+
+   The user only reads `inbox`. A tree that was copied onto the receiver (`cp -a`, `rsync -a`, a moved disk) keeps its old owner, often a uid without a user on the receiver: `sudo chown -R mirrorhub: /srv/mirrorhub/mirror/<slug>` before the first import or `adopt`. Run manual commands as that user, e.g. `sudo -u mirrorhub python3 mirrorhub-importer.pyz …`.
+
 2. Configuration `/etc/mirrorhub/importer.toml`:
 
    ```toml
@@ -134,11 +143,11 @@ No database, web application or additional Python packages are needed.
 5. Check the tree and create the report directory:
 
    ```sh
-   sudo mkdir -p /var/lib/mirrorhub-reports
+   sudo mkdir -p /var/lib/mirrorhub-reports && sudo chown mirrorhub: /var/lib/mirrorhub-reports
    python3 mirrorhub-importer.pyz --config /etc/mirrorhub/importer.toml check --all --output-dir /var/lib/mirrorhub-reports
    ```
 
-   Expected: exit code 0, all lists in `/var/lib/mirrorhub-reports/<slug>/` empty.
+   Expected: exit code 0, all lists in `/var/lib/mirrorhub-reports/<slug>/` empty, no `warning: … cannot change … directories` (otherwise see 3.6).
 
 6. Periodic check with a systemd timer:
 
@@ -146,6 +155,8 @@ No database, web application or additional Python packages are needed.
    # /etc/systemd/system/mirrorhub-check.service
    [Service]
    Type=oneshot
+   User=mirrorhub          # the same user as the import timer and the web UI
+   UMask=0022              # new directories stay readable for the web server
    ExecStart=/usr/bin/python3 /opt/mirrorhub/mirrorhub-importer.pyz --config /etc/mirrorhub/importer.toml check --all --output-dir /var/lib/mirrorhub-reports
 
    # /etc/systemd/system/mirrorhub-check.timer
@@ -207,11 +218,13 @@ Always back up first (step 1); it is required before migrations that rebuild tab
 
 Replace `mirrorhub-importer.pyz` and `.sha256`, run `sha256sum -c`, compare `--version` with the sender's footer. The state files are kept; on the next import or `check`, the new importer creates the inventory copy under `<state_dir>/inventories/`.
 
+Since PR #63 the importer checks the permissions before it changes a tree. After the update run `check --all` once as the importer's user: a `warning: … cannot change N directories` names directories the next import would stop at (exit code 9); fix them with `chown -R` as in 3.6.
+
 ---
 
 ## 3. Pending tests
 
-3.1–3.4 are concrete practical tests with commands; 3.5 is the full checklist.
+3.1–3.4 and 3.6 are concrete practical tests with commands; 3.5 is the full checklist.
 
 ### 3.1 After the update (#44–#49)
 
@@ -268,7 +281,37 @@ Starting point: the receiver is current, `status` shows the newest export as `la
   python3 /opt/mirrorhub/mirrorhub-importer.pyz --config /etc/mirrorhub/importer.toml status --slug <slug>
   ```
 
-  Expected: `adopted <export-id>` with the same export that was `last` before. Afterwards restore the old file (`cp /tmp/<slug>.json.bak $S/<slug>.json`) so the history is kept.
+  Expected: `adopted <export-id>` with the same export that was `last` before, no permission warning. Afterwards restore the old file (`cp /tmp/<slug>.json.bak $S/<slug>.json`) so the history is kept.
+
+### 3.6 User and permissions (receiver, PR #63)
+
+The importer checks before every change (import, dry run, resumed import) that its user may change every directory the import touches. If not, it stops with exit code 9, lists the directories with owner and mode, and changes nothing:
+
+```
+error: permission check failed: user mirrorhub (uid 1001) cannot change 2 directories this import needs (3 paths); nothing was changed
+  /srv/mirrorhub/mirror/<slug>/pool: owner uid 54321 (no user on this host), drwxr-xr-x — delete files, add or replace files
+      e.g. pool/b.deb
+fix: make the importer's user own the tree, e.g. sudo chown -R mirrorhub: /srv/mirrorhub/mirror/<slug> (and the staging directory), then run the import again
+```
+
+- Fix: `sudo chown -R mirrorhub: /srv/mirrorhub/mirror/<slug>`, then run the same command again.
+- Staging leftovers of a run as another user: exit code 9 with `sudo rm -rf <staging_dir>/<slug>`.
+- A permission error **while installing** (rare: the tree changed after the check, ACLs, NFS server rules) leaves the tree partly updated. Fix the permissions and run **the same import again**: it resumes from the journal. Do not use `--discard-staging`. Then `check --slug <slug>`.
+- `check` and `adopt` warn about directories the user cannot change (exit code unchanged), before an import needs them.
+- Cost: one permission check per directory, no file is read (measured: 0.4 s of 25 s for 30 000 files; `check` about +1 %).
+
+- [ ] Practical test [test system]: give one directory of a test repository to another user, run an import that changes it, restore:
+
+  ```sh
+  M=/srv/mirrorhub/mirror/<slug>
+  sudo chown nobody $M/<directory>
+  sudo -u mirrorhub $MH check --slug <slug>            # warning naming <directory>, exit 0
+  sudo -u mirrorhub $MH import --slug <slug>; echo "exit $?"
+  sudo chown -R mirrorhub: $M
+  sudo -u mirrorhub $MH import --slug <slug>; echo "exit $?"
+  ```
+
+  Expected: if the waiting export changes files in `<directory>`, the first import ends with exit 9 and "nothing was changed"; after `chown` it applies the export (exit 0). Without a waiting export only the `check` warning shows.
 
 ### 3.5 Test checklist
 
@@ -279,7 +322,7 @@ Starting point: the receiver is current, `status` shows the newest export as `la
 - `MH` is the shorthand from 4.2. `<slug>` stands for a small test repository.
 - Each test is followed by the expected result (→). If it differs, note the date, commit (`--version` or footer) and output.
 
-The practical tests 3.1–3.4 are referenced here, not repeated. The P1 tests alone, as a printable sign-off sheet: [`acceptance-p1.md`](acceptance-p1.md).
+The practical tests 3.1–3.4 and 3.6 are referenced here, not repeated. The P1 tests alone, as a printable sign-off sheet: [`acceptance-p1.md`](acceptance-p1.md).
 
 #### A. Sender: deployment, login, security
 
@@ -466,6 +509,13 @@ Clients
 - [ ] **G40** (P1) Client with `sources.list` pointing at the receiver mirror → `apt update` without errors, a package can be installed.
 - [ ] **G41** (P2) After an incremental → `apt update` shows new package versions, no hash sum mismatch errors.
 
+User and permissions (PR #63)
+
+- [ ] **G42** (P2) Import timer, `check` timer, web UI and manual runs use the same user (`User=` in every unit, `sudo -u <user>` by hand) → `check --all` prints no permission warning.
+- [ ] **G43** (P2) [test system] Directory of the tree owned by another user, waiting export changes it → see 3.6: exit 9, "nothing was changed", tree and state unchanged; after `chown -R` the same import applies it.
+- [ ] **G44** (P3) `import --dry-run` in the situation of G43 → exit 9 with the same list, nothing changed.
+- [ ] **G45** (P3) New directories created by an import → mode `drwxr-xr-x` (umask 022), readable by the web server (G19).
+
 #### H. End to end through the real diode
 
 - [ ] **H1** (P1) Sync → export → pickup → diode → inbox → import without manual intervention.
@@ -557,7 +607,7 @@ Report files from `--output-dir` / `--drift-output` in `DIR/<slug>/`: `missing.t
 | 6 | unsafe archive |
 | 7 | repository locked (another run active) |
 | 8 | tool missing (`zstd`, `gpgv`) |
-| 9 | I/O error or interrupted import |
+| 9 | I/O error, missing permissions (see 3.6) or interrupted import |
 | 10 | post-check failed / `adopt` finds differences |
 | 11 | tree differs from the file list (after an import: the export was still applied) |
 
@@ -719,6 +769,9 @@ In the YAML configuration there is no mode field: an empty or missing `extra_fil
 | Receiver state file lost, tree intact | `adopt --slug <slug> --auto` | no |
 | Files deleted or damaged on the receiver | `check --output-dir` shows what; repair currently with full + `--rebase` (repair export planned in #43) | currently yes |
 | Incremental fails with "run a full export" | "Incremental since" with the receiver's last state; if that is not possible: full + `--rebase` | only if no matching copy is left |
+| Import stops with "permission check failed" (exit 9, nothing changed) | `sudo chown -R <importer-user>: <mirror_root>/<slug>`, run the same import again (3.6) | no |
+| "Permission denied" while installing, "the mirror tree may be partly updated" | fix the permissions, run the same import again (resumes from the journal), no `--discard-staging`; then `check` | no |
+| `check` warns "cannot change N directories" | `chown -R` as above before the next import | no |
 | Importer log "importer and sender were built from different commits" | rebuild the importer from the running sender checkout (`make importer`) | no |
 | Sender state volume lost, backup available | restore the backup (database and `export-meta`), then as "export lost in transit" | no |
 | State volume lost, no backup | full export, `--rebase` on the receiver | yes |
@@ -730,8 +783,9 @@ In the YAML configuration there is no mode field: an empty or missing `extra_fil
 ## 6. Further reading
 
 - [`acceptance-p1.md`](acceptance-p1.md) – P1 acceptance checklist (the 45 P1 tests from 3.5 with sign-off fields)
-- [`importer.md`](importer.md) – importer in detail (installation, superseded exports, `adopt`, detection, report files)
+- [`importer.md`](importer.md) – importer in detail (installation, user and permissions, superseded exports, `adopt`, detection, report files)
+- [`importer-ui.md`](importer-ui.md) – importer web UI; [`checkmk.md`](checkmk.md) – Checkmk monitoring of sender and importer events
 - [`export-contract.md`](export-contract.md) – export format and guarantees
 - README → *Testing → Acceptance checks*; README → *Backup → Database size and VACUUM* (from PR #50)
 - Design document "Robust export base and recovery without a full export": https://claude.ai/artifact/7fMEWyCPdgNzXJRerFAERL
-- Open: #43 remainder (repair export, `importer inventory`, `adopt --accept-drift`), #40 (Checkmk), PR #50 (web GUI review)
+- Open: #43 remainder (repair export, `importer inventory`, `adopt --accept-drift`)
