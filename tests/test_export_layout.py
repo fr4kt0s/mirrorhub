@@ -316,7 +316,10 @@ def test_zstd_export_round_trip(configured: Settings, tmp_path: Path) -> None:
         pytest.skip("zstd not installed")
     root = tmp_path / "repo"
     root.mkdir()
-    (root / "a.txt").write_bytes(b"hello " * 100_000)
+    import os
+
+    content = os.urandom(50_000)  # incompressible: the archive spans several parts
+    (root / "a.txt").write_bytes(content)
     from mirrorhub.export import manifest
 
     inventory = manifest.snapshot(root)
@@ -333,7 +336,7 @@ def test_zstd_export_round_trip(configured: Settings, tmp_path: Path) -> None:
     archive.write_bytes(raw.stdout)
     with tarfile.open(archive) as tar:
         member = tar.extractfile("a.txt")
-        assert member is not None and member.read() == b"hello " * 100_000
+        assert member is not None and member.read() == content
 
 
 def test_parallel_inventory_matches_sequential(tmp_path: Path) -> None:
