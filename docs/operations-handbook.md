@@ -709,7 +709,7 @@ In the YAML configuration there is no mode field: an empty or missing `extra_fil
 
 ### 4.7 Export performance (sender)
 
-How an export reads the data (from PR #63):
+How an export reads the data (from PR #64):
 
 | Step | Full export | Incremental export |
 | --- | --- | --- |
@@ -720,7 +720,7 @@ How an export reads the data (from PR #63):
 | Post-check (tree unchanged?) | `stat` of every file, cached digests | same |
 | `MANIFEST.sha256` | uses the digests of the parts; only the small metadata files are read | same |
 
-Data volume of a full export ≈ **1 × read + 1 × write** of the payload (before PR #63: ≈ 4 × read + 1 × write for `tar`, more with `tar.zst` and split). An incremental export reads only the changed files; its time is dominated by the two `stat` walks.
+Data volume of a full export ≈ **1 × read + 1 × write** of the payload (before PR #64: ≈ 4 × read + 1 × write for `tar`, more with `tar.zst` and split). An incremental export reads only the changed files; its time is dominated by the two `stat` walks.
 
 What helps, in order:
 
