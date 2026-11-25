@@ -1,4 +1,9 @@
 # MirrorHub importer configuration (TOML). Relative paths are relative to this file.
+#
+# Run every importer command (timer, check, web UI) as the same user; it must own
+# mirror_root, staging_dir, state_dir, events_dir and reports_dir. A tree copied from
+# another system needs `chown -R <user>: <mirror_root>/<slug>` first.
+# See docs/importer.md, "User and permissions".
 
 # Inbox: the data-diode pickup writes EXPORT_DIR/<repo-slug>/<export-id>/ here.
 export_dir = "/srv/mirrorhub/inbox"

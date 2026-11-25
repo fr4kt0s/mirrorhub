@@ -63,6 +63,11 @@ install -d -o mirrorhub -g mirrorhub /var/lib/mirrorhub-importer
 sudo -u mirrorhub python3 /opt/mirrorhub/mirrorhub-importer.pyz --config /etc/mirrorhub/importer.toml status
 ```
 
+A tree copied from another system keeps its foreign owner; give it to this user
+first (`sudo chown -R mirrorhub: <mirror_root>/<slug>`), otherwise imports stop at
+the permission check (exit code 9) and *Check* shows a warning. Details:
+[importer.md](importer.md), "User and permissions".
+
 ### 4. Start by hand and test
 
 ```sh
@@ -95,6 +100,7 @@ Environment=MIRRORHUB_IMPORTER_CONFIG=/etc/mirrorhub/importer.toml
 EnvironmentFile=-/etc/mirrorhub/importer-ui.env
 ExecStart=/usr/bin/python3 /opt/mirrorhub/mirrorhub-importer.pyz serve
 Restart=on-failure
+UMask=0022
 
 [Install]
 WantedBy=multi-user.target

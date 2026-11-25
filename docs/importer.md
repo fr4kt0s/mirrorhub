@@ -123,6 +123,10 @@ estimate if the tree has extra paths.
 2. Optional `gpgv` check against a keyring from the config; never from the export.
 3. Per-slug lock, state file outside the mirror tree, chain check (base must equal the
    last applied export; a full export over existing data needs `--rebase`).
+   Permission check (also in a dry run and when resuming): every directory the plan
+   deletes from, adds to or replaces in, and the staging directory, must be writable
+   for the running user; otherwise exit code 9 with the directories, their owners and
+   modes, and nothing is changed (see "User and permissions").
 4. The archive is streamed (each part hashed against `MANIFEST.sha256` while reading,
    optional external `zstd`), every member is checked by hand, written to a staging
    directory and its size and SHA-256 compared with `files.json`. A damaged part fails
@@ -254,6 +258,8 @@ a weekly systemd timer:
     # /etc/systemd/system/mirrorhub-check.service
     [Service]
     Type=oneshot
+    User=mirrorhub          # the same user as the import timer and the web UI
+    UMask=0022
     ExecStart=/usr/bin/python3 /opt/mirrorhub/mirrorhub-importer.pyz --config /etc/mirrorhub/importer.toml check --all
 
     # /etc/systemd/system/mirrorhub-check.timer
@@ -282,10 +288,72 @@ A skipped export is recorded in the history with `"status": "superseded"`, logge
 as a warning and never applied later; the run ends with exit code 0. `status`
 shows the counts of applied and superseded exports.
 
+## User and permissions
+
+The importer creates every file and directory as the user that runs it, with mode
+`0644` for files; owners and modes from the archive are not used. Deleting or
+replacing a file needs write and search permission on **the directory that holds
+it**; the file's own owner and mode do not matter. So:
+
+- **One user for everything**: the import timer, `check`, the web UI and any manual
+  run use the same user (on NFS the same uid on every client). Do not run the
+  importer once with `sudo` and later as a service user: the directories the `sudo`
+  run created belong to root, and the next run cannot change them.
+- That user must own (or be able to write) `mirror_root` with every repository tree,
+  `staging_dir`, `state_dir`, `events_dir` and `reports_dir`; it only reads
+  `export_dir`.
+- **A tree that did not come from this importer** (copied from another system with
+  `cp -a`/`rsync -a`/`tar -x` as root, a moved disk, files written by the sender's
+  Docker worker with its `PUID`) keeps the foreign owner, often a numeric uid without
+  a user on the receiver. Give it to the importer's user before the first import or
+  `adopt`:
+
+  ```sh
+  sudo chown -R <importer-user>: <mirror_root>/<slug>
+  ```
+
+- New directories get the umask of the importer's process. If a web server running
+  as another user serves the tree, keep a umask such as `022` (systemd: `UMask=0022`
+  in the service of the timer and of the web UI).
+
+### What the importer checks
+
+- **Before changing anything** (import, dry run, resumed import): every directory
+  the plan or journal deletes from, adds to or replaces in, the nearest existing
+  parent of directories to create, and the staging directory. A problem stops the
+  import with exit code 9:
+
+  ```
+  error: permission check failed: user mirrorhub (uid 1001) cannot change 2 directories this import needs (3 paths); nothing was changed
+    /srv/mirror/ubuntu/pool: owner uid 54321 (no user on this host), drwxr-xr-x — delete files, add or replace files
+        e.g. pool/b.deb
+    …
+  fix: make the importer's user own the tree, e.g. sudo chown -R mirrorhub: /srv/mirror/ubuntu (and the staging directory), then run the import again
+  ```
+
+- **Leftovers in the staging directory** of an earlier run as another user that
+  cannot be removed: exit code 9 with the path and `sudo rm -rf <staging_dir>/<slug>`.
+- **A permission error later** (the tree changed between the check and the change,
+  ACLs, NFS server rules): exit code 9 with the phase, the running user, the path and
+  the owner and mode of its directory.
+- `check` and `adopt` print a warning (exit code unchanged) when directories of the
+  tree cannot be changed by the running user, so the problem shows before the next
+  import needs them.
+
+### After an aborted installation
+
+If an import stopped **while installing** (deletes and renames into the tree), the
+tree is partly updated and the journal stays in the staging directory. Fix the
+permissions, then run **the same import again**: it resumes from the journal. Do not
+use `--discard-staging` in that case. Afterwards `check --slug <slug>` (or with
+`--hash`) confirms the tree.
+
 ## Lost state file: adopt
 
 If the state file of a repository is lost but the mirror tree is intact,
-`adopt` writes it for the export the tree matches, without any transfer:
+`adopt` writes it for the export the tree matches, without any transfer. A tree
+copied from elsewhere must belong to the importer's user first (`chown -R`, see
+"User and permissions"); `adopt` warns otherwise.
 
 - `--export-id <id>`: that export in the inbox; `--auto`: the published exports in
   the inbox, newest first, the first exact match wins.
@@ -303,6 +371,6 @@ If the state file of a repository is lost but the mirror tree is intact,
 ## Exit codes
 
 0 ok or no-op, 2 usage/config, 3 verification, 4 signature, 5 chain/base/gap,
-6 unsafe archive, 7 lock held, 8 tool missing (zstd, gpgv), 9 I/O or resume needed,
+6 unsafe archive, 7 lock held, 8 tool missing (zstd, gpgv), 9 I/O, permissions or resume needed,
 10 post-check failed, 11 tree differs from the inventory (after an import: the export
 was applied anyway).

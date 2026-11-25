@@ -49,6 +49,7 @@ from mirrorhub.importer.errors import (
 )
 from mirrorhub.importer.extract import extract_payload
 from mirrorhub.importer.logs import log_event
+from mirrorhub.importer.permissions import PermissionFailure, explain, preflight, report
 from mirrorhub.importer.progress import Progress
 from mirrorhub.importer.reader import open_archive
 from mirrorhub.importer.state import RepoState, StateStore
@@ -317,6 +318,49 @@ def apply_journal(
             progress.advance()
 
 
+def _clear_staging(staging: Path) -> None:
+    """Remove a previous staging directory; refuse (exit 9) if entries cannot be
+    removed, e.g. left behind by a run as another user (issue #60)."""
+    failed: list[tuple[str, BaseException]] = []
+
+    def collect(function: Any, path: str, exc: BaseException) -> None:
+        failed.append((path, exc))
+
+    if os.path.lexists(staging):
+        shutil.rmtree(staging, onexc=collect)
+    if failed:
+        path, exc = failed[0]
+        error = exc if isinstance(exc, PermissionError) else PermissionError(13, str(exc), path)
+        if error.filename is None:
+            error.filename = path
+        raise explain(
+            error,
+            "clearing the staging directory of an earlier run",
+            f"  {len(failed)} entr{'y' if len(failed) == 1 else 'ies'} in {staging} cannot be "
+            "removed by this user; remove the directory as its owner or root, e.g. "
+            f"sudo rm -rf {staging}",
+        )
+
+
+def _remove_staging(staging: Path, slug: str) -> None:
+    """Remove staging after a finished or failed run; a leftover is only a warning
+    (the next run refuses it with an explanation)."""
+    shutil.rmtree(staging, ignore_errors=True)
+    if os.path.lexists(staging):
+        log_event(
+            logging.WARNING,
+            "staging directory not fully removed",
+            slug=slug,
+            staging=staging,
+        )
+
+
+INSTALL_HINT = (
+    "  the mirror tree may be partly updated: fix the permissions, then run the same "
+    "import again (its journal resumes it); do not use --discard-staging"
+)
+
+
 def _same_filesystem(first: Path, second: Path) -> bool:
     return first.stat().st_dev == second.stat().st_dev
 
@@ -353,14 +397,30 @@ def _apply_locked(
             rebase=replace,
         )
 
+    plan = Plan()
+    if resuming:
+        assert journal is not None
+        deletes, installs = list(journal["deletes"]), list(journal["installs"])
+    else:
+        plan = build_plan(export, target, replace)
+        deletes, installs = plan.deletes, [*plan.adds, *plan.changes]
+    problems = preflight(target, config.staging_dir, deletes, installs)
+    log_event(
+        logging.DEBUG,
+        "permission check",
+        slug=export.slug,
+        export_id=export.export_id,
+        problems=len(problems),
+    )
+    if problems:
+        raise PermissionFailure(report(problems, target))
+
     target.mkdir(parents=True, exist_ok=True)
     config.staging_dir.mkdir(parents=True, exist_ok=True)
     if not _same_filesystem(config.staging_dir, target):
         raise ConfigError("staging_dir must be on the same filesystem as the mirror tree")
 
-    plan = Plan()
     if resuming:
-        assert journal is not None
         log_event(
             logging.WARNING,
             "resuming interrupted import",
@@ -368,7 +428,6 @@ def _apply_locked(
             export_id=export.export_id,
         )
     else:
-        plan = build_plan(export, target, replace)
         log_event(
             logging.DEBUG,
             "plan",
@@ -378,7 +437,7 @@ def _apply_locked(
             changes=len(plan.changes),
             deletes=len(plan.deletes),
         )
-        shutil.rmtree(staging, ignore_errors=True)
+        _clear_staging(staging)
         files.mkdir(parents=True)
         log_event(
             logging.DEBUG,
@@ -391,8 +450,11 @@ def _apply_locked(
         )
         try:
             _extract(export, files, options)
+        except PermissionError as exc:
+            _remove_staging(staging, export.slug)
+            raise explain(exc, "writing to the staging directory") from exc
         except BaseException:
-            shutil.rmtree(staging, ignore_errors=True)
+            _remove_staging(staging, export.slug)
             raise
         # Staged data must be on disk before the journal makes it "to be installed".
         _sync_filesystem(files)
@@ -412,13 +474,17 @@ def _apply_locked(
             files=len(export.payload),
         )
 
+    assert journal is not None
     installing = Progress(
         "installing",
         files_total=len(journal["deletes"]) + len(journal["installs"]),
         slug=export.slug,
         export_id=export.export_id,
     )
-    apply_journal(target, files, journal, installing)
+    try:
+        apply_journal(target, files, journal, installing)
+    except PermissionError as exc:
+        raise explain(exc, "installing into the mirror tree", INSTALL_HINT) from exc
     installing.finish()
     log_event(
         logging.DEBUG,
@@ -439,7 +505,7 @@ def _apply_locked(
             hash_contents=options.full_check,
         )
     except PostCheckError:
-        shutil.rmtree(staging, ignore_errors=True)
+        _remove_staging(staging, export.slug)
         raise
     log_event(
         logging.DEBUG,
@@ -463,7 +529,7 @@ def _apply_locked(
         }
     )
     store.save(state)
-    shutil.rmtree(staging, ignore_errors=True)
+    _remove_staging(staging, export.slug)
     log_event(logging.INFO, "applied", slug=export.slug, export_id=export.export_id)
     if resuming:
         plan = Plan(changes=sorted(export.payload), deletes=list(journal["deletes"]))
@@ -611,6 +677,8 @@ def skip_jumped(export_dir: Path, config: Config, options: Options, jumped_by: s
             store.save(state)
     except ImporterError:
         raise
+    except PermissionError as exc:
+        raise explain(exc, "importing (tree check, state or inventory files)") from exc
     except OSError as exc:
         raise IoFailure(f"I/O error: {exc}") from exc
     log_event(
@@ -647,13 +715,19 @@ def import_export(export_dir: Path, config: Config, options: Options) -> Outcome
                 return Outcome(export.export_id, "superseded", Plan())
             check_chain(state, export, _tree_has_entries(target), options.rebase)
             replace = options.rebase and export.mode == "full"
-            return Outcome(export.export_id, "dry-run", build_plan(export, target, replace))
+            plan = build_plan(export, target, replace)
+            problems = preflight(
+                target, config.staging_dir, plan.deletes, [*plan.adds, *plan.changes]
+            )
+            if problems:
+                raise PermissionFailure("dry run: " + report(problems, target))
+            return Outcome(export.export_id, "dry-run", plan)
 
         with store.locked():
             log_event(logging.DEBUG, "lock acquired", slug=export.slug, lock=store.lock_path)
             state = store.load()
             if state.applied(export.export_id):
-                shutil.rmtree(config.staging_dir / export.slug, ignore_errors=True)
+                _remove_staging(config.staging_dir / export.slug, export.slug)
                 log_event(
                     logging.INFO,
                     "already applied",
@@ -669,5 +743,7 @@ def import_export(export_dir: Path, config: Config, options: Options) -> Outcome
             return _apply_locked(export, config, options, store, state)
     except ImporterError:
         raise
+    except PermissionError as exc:
+        raise explain(exc, "importing (tree check, state or inventory files)") from exc
     except OSError as exc:
         raise IoFailure(f"I/O error: {exc}") from exc
