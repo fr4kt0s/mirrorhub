@@ -5,20 +5,127 @@ line does (`import`, `check`, `adopt`, `status` with all options) and shows the
 output live. It is part of `mirrorhub-importer.pyz` (standard library only) and
 needs no installation beyond Python 3.12.
 
-## Start
+## Setup step by step
 
-From the importer file built with `make importer`:
+The examples use the receiver paths of this installation (inbox
+`/mnt/repository/export`, mirror trees below `/mnt/import/mirrorhub/data`); adjust
+them to yours.
+
+### 1. Build the importer file
+
+On the sender host, in the deployed checkout:
 
 ```sh
-python3 mirrorhub-importer.pyz --config importer.toml serve
+git pull && make importer          # dist/mirrorhub-importer.pyz + .sha256
+```
+
+Carry both files to the receiver, then check them there:
+
+```sh
+sha256sum -c mirrorhub-importer.pyz.sha256
+python3 mirrorhub-importer.pyz --version    # 0.1.0 (<commit>), same as the sender footer
+install -D -m 0644 mirrorhub-importer.pyz /opt/mirrorhub/mirrorhub-importer.pyz
+```
+
+The web UI is part of this file; nothing else is installed (Python ≥ 3.12, plus
+`zstd` for `tar.zst` exports and `gpgv` for signatures).
+
+### 2. Configure `importer.toml`
+
+```toml
+export_dir   = "/mnt/repository/export"        # inbox (read only for the importer)
+mirror_root  = "/mnt/import/mirrorhub/data"    # one tree per repository: <mirror_root>/<slug>
+state_dir    = "/mnt/import/mirrorhub/state"   # receiver state, locks, UI runs; its own directory
+events_dir   = "/var/lib/mirrorhub-importer/events"    # history in the UI, Checkmk
+reports_dir  = "/var/lib/mirrorhub-importer/reports"   # difference lists in the UI
+# events_keep_days = 30
+# keyring = "/etc/mirrorhub/trustedkeys.gpg"
+# require_signature = false
+```
+
+`events_dir` and `reports_dir` are optional, but without them the UI shows no
+history, no tree status and only the difference lists of checks started from the
+UI itself. All keys: [reference](#configuration-keys-importertoml) below.
+
+Moving an existing state directory (for example from `/mnt/import` to
+`/mnt/import/mirrorhub/state`): while no import runs, move `*.json`, `*.lock` and
+`inventories/` to the new directory and change `state_dir`.
+
+### 3. Directories and permissions
+
+The user that runs the UI runs every command from it, so it needs the same rights
+as the import timer: read the inbox, write `mirror_root`, `state_dir`,
+`events_dir` and `reports_dir`. Run both as the same user (on NFS with the same
+uid), for example `mirrorhub`:
+
+```sh
+install -d -o mirrorhub -g mirrorhub /var/lib/mirrorhub-importer
+sudo -u mirrorhub python3 /opt/mirrorhub/mirrorhub-importer.pyz --config /etc/mirrorhub/importer.toml status
+```
+
+### 4. Start by hand and test
+
+```sh
+sudo -u mirrorhub python3 /opt/mirrorhub/mirrorhub-importer.pyz \
+  --config /etc/mirrorhub/importer.toml serve
 # MirrorHub importer UI on http://127.0.0.1:8080/ (config …, no login)
 ```
 
-`--listen HOST:PORT` (or `MIRRORHUB_IMPORTER_UI_LISTEN`) changes the address; the
-default `127.0.0.1:8080` is reachable from the same host only (for example through
-`ssh -L 8080:127.0.0.1:8080 receiver`).
+From your workstation: `ssh -L 8080:127.0.0.1:8080 receiver`, then open
+`http://localhost:8080/`. Check: the repositories appear, *Show status* prints the
+state, *Dry run* on a repository plans without changing anything.
 
-### Docker
+`--listen HOST:PORT` (or `MIRRORHUB_IMPORTER_UI_LISTEN`) changes the address.
+
+### 5. Run it permanently (systemd)
+
+`/etc/systemd/system/mirrorhub-importer-ui.service`:
+
+```ini
+[Unit]
+Description=MirrorHub importer web UI
+After=network-online.target remote-fs.target
+Wants=network-online.target
+
+[Service]
+User=mirrorhub
+Group=mirrorhub
+Environment=MIRRORHUB_IMPORTER_CONFIG=/etc/mirrorhub/importer.toml
+# optional: password, other address, host names (file mode 0600)
+EnvironmentFile=-/etc/mirrorhub/importer-ui.env
+ExecStart=/usr/bin/python3 /opt/mirrorhub/mirrorhub-importer.pyz serve
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```sh
+systemctl daemon-reload && systemctl enable --now mirrorhub-importer-ui
+journalctl -u mirrorhub-importer-ui -f
+```
+
+Stopping the service while a run is active cancels that run; an interrupted
+import continues from its journal on the next import.
+
+Keep the import timer for regular imports (the UI has no scheduler); give it the
+same `importer.toml`, so its runs show up in the UI's history and reports.
+
+### 6. Access from other hosts (optional)
+
+`/etc/mirrorhub/importer-ui.env` (`chmod 600`):
+
+```sh
+MIRRORHUB_IMPORTER_UI_LISTEN=0.0.0.0:8080
+MIRRORHUB_IMPORTER_UI_PASSWORD=a-long-random-password
+MIRRORHUB_IMPORTER_UI_HOSTS=importer.example.org
+```
+
+The UI speaks plain HTTP: put a TLS reverse proxy in front of it (or keep using
+the SSH tunnel), otherwise the password crosses the network unencrypted. Limit the
+port with the firewall.
+
+### Docker instead of steps 1, 4 and 5
 
 ```sh
 make importer-image            # image mirrorhub-importer from Dockerfile.importer
@@ -34,7 +141,8 @@ runs as user 10001 and starts `serve` on port 8080. Adjust
   (inbox read-only; mirror tree, state, events and report directories writable);
 - `user:` must be the owner of the mirror tree and the state directory on the host
   (`id -u`, `id -g`), also on NFS;
-- the port is published on `127.0.0.1` only.
+- the port is published on `127.0.0.1` only; password and host names as in step 6
+  under `environment:`.
 
 Any CLI command also runs in the container, for example
 `docker compose -f contrib/importer-ui/compose.yml run --rm importer-ui import --all`.
@@ -90,17 +198,52 @@ applied exports); repairing a tree needs a new full export from the sender.
 
 There are no user accounts.
 
-| Setting | Effect |
-|---|---|
-| default | no login; listens on 127.0.0.1 |
-| `MIRRORHUB_IMPORTER_UI_PASSWORD` | password page (no user name); session ends when the server restarts |
-| `MIRRORHUB_IMPORTER_UI_HOSTS` | comma-separated host names accepted in the browser address (besides `localhost` and IP addresses) |
+Default: no login, listening on 127.0.0.1 only. Password and host names: step 6
+and the [environment variables](#environment-variables).
 
 Because a click starts an import, the UI also protects itself against other web
 pages open in the same browser: every form carries a token, posts from another
 origin are refused, and requests for unknown host names are refused (DNS
 rebinding). Listening on another address than 127.0.0.1 without a password prints
 a warning; then restrict access by firewall or port binding.
+
+## Reference
+
+### Environment variables
+
+| Variable | Used by | Default | Meaning |
+|---|---|---|---|
+| `MIRRORHUB_IMPORTER_CONFIG` | every command, `serve` | — (Docker image: `/config/importer.toml`) | path of `importer.toml` when `--config` is not given |
+| `MIRRORHUB_IMPORTER_UI_LISTEN` | `serve` | `127.0.0.1:8080` (Docker image: `0.0.0.0:8080`) | address and port, `HOST:PORT`; `--listen` wins |
+| `MIRRORHUB_IMPORTER_UI_PASSWORD` | `serve` | unset = no login | password for the UI (no user name); the session ends when the UI restarts |
+| `MIRRORHUB_IMPORTER_UI_HOSTS` | `serve` | unset | extra host names allowed in the browser address, comma-separated (`localhost` and IP addresses are always allowed) |
+| `MIRRORHUB_IMPORTER_TRIGGER` | event files | `cli` | `trigger` field of events; the UI sets `ui` for its runs. Not set by hand. |
+| `NO_COLOR`, `TERM=dumb` | text log lines | — | no colours in `--log-format text` |
+| `MIRRORHUB_COMMIT` | `make importer-image`, `scripts/build_importer.py` | from git | commit shown by `--version` and the UI when the build has no git checkout (the Docker build) |
+
+### Configuration keys (`importer.toml`)
+
+Relative paths are relative to the directory of `importer.toml`.
+
+| Key | Required | Default | Meaning |
+|---|---|---|---|
+| `export_dir` | yes | — | inbox: `<export_dir>/<slug>/<export-id>/`; only read |
+| `mirror_root` | yes | — | mirror trees: `<mirror_root>/<slug>/` |
+| `state_dir` | yes | — | receiver state (`<slug>.json`), locks, `inventories/`, UI runs (`ui-runs/`), default reports (`reports/`); not inside a mirror tree, best its own directory |
+| `staging_dir` | no | `<mirror_root>/.mirrorhub-import` | temporary extraction; must be on the same file system as `mirror_root` |
+| `keyring` | no | — | keyring for `gpgv` (signed exports) |
+| `require_signature` | no | `false` | refuse unsigned exports |
+| `events_dir` | no | off | event files: UI history and tree status, Checkmk ([checkmk.md](checkmk.md)) |
+| `events_keep_days` | no | `30` | delete event files older than this many days (`0` keeps all) |
+| `reports_dir` | no | off (UI runs: `<state_dir>/reports`) | difference lists of every `check` and import tree check, also from timer runs; shown on the report pages |
+
+### `serve` options
+
+| Option | Meaning |
+|---|---|
+| `--listen HOST:PORT` | address (default from `MIRRORHUB_IMPORTER_UI_LISTEN`, else `127.0.0.1:8080`) |
+| `--config FILE` | `importer.toml` (or `MIRRORHUB_IMPORTER_CONFIG`) |
+| `--log-level`, `--log-format` | as for every command; the UI's own request log goes to stderr |
 
 ## Limits
 
