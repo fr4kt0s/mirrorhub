@@ -38,6 +38,12 @@ class CleanupMode(StrEnum):
 class JobType(StrEnum):
     SYNC = "sync"
     EXPORT = "export"
+    # Re-read every file and rebuild the hash cache; runs in the export worker.
+    REHASH = "rehash"
+
+
+# Job types a schedule (and a configuration file) may name.
+SCHEDULE_JOB_TYPES = (JobType.SYNC.value, JobType.EXPORT.value, JobType.REHASH.value)
 
 
 class JobStatus(StrEnum):

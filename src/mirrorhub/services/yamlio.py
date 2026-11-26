@@ -9,6 +9,7 @@ import yaml
 from sqlmodel import Session, col, select
 
 from mirrorhub import __version__
+from mirrorhub.enums import SCHEDULE_JOB_TYPES
 from mirrorhub.models import Repository, Schedule, default_retry_policy, utcnow
 from mirrorhub.security import validators
 from mirrorhub.services import audit, repos
@@ -255,6 +256,13 @@ def build_plan(
         if error:
             plan.errors.append(f"schedules[{index}] ({slug}): {error}")
             continue
+        job_type = str(entry.get("job_type", "sync"))
+        if job_type not in SCHEDULE_JOB_TYPES:
+            plan.errors.append(
+                f"schedules[{index}] ({slug}): job_type must be one of "
+                + ", ".join(SCHEDULE_JOB_TYPES)
+            )
+            continue
         chain = entry.get("chain_export")
         if chain is not None and not isinstance(chain, bool):
             plan.errors.append(
@@ -265,7 +273,7 @@ def build_plan(
         plan.schedules.append(
             {
                 "repo_slug": slug,
-                "job_type": str(entry.get("job_type", "sync")),
+                "job_type": job_type,
                 "cron_expr": cron,
                 "preset_label": str(entry.get("preset_label", "")),
                 "enabled": bool(entry.get("enabled", True)),

@@ -496,6 +496,29 @@ schedule:
 Only a sync that chains an export writes a sync inventory; it is deleted after
 the export succeeded. Leftovers older than seven days are removed automatically.
 
+A schedule runs one job type: *Sync*, *Export* (in the repository's export mode)
+or *Rehash*. "Export after a successful sync" applies to sync schedules only.
+
+### Rehash
+
+Exports trust the hash cache for files whose inode, size, mtime and ctime are
+unchanged. Content that changes without any stat change (silent disk corruption,
+block-level edits on the storage) is not seen that way. A *Rehash* job (Jobs page,
+or a schedule, e.g. monthly `0 4 1 * *`) reads every file once in the export
+worker, compares each digest with a cache entry whose stat key still matches and
+rebuilds the cache. It uses `MIRRORHUB_INVENTORY_THREADS` and holds the
+repository guard, so syncs and exports of that repository wait for it.
+
+- No difference: the job succeeds; the log line says how many files were read
+  and checked.
+- Differences: the job fails without a retry (a `job_failed` notification) and
+  lists every path in the job log (`content changed without a stat change: …`).
+  The old cache entry is kept, so the next incremental export neither sends the
+  changed content nor packs the file as unchanged. Check the storage, then
+  restore each file (delete it and sync again); a later rehash confirms. A full
+  export ignores the cache and would send the current content: fix the files
+  first.
+
 ## Notifications
 
 1. Create a channel: SMTP, webhook (generic JSON, ntfy, Gotify, Slack) or file.

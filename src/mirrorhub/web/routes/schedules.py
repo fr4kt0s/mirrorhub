@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session, col, select
 
+from mirrorhub.enums import SCHEDULE_JOB_TYPES
 from mirrorhub.models import Schedule
 from mirrorhub.security import validators
 from mirrorhub.services import audit, repos, scheduler
@@ -73,12 +74,14 @@ async def create(
         return _page(request, db, ["unknown repository"])
 
     job_type = str(form.get("job_type") or "sync")
-    if job_type not in ("sync", "export"):
-        return _page(request, db, ["job type must be sync or export"])
+    if job_type not in SCHEDULE_JOB_TYPES:
+        return _page(request, db, ["job type must be sync, export or rehash"])
 
     chain = _chain_choice(form.get("chain_export"))
     if isinstance(chain, str):
         return _page(request, db, [chain])
+    if job_type != "sync":
+        chain = None  # only a sync can chain an export
 
     schedule = Schedule(
         repo_id=repo_id,

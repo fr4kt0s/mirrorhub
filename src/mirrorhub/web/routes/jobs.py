@@ -80,6 +80,37 @@ def start(
     return RedirectResponse(f"/jobs/{job.id}", status_code=303)
 
 
+@router.post("/jobs/{repo_id}/rehash")
+def rehash(
+    repo_id: int,
+    request: Request,
+    user: CurrentUser = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Re-read every file of the repository and rebuild its hash cache."""
+    repo = repos.get(db, repo_id)
+    if repo is None:
+        return render(
+            request,
+            "error.html",
+            {"status": 404, "detail": "Repository not found"},
+            404,
+        )
+
+    existing = jobsvc.find_active(db, repo.id or 0, JobType.REHASH.value)
+    if existing is not None:
+        return RedirectResponse(f"/jobs/{existing.id}", status_code=303)
+
+    job = jobsvc.enqueue(
+        db,
+        repo,
+        job_type=JobType.REHASH.value,
+        trigger=Trigger.MANUAL.value,
+        requested_by=user.admin.username,
+    )
+    return RedirectResponse(f"/jobs/{job.id}", status_code=303)
+
+
 @router.get("/jobs/{job_id}")
 def detail(
     job_id: int,
