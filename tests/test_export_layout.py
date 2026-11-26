@@ -394,7 +394,8 @@ def test_incremental_reads_changed_files_once(
     real_hash = manifest.file_hash
 
     def counting_hash(path: Path, pulse: object = None) -> str:
-        reads.append(path.name)
+        if path.parent == root:  # not the export's own metadata files
+            reads.append(path.name)
         return real_hash(path)
 
     monkeypatch.setattr(manifest, "file_hash", counting_hash)
