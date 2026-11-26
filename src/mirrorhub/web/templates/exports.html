@@ -18,6 +18,11 @@
     (<code>MIRRORHUB_EXPORT_META_KEEP</code>); an older receiver state needs a full
     export imported with <code>--rebase</code>.
   </p>
+  <p class="muted">
+    If files are missing or damaged on the receiver, upload its repair request with
+    <em>Repair export</em>: the export resends only those files (plus the changes since
+    the receiver's export) instead of a full export.
+  </p>
 
   <table class="table">
     <thead>
@@ -56,6 +61,10 @@
               <button class="btn btn-secondary" type="submit">Create export</button>
               <p class="muted">Exports published after the selected one are skipped by the receiver.</p>
             </form>
+          </details>
+          <details>
+            <summary>Repair export &hellip;</summary>
+            {% include "partials/repair_upload.html" %}
           </details>
           {% endif %}
         </td>

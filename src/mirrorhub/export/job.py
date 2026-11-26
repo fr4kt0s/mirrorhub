@@ -17,7 +17,7 @@ from sqlmodel import Session, col, select
 
 from mirrorhub import __version__, buildinfo
 from mirrorhub.db import get_engine
-from mirrorhub.export import manifest, metadata_store, pack, reconcile
+from mirrorhub.export import manifest, metadata_store, pack, reconcile, repair
 from mirrorhub.export.manifest import ExportError, Inventory, Pulse
 from mirrorhub.models import Export, Job, Repository
 from mirrorhub.services import audit
@@ -252,6 +252,19 @@ def _chosen_base(job: Job, settings: Settings, slug: str) -> str | None:
     return value
 
 
+def _repair_request(
+    job: Job, settings: Settings, slug: str, base_id: str | None
+) -> repair.Request | None:
+    """The kept repair request of a repair export job (#43), checked again."""
+    value = job.params.get("repair")
+    if value is None:
+        return None
+    request = repair.load(settings.manifest_dir, slug, str(value))
+    if base_id is None or request.base_export_id != base_id:
+        raise ExportError("a repair export must be based on the request's export")
+    return request
+
+
 def _record_failure(row_id: int | None, export_id: str, slug: str) -> None:
     with Session(get_engine()) as db:
         row = db.get(Export, row_id)
@@ -333,6 +346,18 @@ def execute(
 
     mode = requested if base_id else "full"
     changed, deleted = manifest.diff(current, previous)
+    request = _repair_request(job, settings, repo.slug, chosen)
+    repaired: repair.Applied | None = None
+    if request is not None:
+        repair.check_against_base(request, previous)
+        repaired = repair.apply(
+            request,
+            current,
+            changed,
+            deleted,
+            keep_extra=bool(job.params.get("keep_extra")),
+        )
+        changed, deleted = repaired.changed, repaired.deleted
     created_at = datetime.now(UTC)
     export_id = f"{created_at.strftime('%Y%m%dT%H%M%SZ')}-{mode}"
 
@@ -409,6 +434,8 @@ def execute(
                 "archive_writer": "Python tarfile",
             },
         }
+        if repaired is not None:
+            metadata["repair"] = repaired.field
         _write_json(temporary / "manifest.json", metadata)
 
         pulse(85, "Checking repository did not change during packing")
@@ -464,10 +491,13 @@ def execute(
                     "repo": repo.slug,
                     "mode": mode,
                     "base_export_id": base_id,
+                    **({"repair": repaired.field} if repaired is not None else {}),
                 },
                 commit=False,
             )
             db.commit()
+        if request is not None:
+            repair.discard(settings.manifest_dir, repo.slug, request.sha256)
 
         pulse(100, "Export published")
         return export_id

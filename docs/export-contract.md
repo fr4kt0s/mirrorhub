@@ -138,6 +138,51 @@ as its payload.
 
 Incremental chains must be applied in base order by the receiving implementation.
 
+## Repair exports
+
+A repair export answers a receiver's repair request (`repair-<slug>.json`, written by
+the importer's `check` when the receiver's tree differs from the last applied
+export; format in docs/importer.md). The operator uploads the request and its
+`.sha256` file on the Exports page. The sender checks:
+
+- the `.sha256` line names `repair-<slug>.json` of this repository and matches,
+- format `mirrorhub-repair-request`, version 1, the repository's slug,
+- `base_export_id` is a published export with a kept metadata copy,
+- every `resend` path is in that export's files.json and no `delete` path is,
+- all paths are safe relative paths; at most 16 MiB.
+
+It then shows what the export will do and queues it on confirmation. The request
+is kept under `<state>/manifests/repair-requests/<slug>/<sha256>.json` until the
+export is published (unconfirmed uploads are removed after a week).
+
+The export is an incremental export since `base_export_id` ("incremental since",
+above) with two additions:
+
+- every `resend` path that still exists on the sender enters the payload, even if
+  it did not change since the base;
+- every `delete` path that does not exist on the sender enters deleted.txt, unless
+  the operator chose to keep the receiver's extra files.
+
+manifest.json carries the extra field `repair`:
+
+```json
+"repair": {
+  "request_sha256": "…",
+  "requested_at": "2026-11-26T09:00:00+00:00",
+  "check": "quick",
+  "resend": 2,
+  "delete": 1,
+  "keep_extra": false,
+  "skipped": 0
+}
+```
+
+`resend` and `delete` count the paths the request added. Everything else is the
+ordinary incremental format; `mirrorhub.verify` ignores unknown fields, and an
+importer without repair support applies it as an ordinary incremental export. An
+importer with repair support compares the whole tree with files.json afterwards.
+Exports published between the base and the repair export are superseded.
+
 ## Snapshot consistency
 
 The worker serializes sync and export execution for each repository.
@@ -190,6 +235,8 @@ Verification checks:
 - Inventory entry shape and relative paths.
 - Payload and deletion counts.
 - Full/incremental base semantics.
+
+Extra manifest fields (such as `repair`) are ignored.
 
 It does not extract the archive, validate an incremental chain against a local
 receiver state, or verify a detached GPG signature.

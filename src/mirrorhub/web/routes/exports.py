@@ -3,8 +3,11 @@
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session
+from starlette.datastructures import FormData, UploadFile
 
+from mirrorhub.export import repair
 from mirrorhub.export.manifest import ExportError
+from mirrorhub.models import Repository
 from mirrorhub.services import appsettings, audit, export_jobs, repos
 from mirrorhub.settings import get_settings
 from mirrorhub.web.deps import CurrentUser, client_ip, get_db, render, require_user
@@ -90,6 +93,85 @@ async def start(
     except ExportError as exc:
         return Response(str(exc), status_code=400, media_type="text/plain")
 
+    return RedirectResponse(f"/jobs/{job_id}", status_code=303)
+
+
+async def _upload(form: FormData, name: str) -> bytes:
+    value = form.get(name)
+    if not isinstance(value, UploadFile):
+        return b""
+    return await value.read(repair.MAX_BYTES + 1)
+
+
+def _repair_page(
+    request: Request,
+    repo: Repository,
+    *,
+    errors: list[str] | None = None,
+    plan: export_jobs.RepairPlan | None = None,
+    keep_extra: bool = False,
+    status_code: int = 200,
+) -> Response:
+    return render(
+        request,
+        "export_repair.html",
+        {"repo": repo, "errors": errors or [], "plan": plan, "keep_extra": keep_extra},
+        status_code=status_code,
+    )
+
+
+@router.post("/exports/{repo_id}/repair")
+async def repair_upload(
+    repo_id: int,
+    request: Request,
+    _user: CurrentUser = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Repair export (#43), step 1: check the uploaded request and show what it does."""
+    repo = db.get(Repository, repo_id)
+    if repo is None:
+        return Response("repository not found", status_code=404, media_type="text/plain")
+    form = await request.form()
+    keep_extra = form.get("keep_extra") == "on"
+    data = await _upload(form, "request")
+    checksum = await _upload(form, "checksum")
+    settings = get_settings()
+    try:
+        if not checksum:
+            raise ExportError(
+                f"select the request {repair.request_name(repo.slug)} and its .sha256 file"
+            )
+        parsed = repair.parse(data, checksum[:4096], repo.slug)
+        plan = export_jobs.plan_repair(settings, repo.slug, parsed)
+        repair.store(settings.manifest_dir, parsed, data)
+    except (ExportError, OSError) as exc:
+        return _repair_page(request, repo, errors=[str(exc)], status_code=400)
+    return _repair_page(request, repo, plan=plan, keep_extra=keep_extra)
+
+
+@router.post("/exports/{repo_id}/repair/start")
+async def repair_start(
+    repo_id: int,
+    request: Request,
+    user: CurrentUser = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Repair export, step 2: queue the export for the shown request."""
+    repo = db.get(Repository, repo_id)
+    if repo is None:
+        return Response("repository not found", status_code=404, media_type="text/plain")
+    form = await request.form()
+    try:
+        job_id = export_jobs.enqueue(
+            repo_id,
+            mode="incr",
+            actor=user.admin.username,
+            ip=client_ip(request),
+            repair_request=str(form.get("request") or ""),
+            keep_extra=form.get("keep_extra") == "on",
+        )
+    except ExportError as exc:
+        return _repair_page(request, repo, errors=[str(exc)], status_code=400)
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 

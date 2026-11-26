@@ -664,6 +664,12 @@ directory), the export fails with "run a full export". Run a full export and
 import it on the receiver with `--rebase`, or an incremental export since an
 export the receiver has applied.
 
+If files are missing or damaged in the receiver's tree, its `check` writes a
+repair request (`repair-<slug>.json` with a `.sha256` file). Carry both to the
+sender and upload them under *Exports → Repair export*: the repair export resends
+only those files and removes extra ones, no full export needed
+(`docs/export-contract.md`, "Repair exports").
+
 ### Importer on the receiver
 
 The receiver needs only the importer, not the application. `make importer` builds

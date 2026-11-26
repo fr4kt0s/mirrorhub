@@ -1,0 +1,13 @@
+<form method="post" action="/exports/{{ repo.id }}/repair" enctype="multipart/form-data">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Repair request (<code>repair-{{ repo.slug }}.json</code>)
+    <input type="file" name="request" accept=".json" required>
+  </label>
+  <label>Checksum (<code>repair-{{ repo.slug }}.json.sha256</code>)
+    <input type="file" name="checksum" accept=".sha256" required>
+  </label>
+  <label><input type="checkbox" name="keep_extra"> Keep the receiver's extra files</label>
+  <button class="btn btn-secondary" type="submit">Check request</button>
+  <p class="muted">The receiver's <code>check</code> writes the request next to its report
+  when its tree differs. The next page shows what the export will do before it starts.</p>
+</form>

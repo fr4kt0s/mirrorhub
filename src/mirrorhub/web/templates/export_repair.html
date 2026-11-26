@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Repair export – {{ repo.slug }}{% endblock %}
+{% block content %}
+<h1>Repair export: {{ repo.slug }}</h1>
+{% if errors %}
+<ul class="alert alert-error">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+{% endif %}
+
+{% if plan %}
+{% set req = plan.request %}
+<section class="card">
+  <h2>What the repair export will do</h2>
+  <table class="table">
+    <tbody>
+      <tr><th>Receiver state</th><td><code>{{ req.base_export_id }}</code> (the export is built since this one)</td></tr>
+      <tr><th>Request</th><td>written {{ req.created_at }}, {{ req.check }} check{% if req.importer_commit %}, importer <code>{{ req.importer_commit[:12] }}</code>{% endif %}</td></tr>
+      <tr><th>Files to send again</th><td>{{ req.resend | length }}</td></tr>
+      <tr><th>Extra files on the receiver</th><td>{{ req.delete | length }} ({% if keep_extra %}<strong>kept</strong>{% else %}deleted{% endif %})</td></tr>
+      {% if req.skipped %}<tr><th>Not transferable</th><td>{{ req.skipped }} extra path(s) with unusual names; remove them on the receiver by hand (<code>extra.txt</code>)</td></tr>{% endif %}
+      <tr><th>Changes since then</th><td>
+        {% if plan.changes_since is none %}unknown until the export runs
+        {% elif plan.changes_since == 0 %}none (the receiver is on the newest export)
+        {% else %}about {{ plan.changes_since }} path(s) up to <code>{{ plan.newest }}</code>; the export also brings these{% endif %}
+      </td></tr>
+      {% if plan.published_after %}
+      <tr><th>Skipped by the receiver</th><td>{{ plan.published_after | length }} export(s) published after the base ({{ plan.published_after | join(", ") }}); the repair export replaces them</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+
+  {% if req.resend %}
+  <details><summary>Files to send again ({{ req.resend | length }})</summary>
+    <pre>{% for path in req.resend[:500] %}{{ path }}
+{% endfor %}{% if req.resend | length > 500 %}… and {{ req.resend | length - 500 }} more{% endif %}</pre>
+  </details>
+  {% endif %}
+  {% if req.delete %}
+  <details><summary>Extra files on the receiver ({{ req.delete | length }})</summary>
+    <pre>{% for path in req.delete[:500] %}{{ path }}
+{% endfor %}{% if req.delete | length > 500 %}… and {{ req.delete | length - 500 }} more{% endif %}</pre>
+  </details>
+  {% endif %}
+
+  <form method="post" action="/exports/{{ repo.id }}/repair/start">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="request" value="{{ req.sha256 }}">
+    {% if keep_extra %}<input type="hidden" name="keep_extra" value="on">{% endif %}
+    <button class="btn" type="submit">Create repair export</button>
+    <a class="btn btn-secondary" href="/exports">Cancel</a>
+  </form>
+  <p class="muted">The receiver must not import another export of this repository before
+  this one, or the base no longer matches; then write a new request with <code>check</code>.
+  After importing it the receiver compares its whole tree with the export.</p>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>{% if plan %}Another request{% else %}Upload a repair request{% endif %}</h2>
+  {% include "partials/repair_upload.html" %}
+</section>
+{% endblock %}
