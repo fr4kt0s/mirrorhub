@@ -71,7 +71,7 @@ Accepted by: ______________________  Date: ____________  Commit: ____________
 - [ ] **G21** Late export after "Incremental since" → see 3.3 (superseded, exit 0).
 - [ ] **G25** Detection practical test → see 3.2.
 - [ ] **G26** [test system] Change a file in the tree, then import → export is applied, exit 11; with `--drift-output DIR`, the report files are in `DIR/<slug>/`.
-- Importer performance, log lines, event files, Checkmk and web UI (PRs #57, #58, #40, #62): [test-receiver-importer.md](test-receiver-importer.md), including the runtime comparison with `time`.
+- Importer performance, log lines, event files, Checkmk, web UI and permission check (PRs #57, #58, #40, #62, #63): [test-receiver-importer.md](test-receiver-importer.md), including the runtime comparison with `time`.
 - [ ] **G40** Client with `sources.list` pointing at the receiver mirror → `apt update` without errors, a package can be installed.
 
 ## H. End to end through the real diode

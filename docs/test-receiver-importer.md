@@ -1,8 +1,8 @@
 # Receiver test: importer performance, logs, events, Checkmk, web UI
 
-Test plan for the receiver before merging #57 (faster first imports), #58 (readable
-log lines), #40 (event files and Checkmk) and #62 (web UI). One importer file built
-from `feat/importer-webui` contains all four.
+Test plan for the receiver for #57 (faster first imports), #58 (readable log lines),
+#40 (event files and Checkmk), #62 (web UI) and #63 (permission check). All five are
+merged; one importer file built from `master` contains them.
 
 Result to report back: the timing table (section 2.6), exit codes, and anything that
 differs from "expected".
@@ -16,9 +16,8 @@ Tester: ______________________  Date: ____________  Commit (`--version`): ______
 On the sender host:
 
 ```sh
-git fetch && git switch -c feat/importer-webui --track origin/feat/importer-webui
+git switch master && git pull --ff-only
 make importer                                  # dist/mirrorhub-importer.pyz + .sha256
-git switch master
 ```
 
 Carry `dist/mirrorhub-importer.pyz` and `dist/mirrorhub-importer.pyz.sha256` to the
@@ -33,18 +32,24 @@ cd /tmp/new && sha256sum -c mirrorhub-importer.pyz.sha256      # OK
 sudo cp /opt/mirrorhub/mirrorhub-importer.pyz /opt/mirrorhub/mirrorhub-importer-old.pyz
 sudo install -m 0644 /tmp/new/mirrorhub-importer.pyz /opt/mirrorhub/mirrorhub-importer-new.pyz
 python3 /opt/mirrorhub/mirrorhub-importer-old.pyz --version    # today's commit
-python3 /opt/mirrorhub/mirrorhub-importer-new.pyz --version    # commit of feat/importer-webui
+python3 /opt/mirrorhub/mirrorhub-importer-new.pyz --version    # commit of master (git rev-parse --short HEAD on the sender)
 ```
 
-- [ ] **0.1** New importer reports the branch commit; old importer still available.
+- [ ] **0.1** New importer reports the `master` commit; old importer still available.
 
 ### 0.2 Short names for the commands
 
 ```sh
-OLD="python3 /opt/mirrorhub/mirrorhub-importer-old.pyz"
-NEW="python3 /opt/mirrorhub/mirrorhub-importer-new.pyz"
+IU=mirrorhub                      # the user that runs the import timer (root, if it runs as root today)
+OLD="sudo -u $IU python3 /opt/mirrorhub/mirrorhub-importer-old.pyz"
+NEW="sudo -u $IU python3 /opt/mirrorhub/mirrorhub-importer-new.pyz"
 SLUG=download.docker.com          # the repository to measure; best the largest one
 ```
+
+Run every importer command as that one user (timer, `check`, web UI, by hand). A run
+as another user, e.g. with plain `sudo`, leaves directories the next run cannot
+change; since #63 the importer then stops before changing anything (exit code 9, see
+section 7 and the operations handbook, section 3.6).
 
 ## 1. Test configuration (does not touch the real mirror)
 
@@ -114,7 +119,7 @@ Before **each** of the two runs:
 ```sh
 sudo systemctl stop mirrorhub-import.timer mirrorhub-check.timer   # no timer run in between (names as on your host)
 sudo rm -rf /mnt/import/mirrorhub-test           # empty scratch tree and state
-mkdir -p /mnt/import/mirrorhub-test
+sudo -u $IU mkdir -p /mnt/import/mirrorhub-test
 sync && echo 3 | sudo tee /proc/sys/vm/drop_caches   # empty the page cache, so no run reads from memory
 ```
 
@@ -167,7 +172,7 @@ $NEW $TEST check --slug $SLUG --hash ; echo "exit code: $?"     # expected 0
 | files / size of `$SLUG` (section 1) | | |
 
 Optional, for a second data point: repeat with a repository with many small files,
-or let the benchmark script measure synthetic data on the same NFS share (section 7).
+or let the benchmark script measure synthetic data on the same NFS share (section 8).
 
 ### 2.7 Clean up
 
@@ -192,7 +197,7 @@ Then use the new importer for real:
 
 ```sh
 sudo install -m 0644 /opt/mirrorhub/mirrorhub-importer-new.pyz /opt/mirrorhub/mirrorhub-importer.pyz
-MH="python3 /opt/mirrorhub/mirrorhub-importer.pyz --config /etc/mirrorhub/importer.toml"
+MH="sudo -u $IU python3 /opt/mirrorhub/mirrorhub-importer.pyz --config /etc/mirrorhub/importer.toml"
 $MH import --all ; echo "exit code: $?"
 ls /var/lib/mirrorhub-importer/events/ | tail
 $MH check --all ; echo "exit code: $?"
@@ -204,6 +209,7 @@ keys are then refused by the old importer as unknown: comment them out).
 
 - [ ] **3.1** `import --all` exit 0 (or 11 if the tree already differed; then see 3.2).
 - [ ] **3.2** `check --all` exit 0; with 11, `reports/<slug>/*.txt` list the differences.
+  No `warning: … cannot change N directories` (otherwise `sudo chown -R $IU: <mirror_root>/<slug>`, see section 7).
 - [ ] **3.3** Event files appear (`import_run`, `import_applied`, `tree_check`).
 
 ## 4. Log output (#58)
@@ -246,7 +252,27 @@ with `importer_events_dir = /var/lib/mirrorhub-importer/events`:
 - [ ] **6.1** Lines `MirrorHub import <repo>`, `MirrorHub tree <repo>`, `MirrorHub importer` appear, state 0 after a clean import and check.
 - [ ] **6.2** Service discovery in Checkmk finds the services.
 
-## 7. Optional: benchmark on the receiver's disk
+## 7. User and permissions (#63)
+
+Uses the scratch tree of section 2 (after run 2 it holds `$SLUG` and a state). Give
+one directory to another user, check, give it back:
+
+```sh
+D=$(cd /mnt/import/mirrorhub-test/data/$SLUG && ls -d */ | head -1)   # e.g. dists/
+sudo chown nobody /mnt/import/mirrorhub-test/data/$SLUG/$D
+$NEW $TEST check --slug $SLUG ; echo "exit code: $?"
+sudo chown $IU: /mnt/import/mirrorhub-test/data/$SLUG/$D
+$NEW $TEST check --slug $SLUG ; echo "exit code: $?"
+```
+
+On NFS with `root_squash`, `chown` as root may be refused on the client; then run it
+on the NFS server or skip 7.1.
+
+- [ ] **7.1** First `check`: exit 0 and `warning: user … cannot change 1 directory`, naming the directory with owner and mode and a `fix: sudo chown -R …` line.
+- [ ] **7.2** Second `check`: no warning.
+- [ ] **7.3** The real tree (section 3.2) shows no warning. If an import ever stops with `permission check failed` (exit 9), the tree is unchanged: run `chown -R` and the same import again.
+
+## 8. Optional: benchmark on the receiver's disk
 
 `scripts/bench_importer.py` (in the checkout on the sender, or copy it with the
 `src/` directory) compares two importer versions on synthetic exports. With
