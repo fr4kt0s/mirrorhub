@@ -311,6 +311,62 @@ def snapshot(
     return dict(sorted(inventory.items()))
 
 
+def _hash_unchanged(path: Path, relative: str, key: list[int]) -> str:
+    digest = file_hash(path)
+    if _cache_key(path.lstat()) != key:
+        raise ExportError(f"file changed during inventory: {relative}")
+    return digest
+
+
+def resolve_against_base(
+    root: Path,
+    current: Inventory,
+    previous: Inventory,
+    stat_keys: StatKeys,
+    cache: HashCache,
+    *,
+    threads: int = 1,
+) -> list[str]:
+    """Hash the files whose digest the inventory left empty but whose size and mtime
+    equal the base entry: only their content decides whether they changed.
+
+    An incremental export builds its inventory with ``hash_files=False``. A file
+    without a cache hit whose size or mtime differs from the base is changed anyway;
+    it is hashed while packing, so its data is read once. The rest (new inode or
+    ctime with the old size and mtime, or a racy entry of the base) is hashed here.
+    Digests go into the inventory and, if cacheable, into the cache. Returns the
+    hashed paths.
+    """
+    pending: list[str] = []
+    for relative, entry in current.items():
+        if entry["type"] != "file" or entry["sha256"]:
+            continue
+        base = previous.get(relative)
+        if (
+            base is not None
+            and base.get("type") == "file"
+            and base.get("size") == entry["size"]
+            and base.get("mtime_ns") == entry["mtime_ns"]
+        ):
+            pending.append(relative)
+
+    def task(relative: str) -> str:
+        return _hash_unchanged(root / relative, relative, stat_keys[relative][0])
+
+    if threads <= 1 or len(pending) < 2:
+        digests = [task(relative) for relative in pending]
+    else:
+        with ThreadPoolExecutor(max_workers=threads, thread_name_prefix="inventory") as pool:
+            digests = list(pool.map(task, pending))
+
+    for relative, digest in zip(pending, digests, strict=True):
+        current[relative]["sha256"] = digest
+        key, cacheable = stat_keys[relative]
+        if cacheable:
+            cache[relative] = [*key, digest]
+    return pending
+
+
 def diff(
     current: Inventory,
     previous: Inventory,

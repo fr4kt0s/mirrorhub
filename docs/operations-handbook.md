@@ -794,8 +794,8 @@ How an export reads the data (from PR #64):
 
 | Step | Full export | Incremental export |
 | --- | --- | --- |
-| Inventory | `stat` of every file, **no reading** | `stat` of every file; only files whose inode/size/mtime/ctime changed are read and hashed (hash cache) |
-| Packing | every file read **once**: hashed while it is copied into the tar; the digests go into `files.json` and the hash cache | changed files read once, digest compared with the inventory |
+| Inventory | `stat` of every file, **no reading** | `stat` of every file, **no reading**; unchanged files (inode/size/mtime/ctime) take their digest from the hash cache. Only files with a new inode or ctime but the base's size and mtime are hashed, since their content decides whether they changed |
+| Packing | every file read **once**: hashed while it is copied into the tar; the digests go into `files.json` and the hash cache | changed files read **once** the same way (previously hashed in the inventory and read again while packing) |
 | Archive | written once, straight into the parts (no intermediate `data.tar`), each part hashed while written | same |
 | Compression (`tar.zst`) | `zstd -T0` (all cores) in the same stream | same |
 | Post-check (tree unchanged?) | `stat` of every file, cached digests | same |
