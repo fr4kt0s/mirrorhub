@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from mirrorhub.importer import repair
 from mirrorhub.importer.checks import EXPORT_ID_RE, SLUG_RE
 from mirrorhub.importer.config import Config
 from mirrorhub.importer.state import RepoState
@@ -180,6 +181,26 @@ def report_file(config: Config, slug: str, kind: str) -> Path | None:
     """Path of one list for download, only for known slugs and kinds."""
     name = REPORT_FILES.get(kind)
     if name is None or not SLUG_RE.fullmatch(slug):
+        return None
+    path = reports_dir(config) / slug / name
+    return path if path.is_file() else None
+
+
+def repair_request(config: Config, slug: str) -> tuple[Path, dict[str, Any]] | None:
+    """The repair request next to the report (#43): path and document, if there is one."""
+    if not SLUG_RE.fullmatch(slug):
+        return None
+    path = repair.request_path(reports_dir(config), slug)
+    document = repair.read_request(path) if path.is_file() else None
+    return None if document is None else (path, document)
+
+
+def repair_file(config: Config, slug: str, name: str) -> Path | None:
+    """The request or its .sha256 file for download, by exact name only."""
+    if not SLUG_RE.fullmatch(slug):
+        return None
+    request = repair.request_name(slug)
+    if name not in (request, f"{request}.sha256"):
         return None
     path = reports_dir(config) / slug / name
     return path if path.is_file() else None

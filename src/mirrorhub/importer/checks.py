@@ -54,6 +54,8 @@ class Export:
     payload: frozenset[str]
     deleted: tuple[str, ...]
     sender_commit: str | None = None
+    # manifest field of a repair export (#43): the request it answers; None otherwise
+    repair: dict[str, Any] | None = None
 
 
 def safe_relative(value: str) -> bool:
@@ -230,6 +232,9 @@ def load_export(directory: Path, *, verify_parts_first: bool = False) -> Export:
     if unlisted:
         raise VerificationFailed(f"archive part not covered by MANIFEST.sha256: {unlisted[0]}")
     _check_inventory(inventory)
+    repair = metadata.get("repair")
+    if repair is not None and (not isinstance(repair, dict) or metadata["mode"] != "incr"):
+        raise VerificationFailed("manifest field repair must be an object of an incremental")
     log_event(
         logging.DEBUG,
         "export verified",
@@ -243,6 +248,7 @@ def load_export(directory: Path, *, verify_parts_first: bool = False) -> Export:
         payload=len(metadata["payload_paths"]),
         deleted=len(deleted),
         parts_hashed="up front" if verify_parts_first else "while streaming",
+        repair=repair is not None,
     )
 
     return Export(
@@ -258,6 +264,7 @@ def load_export(directory: Path, *, verify_parts_first: bool = False) -> Export:
         payload=frozenset(metadata["payload_paths"]),
         deleted=deleted,
         sender_commit=_sender_commit(metadata),
+        repair=repair,
     )
 
 

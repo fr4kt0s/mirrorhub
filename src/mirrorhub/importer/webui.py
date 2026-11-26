@@ -41,7 +41,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import mirrorhub
 from mirrorhub import buildinfo
-from mirrorhub.importer import events, webdata
+from mirrorhub.importer import events, repair, webdata
 from mirrorhub.importer.checks import EXPORT_ID_RE, SLUG_RE
 from mirrorhub.importer.config import Config
 from mirrorhub.importer.errors import ImporterError
@@ -508,10 +508,11 @@ label.check { display: flex; gap: 0.5rem; align-items: center; font-weight: 400;
 input[type=text], input[type=password], select { width: 100%; padding: 0.42rem 0.55rem;
   border: 1px solid var(--line); border-radius: 6px; font: inherit; color: inherit;
   background: var(--bg); }
-button { font: inherit; padding: 0.42rem 0.9rem; border-radius: 6px; cursor: pointer;
-  border: 1px solid var(--accent); background: var(--accent); color: var(--surface);
-  font-weight: 600; margin-top: 0.75rem; }
-button.secondary { background: transparent; color: var(--accent); }
+button, a.button { font: inherit; padding: 0.42rem 0.9rem; border-radius: 6px;
+  cursor: pointer; border: 1px solid var(--accent); background: var(--accent);
+  color: var(--surface); font-weight: 600; margin-top: 0.75rem; display: inline-block;
+  text-decoration: none; }
+button.secondary, a.button.secondary { background: transparent; color: var(--accent); }
 .row-actions { display: flex; gap: 0.35rem; flex-wrap: wrap; }
 .row-actions form { margin: 0; } .row-actions button { margin: 0; padding: 0.2rem 0.55rem;
   font-size: 0.85rem; }
@@ -853,12 +854,30 @@ class Page:
             f"{esc(summary.get('check'))} check {esc(_ago(summary.get('checked_at')))} "
             f"({esc(_local(summary.get('checked_at', '')))})</p>"
             "<p class='muted'>A report is replaced by the next check. Files changed on the "
-            "receiver outside the importer show up here; a full export with "
-            "<em>Plan rebase</em> repairs them.</p>"
+            "receiver outside the importer show up here; the repair request below fixes "
+            "them without a full export.</p>"
             + self.quick("check", {"slug": slug}, "Check again", "secondary")
             + self.quick("check", {"slug": slug, "hash": "on"}, "Check SHA-256", "secondary")
             + "</div>"
         )
+        found = webdata.repair_request(self.ui.config, slug)
+        if found is not None:
+            path, document = found
+            name = esc(path.name)
+            body += (
+                "<div class='card'><h2>Repair request</h2>"
+                f"<p>{esc(repair.count(document))}, based on "
+                f"<code>{esc(document.get('base_export_id'))}</code>.</p>"
+                "<p class='muted'>Download both files and carry them to the sender: "
+                "<em>Exports</em> page of the repository, <em>Repair export</em>. The repair "
+                "export brings the missing and differing files and removes the extra ones; "
+                "once it is imported the tree matches again and this request disappears. "
+                "Import no other export of this repository before it, or the request no "
+                "longer fits (check again for a new one).</p>"
+                f"<p><a class='button' href='/repos/{esc(slug)}/report/{name}'>{name}</a> "
+                f"<a class='button secondary' href='/repos/{esc(slug)}/report/{name}.sha256'>"
+                f"{name}.sha256</a></p></div>"
+            )
         for kind, lines in report.kinds.items():
             count = report.truncated.get(kind, len(lines))
             if not count:
@@ -1305,6 +1324,16 @@ class Handler(BaseHTTPRequestHandler):
         if rest == ["report"]:
             self._send(HTTPStatus.OK, page.report(slug), nonce=page.nonce)
             return
+        if len(rest) == 2 and rest[0] == "report" and rest[1].startswith("repair-"):
+            path = webdata.repair_file(self.ui.config, slug, rest[1])
+            if path is not None:
+                self._send(
+                    HTTPStatus.OK,
+                    path.read_text(encoding="ascii"),
+                    content_type="application/octet-stream",
+                    headers={"Content-Disposition": f'attachment; filename="{rest[1]}"'},
+                )
+                return
         if len(rest) == 2 and rest[0] == "report" and rest[1].endswith(".txt"):
             kind = rest[1].removesuffix(".txt").replace("-", " ")
             path = webdata.report_file(self.ui.config, slug, kind)

@@ -388,8 +388,11 @@ Logs are diagnostic lists, not deletion lists or instructions to alter export me
 
 ## 9. Repairing a repository
 
-There is no dedicated repair command. First identify whether the fault is in the receiver
-mirror, its state/chain, the transferred export, or the sender's repository snapshot.
+Files deleted or damaged in the receiver tree: `check` (with reports) writes a repair
+request `repair-<slug>.json`; the sender turns it into a repair export that resends only
+the differing files (docs/importer.md, "Repairing the tree"). The steps below are for other
+faults. First identify whether the fault is in the receiver mirror, its state/chain, the
+transferred export, or the sender's repository snapshot.
 
 ### 9.1 Preserve evidence before repair
 
