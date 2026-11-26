@@ -96,9 +96,12 @@ def _fill_digests(
     stat_keys: manifest.StatKeys,
     cache: manifest.HashCache,
 ) -> None:
-    """Put the digests computed while packing into the inventory and the hash cache."""
+    """Put the digests computed while packing into the inventory and the hash cache.
+
+    Every file still without a digest must have been packed: files.json never carries
+    an empty digest."""
     for path, entry in current.items():
-        if entry["type"] != "file":
+        if entry["type"] != "file" or entry["sha256"]:
             continue
         digest = digests.get(path)
         if digest is None:
@@ -302,9 +305,11 @@ def execute(
     if root.resolve().parent != settings.data_dir.resolve():
         raise ExportError("repository path escapes the data directory")
 
-    # Incremental exports reuse cached hashes for files whose stat data is unchanged.
-    # Full exports ignore the cache and hash every file, but while packing it: the
-    # inventory is built from stat data only, so the tree is read once (not twice).
+    # The inventory is built from stat data: incremental exports reuse cached hashes
+    # for files whose stat data is unchanged, full exports ignore the cache. Files
+    # left without a digest are hashed while packing, so each is read once (not
+    # twice). Only an incremental export's files that look unchanged against the base
+    # (same size and mtime) but miss the cache are hashed before the diff.
     cache_path = hash_cache_path(settings, repo.slug)
     full_request = requested == "full"
     cache = {} if full_request else manifest.load_hash_cache(cache_path)
@@ -315,12 +320,10 @@ def execute(
         root,
         pulse,
         cache,
-        hash_files=not full_request,
+        hash_files=False,
         threads=settings.inventory_threads,
         stat_keys=stat_keys,
     )
-    if not full_request:
-        manifest.save_hash_cache(cache_path, cache)
 
     expected_path = job.params.get("sync_snapshot")
     expected_inventory: Inventory | None = None
@@ -345,6 +348,11 @@ def execute(
         base_id, previous = _previous(repo.id or 0, settings, repo.slug)
 
     mode = requested if base_id else "full"
+    if previous:
+        pulse(None, "Hashing files whose stat data changed")
+        manifest.resolve_against_base(
+            root, current, previous, stat_keys, cache, threads=settings.inventory_threads
+        )
     changed, deleted = manifest.diff(current, previous)
     request = _repair_request(job, settings, repo.slug, chosen)
     repaired: repair.Applied | None = None
@@ -397,11 +405,10 @@ def execute(
             part_bytes=repo.export_split_mb * 1024 * 1024,
         )
         parts = [path for path, _digest in part_digests]
-        if full_request:
-            _fill_digests(current, file_digests, stat_keys, cache)
-            manifest.save_hash_cache(cache_path, cache)
-            if expected_inventory is not None and expected_inventory != current:
-                raise ExportError("repository changed after sync; run sync and export again")
+        _fill_digests(current, file_digests, stat_keys, cache)
+        manifest.save_hash_cache(cache_path, cache)
+        if expected_inventory is not None and expected_inventory != current:
+            raise ExportError("repository changed after sync; run sync and export again")
         manifest.save(temporary / "files.json", current)
         (temporary / "deleted.txt").write_text(
             "".join(f"{path}\n" for path in deleted),

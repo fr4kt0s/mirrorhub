@@ -1,6 +1,7 @@
 """Export layout, incrementals, checksums and archive splitting."""
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -353,3 +354,77 @@ def test_parallel_inventory_matches_sequential(tmp_path: Path) -> None:
     assert manifest.snapshot(tmp_path, threads=8) == sequential
     assert ".tmp/skipped" not in sequential
     assert list(sequential) == sorted(sequential)
+
+
+def _replace_keeping_stat(path: Path, content: bytes) -> None:
+    """Write content into a new inode with the old size and mtime (rename into place)."""
+    old = path.stat()
+    temporary = path.with_name(f"{path.name}.new")
+    temporary.write_bytes(content)
+    os.utime(temporary, ns=(old.st_atime_ns, old.st_mtime_ns))
+    temporary.replace(path)
+
+
+def test_incremental_reads_changed_files_once(
+    configured: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Changed files are hashed while packing, not in the inventory too. Only files
+    with a new inode or ctime but the base's size and mtime are hashed up front."""
+    from mirrorhub.export import manifest
+
+    repo = _repository(configured)
+    root = configured.data_dir / repo.slug
+    for name in ("grown", "same-content", "same-stat", "kept"):
+        (root / f"{name}.txt").write_bytes(f"{name}-old".encode())
+    real_snapshot = manifest.snapshot
+
+    def snapshot(*args: object, **kwargs: object) -> manifest.Inventory:
+        kwargs.setdefault("racy_margin_ns", 0)
+        return real_snapshot(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(manifest, "snapshot", snapshot)
+    first = engine.execute(_job(repo, "full"), repo, configured, _pulse)
+
+    (root / "grown.txt").write_bytes(b"grown-new-and-longer")
+    (root / "added.txt").write_bytes(b"added")
+    _replace_keeping_stat(root / "same-content.txt", b"same-content-old")
+    _replace_keeping_stat(root / "same-stat.txt", b"same-stat-NEW")
+
+    reads: list[str] = []
+    real_hash = manifest.file_hash
+
+    def counting_hash(path: Path, pulse: object = None) -> str:
+        if path.parent == root:  # not the export's own metadata files
+            reads.append(path.name)
+        return real_hash(path)
+
+    monkeypatch.setattr(manifest, "file_hash", counting_hash)
+    second = engine.execute(_job(repo), repo, configured, _pulse)
+    directory = configured.export_dir / repo.slug / second
+    metadata = verify(directory)
+
+    assert sorted(reads) == ["same-content.txt", "same-stat.txt"]
+    assert metadata["base_export_id"] == first
+    assert metadata["payload_paths"] == ["added.txt", "grown.txt", "same-stat.txt"]
+    monkeypatch.setattr(manifest, "file_hash", real_hash)
+    inventory = json.loads((directory / "files.json").read_text())
+    assert inventory == real_snapshot(root)
+    cache = manifest.load_hash_cache(engine.hash_cache_path(configured, repo.slug))
+    for name in ("added.txt", "grown.txt", "same-content.txt", "same-stat.txt"):
+        assert cache[name][4] == inventory[name]["sha256"]
+
+
+def test_resolve_against_base_refuses_a_file_changed_meanwhile(tmp_path: Path) -> None:
+    from mirrorhub.export import manifest
+
+    (tmp_path / "a.txt").write_bytes(b"aaaa")
+    previous = manifest.snapshot(tmp_path)
+    _replace_keeping_stat(tmp_path / "a.txt", b"bbbb")
+    stat_keys: manifest.StatKeys = {}
+    current = manifest.snapshot(
+        tmp_path, cache={}, hash_files=False, stat_keys=stat_keys, racy_margin_ns=0
+    )
+    assert current["a.txt"]["sha256"] == ""
+    stat_keys["a.txt"][0][0] += 1  # inode differs from the inventory
+    with pytest.raises(ExportError, match="changed during inventory"):
+        manifest.resolve_against_base(tmp_path, current, previous, stat_keys, {})
