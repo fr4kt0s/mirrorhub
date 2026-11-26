@@ -21,6 +21,15 @@ htmlcov/
 *.log
 *.bck
 *.backup-*
+*.local-backup
+
+# Database or state backups do not belong in the checkout (README, Backup);
+# these patterns only keep a misplaced one out of a commit
+backups/
+backup-db-*/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
 
 # Build output (scripts/build_importer.py)
 dist/
