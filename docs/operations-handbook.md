@@ -399,7 +399,7 @@ The practical tests 3.1–3.4, 3.6 and 3.7 are referenced here, not repeated. Th
 - [ ] **E24** (P2) Disk space: temporarily set `disk_warn_percent` / `disk_critical_percent` in the settings below the current usage → one `low_disk` notification each (warning, critical), no repeat on every check; then set them back to 85/95.
 - [ ] **E25** (P2, from PR #50) [test system] Save "Chains to keep" > 0 without pressing "Apply retention now" → within an hour the old chains are removed; audit entry `exports.retention` with actor `scheduler`. With 0 nothing is deleted.
 
-- [ ] **E26** (P2) *Rehash* on the Jobs page → job `rehash` succeeds, log line `rehashed N files (… GiB) … checked against the hash cache`; a sync or export of the same repository started meanwhile waits until it finished. Schedule *Rehash* monthly (`0 4 1 * *`) → shown with job `rehash` on the Schedules page and the dashboard.
+- [ ] **E26** (P2) *Rehash* on the Jobs page → job `rehash` succeeds, log line `rehashed N files (… GiB) … checked against the hash cache`; a sync or export of the same repository started meanwhile waits until it finished, and so does an export of another repository (single export worker). Schedule *Rehash* monthly (`0 4 1 * *`) → shown with job `rehash` on the Schedules page and the dashboard.
 - [ ] **E27** (P3) [test system] Falsify one digest in `<state>/manifests/hashcache-<slug>.json` (keep the four numbers) → rehash fails without retry, `job_failed` notification, the path in the job log; the falsified entry stays in the cache. Delete that entry from the cache → the next rehash succeeds.
 
 #### F. Notifications
@@ -816,7 +816,22 @@ What helps, in order:
 
 Measure on the host (read-only for the mirror): `python3 scripts/bench_exporter.py inventory --root /mnt/repository/ubuntu --threads 1 8 16` (cached walk per thread count) and `python3 scripts/bench_exporter.py full --root … --out <empty scratch dir> --limit-mb 20000` (pack 20 GB; prints MiB/s and read/write volume). Run them inside the worker container or on a host with Python ≥ 3.12 and the checkout.
 
-**Rehash (best practice: monthly).** Incremental exports trust the hash cache (inode, size, mtime, ctime), like git, restic or borg. Silent disk corruption changes none of these. A *Rehash* job (Jobs page or schedule, e.g. `0 4 1 * *`) reads every file once, reports content that changed without a stat change and rebuilds the cache; README "Rehash". On ~4 TB over NFS it reads the whole tree (hours, like a full export without writing); schedule it outside the sync window, it holds the repository guard. The receiver's counterpart is `check --all --hash`.
+**Rehash (best practice: monthly).** Incremental exports trust the hash cache (inode, size, mtime, ctime), like git, restic or borg. Silent disk corruption changes none of these. A *Rehash* job (Jobs page or schedule, e.g. `0 4 1 * *`) reads every file once, reports content that changed without a stat change and rebuilds the cache; README "Rehash". The receiver's counterpart is `check --all --hash`.
+
+What a running rehash blocks (by design, decided 2026-11-26):
+
+| | While a rehash of repository X runs |
+| --- | --- |
+| Sync or export of **X** | waits in the queue (one job per repository: `RepoLock`, plus the repository guard) and starts afterwards |
+| Exports of **all other repositories** | wait too: the rehash runs in the single `worker-export` container, which runs one job at a time. Nothing is lost; they run one after another afterwards |
+| Syncs of other repositories | unaffected (sync workers) |
+| Scheduled rehash of X | skipped while one is active (the scheduler skips a schedule whose job type is already active for the repository) |
+
+Duration: the whole tree is read once, like a full export without writing. For ~4 TB on NFS roughly 2–3 h at 10 GbE (~500 MB/s), ~10 h at 1 GbE. So:
+
+1. Schedule the rehash in a window without scheduled exports, e.g. monthly at night after the last export of the day; measure the first run by hand (job log: duration, GiB).
+2. On the Schedules page keep it away from export schedules and from syncs with "export after sync" (their chained exports would queue behind it).
+3. If an export is urgent while a rehash runs: cancel the rehash (*Cancel* on the job page; the cache is only replaced at the end, the old one stays) and start it again later.
 
 ### 4.8 NFS tuning (sender and receiver)
 
@@ -903,6 +918,8 @@ GETATTR round trip × number of files ≈ duration of one single-threaded walk. 
 | Sender state volume lost, backup available | restore the backup (database and `export-meta`), then as "export lost in transit" | no |
 | State volume lost, no backup | full export, `--rebase` on the receiver | yes |
 | Database file is large although a lot was deleted | check size and free share, then VACUUM (4.4) | no |
+| Exports stay queued for hours | a rehash is running in `worker-export` (Jobs page, type `rehash`): wait, or cancel it and reschedule it into a quiet window (4.7) | no |
+| Rehash job failed: "changed content without a stat change" | job log lists the paths; check the storage, delete each file and sync again, then rehash again (README "Rehash"); no full export before that | no |
 | wget file-list sync fails | job log: the last `$ wget …` line names the file; fix or remove the URL, sync again (4.6) | no |
 
 ---
