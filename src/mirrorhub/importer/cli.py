@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from mirrorhub import buildinfo
-from mirrorhub.importer import events, progress, tree
+from mirrorhub.importer import events, permissions, progress, tree
 from mirrorhub.importer.adopt import adopt
 from mirrorhub.importer.apply import (
     Options,
@@ -568,6 +568,7 @@ def _check(config: Config, arguments: argparse.Namespace) -> int:
             worst = max(worst, exc.exit_code)
             continue
         kind = "quick check and SHA-256" if result.hashed else "quick check"
+        _warn_permissions(config, slug, result.directories)
         _emit_tree_check(
             slug,
             result.export_id,
@@ -603,6 +604,24 @@ def _check(config: Config, arguments: argparse.Namespace) -> int:
         )
         worst = max(worst, DriftError.exit_code)
     return worst
+
+
+def _warn_permissions(config: Config, slug: str, directories: list[Path]) -> None:
+    """check/adopt: warn if the tree has directories the importer's user cannot
+    change (the next import touching them would stop at the permission check)."""
+    try:
+        warning = permissions.tree_warning(config.mirror_root / slug, directories)
+    except OSError:
+        return
+    if warning is None:
+        return
+    print(warning)
+    log_event(
+        logging.WARNING,
+        "tree has directories this user cannot change",
+        slug=slug,
+        user=permissions.who(),
+    )
 
 
 def _status(config: Config, slug: str | None) -> int:
@@ -689,6 +708,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"adopted {result.export_id} for {result.slug}: "
                 f"{result.entries} entries match ({check})"
             )
+            _warn_permissions(config, result.slug, result.directories)
             return 0
         return _run_import_with_event(config, arguments)
     except ImporterError as exc:
