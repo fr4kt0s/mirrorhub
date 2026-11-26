@@ -13,6 +13,13 @@
         {% for r in repositories %}<option value="{{ r.id }}">{{ r.slug }} ({{ r.tool }})</option>{% endfor %}
       </select>
     </label>
+    <label>Job
+      <select name="job_type">
+        <option value="sync" selected>Sync</option>
+        <option value="export">Export (repository's export mode)</option>
+        <option value="rehash">Rehash (re-read every file, rebuild the hash cache)</option>
+      </select>
+    </label>
     <label>Preset
       <select name="preset_label">
         <option value="">custom</option>
@@ -23,7 +30,7 @@
       <input name="cron_expr" value="0 3 * * *" maxlength="120" required>
     </label>
     <label class="check"><input type="checkbox" name="enabled" checked> Enabled</label>
-    <label>Export after a successful sync
+    <label>Export after a successful sync (sync schedules only)
       <select name="chain_export">
         <option value="inherit" selected>Use the repository setting</option>
         <option value="always">Always (override)</option>
@@ -35,20 +42,22 @@
 </section>
 
 <table class="table">
-  <thead><tr><th>#</th><th>Repository</th><th>Cron</th><th>Preset</th><th>Next run</th><th>Last run</th><th>Enabled</th><th>Export after sync</th><th></th></tr></thead>
+  <thead><tr><th>#</th><th>Repository</th><th>Job</th><th>Cron</th><th>Preset</th><th>Next run</th><th>Last run</th><th>Enabled</th><th>Export after sync</th><th></th></tr></thead>
   <tbody>
   {% for s in schedules %}
     <tr>
       <td>{{ s.id }}</td>
       {% set repo = repos_by_id.get(s.repo_id) %}
       <td>{{ repo.slug if repo else s.repo_id }}</td>
+      <td>{{ s.job_type }}</td>
       <td><code>{{ s.cron_expr }}</code></td>
       <td>{{ s.preset_label }}</td>
       <td>{{ s.next_fire_at | ts }}</td>
       <td>{{ s.last_fire_at | ts }}</td>
       <td>{{ "yes" if s.enabled else "no" }}</td>
       <td>
-        {% if s.chain_export is none %}repository ({{ "yes" if repo and repo.chain_export else "no" }})
+        {% if s.job_type != "sync" %}<span class="muted">-</span>
+        {% elif s.chain_export is none %}repository ({{ "yes" if repo and repo.chain_export else "no" }})
         {% elif s.chain_export %}always (override)
         {% else %}never (override){% endif %}
       </td>
@@ -58,7 +67,7 @@
       </td>
     </tr>
   {% else %}
-    <tr><td colspan="9" class="muted">No schedules.</td></tr>
+    <tr><td colspan="10" class="muted">No schedules.</td></tr>
   {% endfor %}
   </tbody>
 </table>

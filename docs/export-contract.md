@@ -214,8 +214,12 @@ The cache does not change the inventory format or the export contract. A
 missing or damaged cache only costs time: everything is rehashed.
 
 Full exports ignore the cache, rehash every file and rebuild the cache from the
-results. Run a full export if the hash cache is ever in doubt, for example after
-storage-level repairs on the mirror volume.
+results. A *Rehash* job (manual or scheduled) rebuilds the cache without an
+export and reports files whose content changed while inode, size, mtime and
+ctime stayed the same; it keeps their old cache entries, so no export takes
+that content silently (README "Rehash"). Run a rehash if the hash cache is ever
+in doubt, for example after storage-level repairs on the mirror volume, and
+periodically (monthly) to catch silent disk corruption.
 
 ## Verification
 

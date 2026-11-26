@@ -17,6 +17,9 @@
         <td class="row-actions">
           <button class="btn" hx-post="/jobs/{{ r.id }}/start" hx-target="body">Start sync</button>
           <button class="btn btn-secondary" hx-post="/jobs/{{ r.id }}/start?dry=1" hx-target="body">Dry run</button>
+          <button class="btn btn-secondary" hx-post="/jobs/{{ r.id }}/rehash" hx-target="body"
+                  title="Re-read every file and rebuild the hash cache; finds content that changed without a stat change"
+                  hx-confirm="Rehash {{ r.slug }}? Every file is read once (long on large mirrors).">Rehash</button>
         </td>
       </tr>
     {% endfor %}

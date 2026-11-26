@@ -399,6 +399,9 @@ The practical tests 3.1–3.4, 3.6 and 3.7 are referenced here, not repeated. Th
 - [ ] **E24** (P2) Disk space: temporarily set `disk_warn_percent` / `disk_critical_percent` in the settings below the current usage → one `low_disk` notification each (warning, critical), no repeat on every check; then set them back to 85/95.
 - [ ] **E25** (P2, from PR #50) [test system] Save "Chains to keep" > 0 without pressing "Apply retention now" → within an hour the old chains are removed; audit entry `exports.retention` with actor `scheduler`. With 0 nothing is deleted.
 
+- [ ] **E26** (P2) *Rehash* on the Jobs page → job `rehash` succeeds, log line `rehashed N files (… GiB) … checked against the hash cache`; a sync or export of the same repository started meanwhile waits until it finished. Schedule *Rehash* monthly (`0 4 1 * *`) → shown with job `rehash` on the Schedules page and the dashboard.
+- [ ] **E27** (P3) [test system] Falsify one digest in `<state>/manifests/hashcache-<slug>.json` (keep the four numbers) → rehash fails without retry, `job_failed` notification, the path in the job log; the falsified entry stays in the cache. Delete that entry from the cache → the next rehash succeeds.
+
 #### F. Notifications
 
 - [ ] **F1** (P1) Create a webhook channel, *Test* → receiver gets the message.
@@ -812,6 +815,8 @@ What helps, in order:
 5. **Storage:** `/data` and `/export` on different devices if possible; a local disk for `/export` avoids sending the archive over the network twice (written here, read again by the pickup tool). On NFS: mount options, readahead and server settings in 4.8.
 
 Measure on the host (read-only for the mirror): `python3 scripts/bench_exporter.py inventory --root /mnt/repository/ubuntu --threads 1 8 16` (cached walk per thread count) and `python3 scripts/bench_exporter.py full --root … --out <empty scratch dir> --limit-mb 20000` (pack 20 GB; prints MiB/s and read/write volume). Run them inside the worker container or on a host with Python ≥ 3.12 and the checkout.
+
+**Rehash (best practice: monthly).** Incremental exports trust the hash cache (inode, size, mtime, ctime), like git, restic or borg. Silent disk corruption changes none of these. A *Rehash* job (Jobs page or schedule, e.g. `0 4 1 * *`) reads every file once, reports content that changed without a stat change and rebuilds the cache; README "Rehash". On ~4 TB over NFS it reads the whole tree (hours, like a full export without writing); schedule it outside the sync window, it holds the repository guard. The receiver's counterpart is `check --all --hash`.
 
 ### 4.8 NFS tuning (sender and receiver)
 

@@ -22,6 +22,7 @@ from sqlmodel import Session
 from mirrorhub.db import get_engine, immediate_session, wait_for_schema
 from mirrorhub.enums import Tool
 from mirrorhub.export import job as export_engine
+from mirrorhub.export import rehash
 from mirrorhub.export.manifest import ExportError
 from mirrorhub.healthcheck import WORKER_ALIVE_FILE
 from mirrorhub.logging_conf import configure_logging
@@ -351,6 +352,57 @@ def _build_sync_plan(
     )
 
 
+def _rehash(
+    claimed: ClaimedJob,
+    worker_id: str,
+    repo: Repository,
+    settings: Settings,
+    lease: Lease,
+    log_path: Path,
+) -> None:
+    """Re-read every file of the repository and rebuild its hash cache.
+
+    Files whose content changed without a stat change fail the job without a retry
+    (re-reading gives the same answer); every such path is written to the job log.
+    """
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write("# rehash: reading every file, rebuilding the hash cache\n")
+        logged = -10.0
+
+        def pulse(pct: float | None, text: str) -> None:
+            nonlocal logged
+            lease.update(pct, text)
+            if lease.cancelled():
+                raise ExportCancelled("rehash cancelled")
+            if pct is not None and pct >= logged + 10:
+                logged = pct
+                handle.write(f"# {pct:.0f}% {text}\n")
+                handle.flush()
+
+        result = rehash.repository(repo.slug, settings, pulse)
+        handle.write(f"# {result.summary()}\n")
+        for path in result.mismatched:
+            handle.write(f"# content changed without a stat change: {path}\n")
+
+    if result.mismatched:
+        log.warning(
+            "rehash found changed content",
+            extra={"job_id": claimed.id, "repo": repo.slug, "count": len(result.mismatched)},
+        )
+        finish(
+            claimed.id,
+            worker_id,
+            status="failed",
+            exit_code=1,
+            summary=(
+                f"{len(result.mismatched)} files changed content without a stat change "
+                f"(possible disk corruption), e.g. {result.mismatched[0]}; see the job log"
+            ),
+        )
+        return
+    finish(claimed.id, worker_id, status="succeeded", exit_code=0)
+
+
 def _execute(
     claimed: ClaimedJob,
     worker_id: str,
@@ -410,6 +462,10 @@ def _execute(
                     )
                 )
             try:
+                if job.type == "rehash":
+                    _rehash(claimed, worker_id, repo, settings, lease, log_path)
+                    return
+
                 if job.type == "export":
                     with log_path.open("a", encoding="utf-8") as handle:
                         handle.write(f"# export attempt {job.attempt}\n")
@@ -522,14 +578,21 @@ def _execute(
                     chain_snapshot=snapshot_path,
                 )
             except ExportCancelled:
+                if job.type == "rehash":
+                    note, what = "rehash cancelled", "rehash cancelled"
+                else:
+                    note, what = (
+                        "export cancelled before publication",
+                        "cancelled before publication",
+                    )
                 with log_path.open("a", encoding="utf-8") as handle:
-                    handle.write("# export cancelled before publication\n")
+                    handle.write(f"# {note}\n")
                 finish(
                     claimed.id,
                     worker_id,
                     status="cancelled",
                     exit_code=None,
-                    summary="cancelled before publication",
+                    summary=what,
                 )
             except (SyncConfigurationError, builders.BuildError) as exc:
                 # The repository configuration cannot produce a runnable plan. Retrying
