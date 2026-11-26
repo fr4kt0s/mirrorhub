@@ -808,10 +808,10 @@ What helps, in order:
 1. **Incremental exports.** Full exports only for the first transfer or after a loss (or "Incremental since" an older export, 4.1).
 2. **Format `tar` for package repositories** (`.deb`, `.rpm`, ISOs are already compressed); `tar.zst` only for compressible content.
 3. **No split** unless the medium needs it (FAT32: 4 GiB per file).
-4. **`MIRRORHUB_EXPORT_WORKERS`** (default 8): threads for the `stat`/hash walks. On NFS each `stat` is a network round trip; with 0.5 ms per `stat` a walk over 20 000 files took 12.7 s with 1 worker and 1.7 s with 8. On a local disk with a warm cache threads add overhead; use 1–4 there.
+4. **`MIRRORHUB_INVENTORY_THREADS`** (default 8; until PR #69 `MIRRORHUB_EXPORT_WORKERS`, still read with a warning): threads inside the export process (and inside sync workers for the sync inventory), not containers, for the `stat`/hash walks. On NFS each `stat` is a network round trip; with 0.5 ms per `stat` a walk over 20 000 files took 12.7 s with 1 thread and 1.7 s with 8. On a local disk with a warm cache threads add overhead; use 1–4 there.
 5. **Storage:** `/data` and `/export` on different devices if possible; a local disk for `/export` avoids sending the archive over the network twice (written here, read again by the pickup tool). On NFS: mount options, readahead and server settings in 4.8.
 
-Measure on the host (read-only for the mirror): `python3 scripts/bench_exporter.py inventory --root /mnt/repository/ubuntu --workers 1 8 16` (cached walk per worker count) and `python3 scripts/bench_exporter.py full --root … --out <empty scratch dir> --limit-mb 20000` (pack 20 GB; prints MiB/s and read/write volume). Run them inside the worker container or on a host with Python ≥ 3.12 and the checkout.
+Measure on the host (read-only for the mirror): `python3 scripts/bench_exporter.py inventory --root /mnt/repository/ubuntu --threads 1 8 16` (cached walk per thread count) and `python3 scripts/bench_exporter.py full --root … --out <empty scratch dir> --limit-mb 20000` (pack 20 GB; prints MiB/s and read/write volume). Run them inside the worker container or on a host with Python ≥ 3.12 and the checkout.
 
 ### 4.8 NFS tuning (sender and receiver)
 
@@ -823,7 +823,7 @@ Where NFS costs time:
 | Sequential throughput | packing reads the payload and writes the archive | reading the archive, writing the tree |
 | Commits to stable storage | `fsync` of the few export files | one `syncfs` per import (PR #57) |
 
-Walk time ≈ files × `stat` round trip ÷ threads (`MIRRORHUB_EXPORT_WORKERS` on the sender, 4.7). Packing and importing are single streams: they gain from larger transfers and readahead, not from threads.
+Walk time ≈ files × `stat` round trip ÷ threads (`MIRRORHUB_INVENTORY_THREADS` on the sender, 4.7). Packing and importing are single streams: they gain from larger transfers and readahead, not from threads.
 
 **Client mount options** (the host's `/etc/fstab`; Compose binds the host directories, see `HOST_DATA_DIR`/`HOST_EXPORT_DIR`; for NFS named volumes the same options go into `o:` in `docker-compose.yml`):
 

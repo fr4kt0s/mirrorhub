@@ -350,6 +350,6 @@ def test_parallel_inventory_matches_sequential(tmp_path: Path) -> None:
     (tmp_path / ".tmp").mkdir()
     (tmp_path / ".tmp" / "skipped").write_bytes(b"x")
     sequential = manifest.snapshot(tmp_path)
-    assert manifest.snapshot(tmp_path, workers=8) == sequential
+    assert manifest.snapshot(tmp_path, threads=8) == sequential
     assert ".tmp/skipped" not in sequential
     assert list(sequential) == sorted(sequential)

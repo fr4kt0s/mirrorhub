@@ -251,7 +251,7 @@ def snapshot(
     *,
     racy_margin_ns: int = RACY_MARGIN_NS,
     hash_files: bool = True,
-    workers: int = 1,
+    threads: int = 1,
     stat_keys: StatKeys | None = None,
 ) -> Inventory:
     """Inventory every regular file and symlink below root.
@@ -265,9 +265,9 @@ def snapshot(
     ``hash_files=False`` leaves ``sha256`` empty for files without a cache hit (a full
     export fills it while packing, so the data is read once). ``stat_keys`` receives
     each regular file's cache key and whether it may be cached, so the caller can
-    update the cache with those digests. ``workers`` > 1 stats and hashes files in
-    that many threads: on NFS each stat and open is a network round trip, and SHA-256
-    releases the GIL for large buffers.
+    update the cache with those digests. ``threads`` > 1 stats and hashes files in
+    that many threads (setting ``inventory_threads``): on NFS each stat and open is a
+    network round trip, and SHA-256 releases the GIL for large buffers.
     """
     if root.is_symlink() or not root.is_dir():
         raise ExportError("repository directory is missing or is a symlink")
@@ -294,11 +294,11 @@ def snapshot(
     def task(item: tuple[str, Path]) -> tuple[dict[str, Any], tuple[list[int], bool] | None]:
         return _inventory_entry(item[0], item[1], cache, hash_files, racy_cutoff_ns)
 
-    if workers <= 1:
+    if threads <= 1:
         for item in entries:
             collect(item[0], task(item))
     else:
-        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="inventory") as pool:
+        with ThreadPoolExecutor(max_workers=threads, thread_name_prefix="inventory") as pool:
             for start in range(0, len(entries), _BATCH):
                 batch = entries[start : start + _BATCH]
                 for item, result in zip(batch, pool.map(task, batch), strict=True):
