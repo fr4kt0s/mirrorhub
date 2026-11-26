@@ -73,6 +73,7 @@ uses it for variable substitution.
 | MIRRORHUB_HEARTBEAT_STALE_S | 60 | Initial stale-job threshold; Settings page afterwards. |
 | MIRRORHUB_LOG_RETENTION_DAYS | 30 | Initial retention of job logs and finished jobs; Settings page afterwards. |
 | MIRRORHUB_EXPORT_META_KEEP | 30 | Export metadata copies kept per repository on the state volume (minimum 1). Each can be the base of an "incremental since" export. |
+| MIRRORHUB_EXPORT_WORKERS | 8 | Threads that stat and hash files while an export builds its inventory (1–64). More help on NFS and SSD; 1 = sequential. |
 | MIRRORHUB_SESSION_TTL_S | 28800 | Login session lifetime (minimum 300). |
 | MIRRORHUB_LOGIN_MAX_ATTEMPTS | 5 | Failed logins per username and client IP before a lockout. |
 | MIRRORHUB_LOGIN_LOCKOUT_S | 300 | First lockout; doubles with each further failure, capped at one hour. |
@@ -357,9 +358,12 @@ volumes:
     driver: local
     driver_opts:
       type: nfs
-      o: "addr=nas.example.lan,nfsvers=4.1,rw,hard"
+      o: "addr=nas.example.lan,nfsvers=4.2,rw,hard,nconnect=8,rsize=1048576,wsize=1048576,noatime"
       device: ":/export/mirrors"
 ```
+
+Mount options, readahead and server settings for good throughput:
+`docs/operations-handbook.md`, section 4.8.
 
 Apply the same pattern to export_dir.
 

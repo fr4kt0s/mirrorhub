@@ -169,6 +169,24 @@ see the script's help). Run it on the receiver's disk type: an fsync costs about
 
 The export directory is never modified. File modes are 0644 as written by the sender.
 
+### Inbox and tree on NFS
+
+The importer runs on an NFS client; running it (or `check`) on the NFS server while a
+client imports is not supported (the server's local lock does not see the client's).
+
+- Each file costs a few round trips (create in staging, `rename` into the tree,
+  `stat` in the post-check and tree check); data is committed once per import
+  (`syncfs`), not per file.
+- Staging lives next to the tree, so installing is a `rename` on the server, not a copy.
+- Mount options, readahead (the archive is read as one stream), server threads and the
+  `sync` export option: operations handbook 4.8. In short:
+  `vers=4.2,hard,nconnect=8,rsize=1048576,wsize=1048576,noatime`, keep the attribute
+  cache and locking (no `noac`, `nolock` or `local_lock=all`), readahead 16 MiB.
+- The server's file system needs nanosecond timestamps (ext4, XFS, ZFS, Btrfs);
+  otherwise the post-check and the tree check report mtime differences.
+- `nfsstat -m` shows the options in effect; `nfsiostat 5 <mount>` the round trip per
+  operation. `scripts/bench_importer.py` measures an import on the receiver's mount.
+
 ## Web UI
 
 `python3 mirrorhub-importer.pyz --config importer.toml serve` starts a small web

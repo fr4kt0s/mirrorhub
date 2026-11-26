@@ -9,6 +9,7 @@ import posixpath
 import stat
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -151,12 +152,107 @@ def _walk_error(error: OSError) -> None:
     raise ExportError(f"cannot scan repository directory: {error.filename}") from error
 
 
+# relative path -> (cache key [ino, size, mtime_ns, ctime_ns], may be cached)
+StatKeys = dict[str, tuple[list[int], bool]]
+
+_BATCH = 2048
+
+
+def _entries(root: Path) -> list[tuple[str, Path]]:
+    """Relative path and absolute path of every non-directory entry below root.
+
+    Uses os.scandir: the entry type comes from the directory listing (d_type), so
+    finding files and symlinks costs no stat call per entry. Symlinks to directories
+    are recorded as symlinks and not followed. Skipped directories: SKIP_DIRECTORIES.
+    """
+    found: list[tuple[str, Path]] = []
+    stack: list[tuple[str, str]] = [(str(root), "")]
+    while stack:
+        directory, prefix = stack.pop()
+        try:
+            with os.scandir(directory) as iterator:
+                items = sorted(iterator, key=lambda item: item.name)
+        except OSError as error:
+            _walk_error(error)
+        subdirectories: list[tuple[str, str]] = []
+        for item in items:
+            relative = f"{prefix}{item.name}"
+            try:
+                is_directory = item.is_dir(follow_symlinks=False)
+            except OSError as error:
+                _walk_error(error)
+            if is_directory:
+                if item.name not in SKIP_DIRECTORIES:
+                    subdirectories.append((item.path, f"{relative}/"))
+            else:
+                found.append((relative, Path(item.path)))
+        stack.extend(reversed(subdirectories))
+    return found
+
+
+def _inventory_entry(
+    relative: str,
+    path: Path,
+    cache: HashCache | None,
+    hash_files: bool,
+    racy_cutoff_ns: int,
+) -> tuple[dict[str, Any], tuple[list[int], bool] | None]:
+    """Inventory entry for one path, plus its cache key for regular files.
+
+    Runs in worker threads: no progress callback here (the caller reports progress).
+    The second lstat, which detects a change while the file is read, is only needed
+    when the file was actually read.
+    """
+    validate_relative(relative)
+    before = path.lstat()
+
+    if stat.S_ISLNK(before.st_mode):
+        target = os.readlink(path)
+        validate_link(relative, target)
+        after = path.lstat()
+        if _identity(before) != _identity(after):
+            raise ExportError(f"symlink changed during inventory: {relative}")
+        return {
+            "type": "symlink",
+            "target": target,
+            "size": before.st_size,
+            "mtime_ns": before.st_mtime_ns,
+            "sha256": hashlib.sha256(os.fsencode(target)).hexdigest(),
+        }, None
+
+    if not stat.S_ISREG(before.st_mode):
+        raise ExportError(f"unsupported filesystem entry: {relative}")
+
+    key = _cache_key(before)
+    cached = cache.get(relative) if cache is not None else None
+    if cached is not None and cached[:4] == key:
+        digest = str(cached[4])
+    elif hash_files:
+        digest = file_hash(path)
+        after = path.lstat()
+        if _identity(before) != _identity(after):
+            raise ExportError(f"file changed during inventory: {relative}")
+    else:
+        # Filled in by the caller (a full export hashes while packing).
+        digest = ""
+    cacheable = max(before.st_mtime_ns, before.st_ctime_ns) < racy_cutoff_ns
+    return {
+        "type": "file",
+        "size": before.st_size,
+        "mtime_ns": before.st_mtime_ns,
+        "sha256": digest,
+    }, (key, cacheable)
+
+
 def snapshot(
     root: Path,
     pulse: Pulse | None = None,
     cache: HashCache | None = None,
     *,
     racy_margin_ns: int = RACY_MARGIN_NS,
+    hash_files: bool = True,
+    workers: int = 1,
+    stat_keys: StatKeys | None = None,
 ) -> Inventory:
     """Inventory every regular file and symlink below root.
 
@@ -165,72 +261,48 @@ def snapshot(
     cannot be set from user space, so content rewritten with the old size and mtime
     restored is still detected. The cache is updated in place: entries are refreshed
     and paths that no longer exist are dropped. The inventory format is unchanged.
+
+    ``hash_files=False`` leaves ``sha256`` empty for files without a cache hit (a full
+    export fills it while packing, so the data is read once). ``stat_keys`` receives
+    each regular file's cache key and whether it may be cached, so the caller can
+    update the cache with those digests. ``workers`` > 1 stats and hashes files in
+    that many threads: on NFS each stat and open is a network round trip, and SHA-256
+    releases the GIL for large buffers.
     """
     if root.is_symlink() or not root.is_dir():
         raise ExportError("repository directory is missing or is a symlink")
 
+    racy_cutoff_ns = time.time_ns() - racy_margin_ns
+    entries = _entries(root)
     inventory: Inventory = {}
     refreshed: HashCache = {}
-    racy_cutoff_ns = time.time_ns() - racy_margin_ns
 
-    for directory, names, filenames in os.walk(
-        root,
-        followlinks=False,
-        onerror=_walk_error,
-    ):
-        names.sort()
-        filenames.sort()
+    def collect(
+        relative: str, result: tuple[dict[str, Any], tuple[list[int], bool] | None]
+    ) -> None:
+        entry, key_info = result
+        inventory[relative] = entry
+        if key_info is not None:
+            key, cacheable = key_info
+            if stat_keys is not None:
+                stat_keys[relative] = key_info
+            if cacheable and entry["sha256"]:
+                refreshed[relative] = [*key, entry["sha256"]]
+        if pulse is not None:
+            pulse(None, f"Inventoried {len(inventory)} of {len(entries)} entries")
 
-        directory_path = Path(directory)
-        links = [name for name in names if (directory_path / name).is_symlink()]
-        names[:] = [name for name in names if name not in SKIP_DIRECTORIES and name not in links]
+    def task(item: tuple[str, Path]) -> tuple[dict[str, Any], tuple[list[int], bool] | None]:
+        return _inventory_entry(item[0], item[1], cache, hash_files, racy_cutoff_ns)
 
-        for name in sorted([*filenames, *links]):
-            path = directory_path / name
-            relative = path.relative_to(root).as_posix()
-            validate_relative(relative)
-            before = path.lstat()
-
-            if stat.S_ISLNK(before.st_mode):
-                target = os.readlink(path)
-                validate_link(relative, target)
-                after = path.lstat()
-
-                if _identity(before) != _identity(after):
-                    raise ExportError(f"symlink changed during inventory: {relative}")
-
-                inventory[relative] = {
-                    "type": "symlink",
-                    "target": target,
-                    "size": before.st_size,
-                    "mtime_ns": before.st_mtime_ns,
-                    "sha256": hashlib.sha256(os.fsencode(target)).hexdigest(),
-                }
-            elif stat.S_ISREG(before.st_mode):
-                key = _cache_key(before)
-                cached = cache.get(relative) if cache is not None else None
-                if cached is not None and cached[:4] == key:
-                    digest = str(cached[4])
-                else:
-                    digest = file_hash(path, pulse)
-                after = path.lstat()
-
-                if _identity(before) != _identity(after):
-                    raise ExportError(f"file changed during inventory: {relative}")
-
-                inventory[relative] = {
-                    "type": "file",
-                    "size": before.st_size,
-                    "mtime_ns": before.st_mtime_ns,
-                    "sha256": digest,
-                }
-                if max(before.st_mtime_ns, before.st_ctime_ns) < racy_cutoff_ns:
-                    refreshed[relative] = [*key, digest]
-            else:
-                raise ExportError(f"unsupported filesystem entry: {relative}")
-
-            if pulse is not None:
-                pulse(None, f"Inventoried {len(inventory)} entries")
+    if workers <= 1:
+        for item in entries:
+            collect(item[0], task(item))
+    else:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="inventory") as pool:
+            for start in range(0, len(entries), _BATCH):
+                batch = entries[start : start + _BATCH]
+                for item, result in zip(batch, pool.map(task, batch), strict=True):
+                    collect(item[0], result)
 
     if cache is not None:
         cache.clear()

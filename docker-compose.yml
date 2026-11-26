@@ -220,15 +220,16 @@ volumes:
       device: ${HOST_EXPORT_DIR:?set HOST_EXPORT_DIR in .env}
 
   # ---- Alternative: NFS-backed named volumes (replace the two blocks above) ----
+  # Options explained in docs/operations-handbook.md, section 4.8 (NFS tuning).
   # mirror_data:
   #   driver: local
   #   driver_opts:
   #     type: nfs
-  #     o: "addr=nas.example.lan,nfsvers=4.1,rw,hard,noatime"
+  #     o: "addr=nas.example.lan,nfsvers=4.2,rw,hard,nconnect=8,rsize=1048576,wsize=1048576,noatime"
   #     device: ":/export/mirrors"
   # export_dir:
   #   driver: local
   #   driver_opts:
   #     type: nfs
-  #     o: "addr=nas.example.lan,nfsvers=4.1,rw,hard,noatime"
+  #     o: "addr=nas.example.lan,nfsvers=4.2,rw,hard,nconnect=8,rsize=1048576,wsize=1048576,noatime"
   #     device: ":/export/diode-drop"

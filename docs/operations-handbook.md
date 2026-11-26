@@ -757,6 +757,97 @@ How a file-list sync runs, and what follows from it:
 
 In the YAML configuration there is no mode field: an empty or missing `extra_files` means the whole tree, entries mean only those files (`extra_files: [{url: …, path: …}]`, path always explicit). Tree filters: `include_regex`, `exclude_regex`, `wget_keep_arches: [amd64, i386]` (before PR #51 the two regex fields were missing from the YAML export and were cleared when a wget repository was edited in the web interface).
 
+### 4.7 Export performance (sender)
+
+How an export reads the data (from PR #64):
+
+| Step | Full export | Incremental export |
+| --- | --- | --- |
+| Inventory | `stat` of every file, **no reading** | `stat` of every file; only files whose inode/size/mtime/ctime changed are read and hashed (hash cache) |
+| Packing | every file read **once**: hashed while it is copied into the tar; the digests go into `files.json` and the hash cache | changed files read once, digest compared with the inventory |
+| Archive | written once, straight into the parts (no intermediate `data.tar`), each part hashed while written | same |
+| Compression (`tar.zst`) | `zstd -T0` (all cores) in the same stream | same |
+| Post-check (tree unchanged?) | `stat` of every file, cached digests | same |
+| `MANIFEST.sha256` | uses the digests of the parts; only the small metadata files are read | same |
+
+Data volume of a full export ≈ **1 × read + 1 × write** of the payload (before PR #64: ≈ 4 × read + 1 × write for `tar`, more with `tar.zst` and split). An incremental export reads only the changed files; its time is dominated by the two `stat` walks.
+
+What helps, in order:
+
+1. **Incremental exports.** Full exports only for the first transfer or after a loss (or "Incremental since" an older export, 4.1).
+2. **Format `tar` for package repositories** (`.deb`, `.rpm`, ISOs are already compressed); `tar.zst` only for compressible content.
+3. **No split** unless the medium needs it (FAT32: 4 GiB per file).
+4. **`MIRRORHUB_EXPORT_WORKERS`** (default 8): threads for the `stat`/hash walks. On NFS each `stat` is a network round trip; with 0.5 ms per `stat` a walk over 20 000 files took 12.7 s with 1 worker and 1.7 s with 8. On a local disk with a warm cache threads add overhead; use 1–4 there.
+5. **Storage:** `/data` and `/export` on different devices if possible; a local disk for `/export` avoids sending the archive over the network twice (written here, read again by the pickup tool). On NFS: mount options, readahead and server settings in 4.8.
+
+Measure on the host (read-only for the mirror): `python3 scripts/bench_exporter.py inventory --root /mnt/repository/ubuntu --workers 1 8 16` (cached walk per worker count) and `python3 scripts/bench_exporter.py full --root … --out <empty scratch dir> --limit-mb 20000` (pack 20 GB; prints MiB/s and read/write volume). Run them inside the worker container or on a host with Python ≥ 3.12 and the checkout.
+
+### 4.8 NFS tuning (sender and receiver)
+
+Where NFS costs time:
+
+| Cost | Sender | Receiver (importer) |
+| --- | --- | --- |
+| One network round trip per `stat`/`open`/`mkdir`/`rename` | inventory and post-check walks of every export, sync inventory | staging, installing (`rename`), post-check, tree check, `check` |
+| Sequential throughput | packing reads the payload and writes the archive | reading the archive, writing the tree |
+| Commits to stable storage | `fsync` of the few export files | one `syncfs` per import (PR #57) |
+
+Walk time ≈ files × `stat` round trip ÷ threads (`MIRRORHUB_EXPORT_WORKERS` on the sender, 4.7). Packing and importing are single streams: they gain from larger transfers and readahead, not from threads.
+
+**Client mount options** (the host's `/etc/fstab`; Compose binds the host directories, see `HOST_DATA_DIR`/`HOST_EXPORT_DIR`; for NFS named volumes the same options go into `o:` in `docker-compose.yml`):
+
+```text
+nas.example.lan:/export/mirrors  /mnt/repository  nfs4  vers=4.2,proto=tcp,hard,nconnect=8,rsize=1048576,wsize=1048576,noatime,_netdev  0  0
+```
+
+| Option | Why |
+| --- | --- |
+| `vers=4.2` (at least 4.1) | sessions, fewer round trips per operation, needed for `nconnect` trunking on most servers |
+| `nconnect=8` | several TCP connections per mount (Linux ≥ 5.3): more throughput and room for parallel `stat` calls; up to 16 |
+| `rsize=1048576,wsize=1048576` | 1 MiB per READ/WRITE (the server may cap it; check with `nfsstat -m`) |
+| `hard` | never `soft`: a timeout must block, not turn into a failed or short write |
+| `noatime` | no access-time updates for every file read |
+| keep the attribute cache | no `noac`, `actimeo=0` or `lookupcache=none`: every `stat` would go to the server and the walks get many times slower. The checks stay correct because syncs, exports and imports run on the same NFS client and its cache sees its own changes. Another host writing into the same tree could be seen up to `acregmax` (60 s) late. |
+| keep locking | no `nolock`, no `local_lock=all`: the importer's per-slug lock (`flock`) is mapped to NFS locks, so two clients exclude each other |
+
+**Readahead** for the sequential reads (packing on the sender, archive and `--full-check` on the receiver). Since Linux 5.4 an NFS mount reads ahead only 128 KiB:
+
+```sh
+cat /sys/class/bdi/$(mountpoint -d /mnt/repository)/read_ahead_kb     # current value
+echo 16384 | sudo tee /sys/class/bdi/$(mountpoint -d /mnt/repository)/read_ahead_kb
+```
+
+The value is lost on remount; set it after every mount, e.g. with a systemd unit (`$$` is a literal `$` for systemd; enable with `systemctl enable --now nfs-readahead@mnt-repository.service`, the instance name is the mount unit, `systemd-escape -p /mnt/repository`):
+
+```ini
+# /etc/systemd/system/nfs-readahead@.service – enable as nfs-readahead@mnt-repository.service
+[Unit]
+After=%i.mount
+Requires=%i.mount
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo 16384 > /sys/class/bdi/$$(mountpoint -d /%I)/read_ahead_kb'
+[Install]
+WantedBy=%i.mount
+```
+
+**Server:**
+
+- nfsd threads: at least 32 (`/etc/nfs.conf`, section `[nfsd]`, `threads=32`); the default of 8 is used up quickly by `nconnect` × export threads × sync workers.
+- Keep the export option `sync` (default). `async` speeds up writes but the server confirms data before it is on disk: after a server crash an export already marked `.done` or an import already recorded as applied can miss data.
+- File system of the export mounted with `noatime`, nanosecond timestamps (ext4, XFS, ZFS, Btrfs): the importer's post-check and tree check compare mtime in nanoseconds; a file system with coarser timestamps reports mtime differences.
+- Network: 10 GbE or a dedicated link for the sender; jumbo frames (MTU 9000) only if every hop supports them.
+
+**Check what is in effect:**
+
+```sh
+nfsstat -m                              # effective vers, rsize/wsize, nconnect, hard
+nfsiostat 5 /mnt/repository             # per-operation round trip (GETATTR, LOOKUP, READ, WRITE)
+mountstats /mnt/repository | less       # totals and RTT per operation since mount
+```
+
+GETATTR round trip × number of files ≈ duration of one single-threaded walk. Then measure with `scripts/bench_exporter.py` (sender, 4.7) and `scripts/bench_importer.py` (receiver, `docs/importer.md`).
+
 ---
 
 ## 5. What to do when …
