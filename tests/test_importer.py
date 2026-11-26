@@ -101,6 +101,9 @@ def build_export(
     extra_members: tuple[tuple[str, bytes], ...] = (),
     wrong_content: tuple[str, ...] = (),
     done: bool = True,
+    resend: tuple[str, ...] = (),
+    delete: tuple[str, ...] = (),
+    repair: object = None,
 ) -> Path:
     export_id = f"{stamp}-{mode}"
     directory = inbox / slug / export_id
@@ -113,6 +116,9 @@ def build_export(
         else sorted(p for p in inventory if before.get(p) != inventory[p])
     )
     deleted = [] if mode == "full" else sorted(set(before) - set(inventory))
+    # repair export (#43): also the requested paths, and the receiver's extra paths
+    payload = sorted(set(payload) | {path for path in resend if path in inventory})
+    deleted = sorted(set(deleted) | {path for path in delete if path not in inventory})
 
     archive = directory / "data.tar"
     with tarfile.open(archive, "w", format=tarfile.PAX_FORMAT) as tar:
@@ -171,6 +177,8 @@ def build_export(
         "payload_paths": payload,
         "counts": {"inventory": len(inventory), "payload": len(payload), "deleted": len(deleted)},
     }
+    if repair is not None:
+        manifest["repair"] = repair
     (directory / "manifest.json").write_text(json.dumps(manifest, sort_keys=True))
     lines = []
     for item in sorted(p.name for p in directory.iterdir()):

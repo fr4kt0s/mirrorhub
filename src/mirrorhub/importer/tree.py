@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from mirrorhub.importer import repair
 from mirrorhub.importer.checks import SKIP_DIRECTORIES, Inventory
 from mirrorhub.importer.progress import Progress
 
@@ -193,6 +194,8 @@ def write_report(
 
     Every file is written, empty when there is nothing of that kind, so scripts can
     rely on them and count lines. Existing files of the same names are replaced.
+    With differences the repair request repair-<slug>.json (+ .sha256) is written
+    too, without any it is removed (see repair.py).
     """
     target = directory / slug
     target.mkdir(parents=True, exist_ok=True)
@@ -215,4 +218,5 @@ def write_report(
         f"check={'quick+sha256' if hashed else 'quick'}\n"
         f"total={len(found)}\n" + counts,
     )
+    repair.write_request(directory, slug, export_id, found, hashed=hashed)
     return target

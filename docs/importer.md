@@ -148,7 +148,7 @@ estimate if the tree has extra paths.
 Every byte is hashed once on its way into staging. The post-check therefore compares
 file system metadata only: type, size, mtime (nanoseconds) and symlink targets of the
 touched paths (incremental export) or of the whole tree, including extra paths (full
-export). `--full-check` additionally reads the whole tree back and hashes it, which
+or repair export). `--full-check` additionally reads the whole tree back and hashes it, which
 also finds damage between writing and reading (disk, controller, file system); the
 same check is available at any time as `check --hash`.
 
@@ -207,7 +207,7 @@ events_keep_days = 30   # older files are deleted on the next run; 0 keeps all
 
 | Event | When | Fields (besides `schema`, `event`, `time`, `source`, `host`, `repo`, `importer_version`, `trigger`) |
 |---|---|---|
-| `import_applied` | an export was applied | `export_id`, `export_mode`, `base_export_id`, `payload_count`, `deleted_count`, `duration_s`, `tree_verified` |
+| `import_applied` | an export was applied | `export_id`, `export_mode`, `base_export_id`, `payload_count`, `deleted_count`, `duration_s`, `tree_verified`, `repair` |
 | `import_superseded` | an export was skipped as superseded | `export_id`, `superseded_by` |
 | `import_failed` | an import failed | `export_id` (if known), `error`, `error_kind`, `exit_code` |
 | `import_adopted` | `adopt` wrote a lost state file | `export_id`, `export_mode` |
@@ -245,7 +245,8 @@ neither needs a return path to the sender:
 
 With `reports_dir` in `importer.toml`, every `check` and every import tree check
 writes these lists there without `--output-dir`/`--drift-output` (a full export's
-post-check writes an empty report); the web UI shows them.
+post-check writes an empty report), together with the repair request (below); the
+web UI shows them.
 
 The console shows the first 50 differences. For the complete lists, use
 `check --output-dir DIR` (or `import --drift-output DIR`): it writes one file per
@@ -287,8 +288,69 @@ a weekly systemd timer:
     [Install]
     WantedBy=timers.target
 
-and a monthly run with `--hash`. To repair, import a full export with `--rebase`
-(a repair export that transfers only the differences is planned in #43).
+and a monthly run with `--hash`. To fix the differences, use the repair request
+(next section) instead of a full export.
+
+## Repairing the tree: repair request and repair export
+
+Whenever a report with differences is written (`check` or import tree check with
+`reports_dir`, `--output-dir` or `--drift-output`), the importer also writes a
+**repair request** next to the lists, and removes it again once a report shows no
+differences:
+
+| File | Content |
+| --- | --- |
+| `repair-<slug>.json` | what the receiver needs from the sender (below) |
+| `repair-<slug>.json.sha256` | its SHA-256, `sha256sum -c` format |
+
+```json
+{
+ "format": "mirrorhub-repair-request",
+ "version": 1,
+ "slug": "ubuntu",
+ "base_export_id": "20261101T000000Z-full",
+ "created_at": "2026-11-26T09:00:00+00:00",
+ "check": "quick",
+ "importer_commit": "cf1e0e8…",
+ "resend": ["pool/a.deb", "pool/b.deb"],
+ "delete": ["pool/x.deb"],
+ "skipped": 0
+}
+```
+
+- `base_export_id`: the export the tree was compared with (the last applied one).
+- `resend`: missing paths and paths with another type, size, mtime, symlink target
+  or (with `--hash`) content.
+- `delete`: extra paths. Paths that cannot travel in an export (not valid UTF-8, or
+  with control characters) are left out and counted in `skipped`; remove them by
+  hand (`extra.txt` lists them).
+
+The request is small: it names only the differing paths, not the whole tree.
+
+**Flow**
+
+1. `check` (or the import tree check) ends with exit code 11 and prints
+   `repair request (… to resend, … to delete) written to …`. The web UI shows it on
+   the repository's report page with both files for download.
+2. Carry both files to the sender (removable media).
+3. Sender: *Exports* page of the repository, *Repair export*, upload the request.
+   The sender builds an incremental export since `base_export_id` that also carries
+   the `resend` paths and deletes the `delete` paths (optionally keeping them). Its
+   `manifest.json` has the extra field `repair`.
+4. The export travels like any other and is imported with `import --slug`. Pending
+   exports on the same base are superseded by it (see below). After applying a repair
+   export the importer compares the **whole tree** with `files.json` (like after a
+   full export); a difference fails the import with exit code 10. Extra paths the
+   operator chose to keep are not a failure: they are reported (exit code 11) and the
+   next request only asks to delete them.
+5. The report of that import is empty and the request is removed. Output:
+   `applied <id> (repair export, whole tree checked)`; the state history entry has
+   `"repair": true`, the `import_applied` event `"repair": true`.
+
+Import no other export of the repository between writing the request and the repair
+export: its base would no longer match (exit code 5). Run `check` again for a new
+request. Importers without this feature apply a repair export as an ordinary
+incremental export (no whole-tree check).
 
 ## Superseded exports
 

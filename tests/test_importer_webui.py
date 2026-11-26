@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import re
@@ -382,6 +383,26 @@ def test_report_page_lists_differences(server: Any, setup: tuple[Config, Path]) 
     )
     assert client.request("GET", "/repos/ubuntu/report/../../x.txt")[0] == 404
     assert "2 differences" in client.request("GET", "/")[2]
+
+
+def test_report_page_offers_the_repair_request(server: Any, setup: tuple[Config, Path]) -> None:
+    config, settings = setup
+    build_export(config.export_dir, "20261101T000000Z", "full", T1)
+    assert main(["--config", str(settings), "import", "--slug", "ubuntu"]) == 0
+    _, client = server()
+    assert "Repair request" not in client.request("GET", "/repos/ubuntu/report")[2]
+    (config.mirror_root / "ubuntu" / "pool/a.deb").unlink()
+    client.wait(_start(client, command="check", slug="ubuntu"))
+
+    page = client.request("GET", "/repos/ubuntu/report")[2]
+    assert "Repair request" in page and "1 to resend, 0 to delete" in page
+    status, headers, data = client.request("GET", "/repos/ubuntu/report/repair-ubuntu.json")
+    assert status == 200 and 'filename="repair-ubuntu.json"' in headers["content-disposition"]
+    assert json.loads(data)["resend"] == ["pool/a.deb"]
+    checksum = client.request("GET", "/repos/ubuntu/report/repair-ubuntu.json.sha256")[2]
+    assert checksum == f"{hashlib.sha256(data.encode()).hexdigest()}  repair-ubuntu.json\n"
+    for name in ("repair-other.json", "repair-ubuntu.json.bak", "repair-../summary.txt"):
+        assert client.request("GET", f"/repos/ubuntu/report/{name}")[0] == 404
 
 
 def test_export_page_and_planned_rebase(server: Any, setup: tuple[Config, Path]) -> None:

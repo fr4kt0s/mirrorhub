@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from mirrorhub import buildinfo
-from mirrorhub.importer import events, permissions, progress, tree
+from mirrorhub.importer import events, permissions, progress, repair, tree
 from mirrorhub.importer.adopt import adopt
 from mirrorhub.importer.apply import (
     Options,
@@ -246,8 +246,11 @@ def _print(outcome: Outcome, dry_run: bool) -> None:
         for prefix, paths in (("A", plan.adds), ("C", plan.changes), ("D", plan.deletes)):
             for path in paths:
                 print(f"{prefix} {path}")
+    kind = " (repair export, whole tree checked)" if outcome.repair else ""
+    if outcome.repair and outcome.status == "dry-run":
+        kind = " (repair export)"
     print(
-        f"{outcome.status} {outcome.export_id}: "
+        f"{outcome.status} {outcome.export_id}{kind}: "
         f"{len(plan.adds)} added, {len(plan.changes)} changed, {len(plan.deletes)} deleted"
     )
     _print_drift(outcome.export_id, outcome.drift)
@@ -312,9 +315,12 @@ def _emit_outcome(
         deleted_count=len(plan.deletes),
         duration_s=round(time.monotonic() - started, 1),
         tree_verified=outcome.whole_tree_checked,
+        repair=outcome.repair,
     )
     if outcome.whole_tree_checked:  # the post-check compared the whole tree
-        _emit_tree_check(slug, outcome.export_id, "post-check", [], hashed=options.full_check)
+        _emit_tree_check(
+            slug, outcome.export_id, "post-check", outcome.drift, hashed=options.full_check
+        )
     elif outcome.tree_checked:
         _emit_tree_check(slug, outcome.export_id, "import", outcome.drift, hashed=False)
 
@@ -367,6 +373,19 @@ def _report(
         return
     written = tree.write_report(directory, slug, export_id, drift, hashed=hashed)
     print(f"differences written to {written}")
+    _print_request(directory, slug)
+
+
+def _print_request(directory: Path, slug: str) -> None:
+    """Point to the repair request a report with differences comes with."""
+    path = repair.request_path(directory, slug)
+    document = repair.read_request(path) if path.is_file() else None
+    if document is None:
+        return
+    print(
+        f"{slug}: repair request ({repair.count(document)}) written to {path}; carry it "
+        "with its .sha256 file to the sender: Exports page, Repair export"
+    )
 
 
 def _tree_check_after(config: Config, slug: str, report: Path | None) -> bool:
@@ -449,8 +468,12 @@ def _import_slug(config: Config, slug: str, options: Options, report: Path | Non
         if tree_check and last_applied is not None and not last_applied.whole_tree_checked:
             return _tree_check_after(config, slug, report)
         if last_applied is not None and last_applied.whole_tree_checked:
-            # the post-check compared the whole tree: replace an older report with an empty one
-            _report(report, slug, last_applied.export_id, [], hashed=options.full_check)
+            # the post-check compared the whole tree: replace an older report (empty, or
+            # the extra paths a repair export kept)
+            _report(
+                report, slug, last_applied.export_id, last_applied.drift, hashed=options.full_check
+            )
+            return bool(last_applied.drift)
         return False
     except ImporterError as exc:
         if not options.dry_run:
@@ -509,7 +532,7 @@ def _run_import(config: Config, arguments: argparse.Namespace) -> int:
         if outcome.tree_checked:
             _report(report, slug, outcome.export_id, outcome.drift)
         elif outcome.whole_tree_checked:
-            _report(report, slug, outcome.export_id, [], hashed=options.full_check)
+            _report(report, slug, outcome.export_id, outcome.drift, hashed=options.full_check)
         return DriftError.exit_code if outcome.drift else 0
     if arguments.all_slugs:
         return _import_all(config, options, report)
@@ -587,6 +610,7 @@ def _check(config: Config, arguments: argparse.Namespace) -> int:
                 hashed=result.hashed,
             )
             print(f"{slug}: report written to {written}")
+            _print_request(output_dir, slug)
         if not result.differences:
             print(f"ok {slug}: {result.entries} entries match {result.export_id} ({kind})")
             continue

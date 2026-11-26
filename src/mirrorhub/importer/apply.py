@@ -84,8 +84,10 @@ class Outcome:
     # export did not touch, e.g. deleted by hand). The export itself was applied.
     drift: list[str] = field(default_factory=list)
     tree_checked: bool = False
-    # The post-check compared the whole tree (full export or --full-check).
+    # The post-check compared the whole tree (full or repair export, or --full-check).
     whole_tree_checked: bool = False
+    # A repair export (manifest field repair, #43).
+    repair: bool = False
 
 
 def _tree_paths(root: Path) -> set[str]:
@@ -176,12 +178,17 @@ def post_check(
     *,
     whole_tree: bool,
     hash_contents: bool,
-) -> None:
+    tolerate_extra: bool = False,
+) -> list[str]:
     """The resulting tree must match files.json (touched paths, or the whole tree).
 
     Type, size, mtime and symlink targets are always compared. Contents were hashed
     while staging; hash_contents (--full-check) reads every file back and hashes it
     again, which also finds damage between writing and reading.
+
+    With tolerate_extra (repair exports) paths that are not in files.json do not fail
+    the check; they are returned as differences ("extra: <path>"), e.g. extra files
+    the operator chose to keep.
     """
     for relative in journal_deletes:
         if os.path.lexists(target / relative):
@@ -195,13 +202,16 @@ def post_check(
             _check_entry(target, relative, export.inventory[relative], hash_contents)
             progress.advance()
         progress.finish()
-        return
+        return []
     entries = tree.scan(target, export.inventory, slug=slug, export_id=export_id)
     found = tree.differences(export.inventory, entries)
+    extra = [line for line in found if line.startswith("extra: ")] if tolerate_extra else []
+    found = [line for line in found if line not in extra]
     if not found and hash_contents:
         found = tree.hash_contents(export.inventory, target, slug=slug, export_id=export_id)
     if found:
         raise PostCheckError(tree.summary(f"files.json of {export.export_id}", found))
+    return extra
 
 
 def _parents(root: Path, relative: str, create: bool) -> bool:
@@ -495,14 +505,16 @@ def _apply_locked(
         installs=len(journal["installs"]),
         target=target,
     )
-    full_post_check = options.full_check or export.mode == "full"
+    # a repair export must leave the whole tree matching files.json (#43)
+    full_post_check = options.full_check or export.mode == "full" or export.repair is not None
     try:
-        post_check(
+        kept = post_check(
             export,
             target,
             journal["deletes"],
             whole_tree=full_post_check,
             hash_contents=options.full_check,
+            tolerate_extra=export.repair is not None,
         )
     except PostCheckError:
         _remove_staging(staging, export.slug)
@@ -526,6 +538,7 @@ def _apply_locked(
             "applied_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "counts": {"payload": len(export.payload), "deleted": len(journal["deletes"])},
             "rebase": replace,
+            **({"repair": True} if export.repair is not None else {}),
         }
     )
     store.save(state)
@@ -533,13 +546,31 @@ def _apply_locked(
     log_event(logging.INFO, "applied", slug=export.slug, export_id=export.export_id)
     if resuming:
         plan = Plan(changes=sorted(export.payload), deletes=list(journal["deletes"]))
-    drift: list[str] = []
+    if export.repair is not None:
+        log_event(
+            logging.INFO,
+            "repair export applied, whole tree checked",
+            slug=export.slug,
+            export_id=export.export_id,
+            resent=len(export.payload),
+            deleted=len(journal["deletes"]),
+            extra_kept=len(kept),
+        )
+    drift: list[str] = kept  # extra paths a repair export left in place
     checked = options.tree_check and not full_post_check  # that compared everything
     if checked:
         entries = tree.scan(target, export.inventory, slug=export.slug, export_id=export.export_id)
         drift = tree.differences(export.inventory, entries)
         log_tree_check(export.slug, export.export_id, len(export.inventory), drift)
-    return Outcome(export.export_id, "applied", plan, drift, checked, full_post_check)
+    return Outcome(
+        export.export_id,
+        "applied",
+        plan,
+        drift,
+        checked,
+        full_post_check,
+        repair=export.repair is not None,
+    )
 
 
 def log_tree_check(slug: str, export_id: str, entries: int, drift: list[str]) -> None:
@@ -721,7 +752,7 @@ def import_export(export_dir: Path, config: Config, options: Options) -> Outcome
             )
             if problems:
                 raise PermissionFailure("dry run: " + report(problems, target))
-            return Outcome(export.export_id, "dry-run", plan)
+            return Outcome(export.export_id, "dry-run", plan, repair=export.repair is not None)
 
         with store.locked():
             log_event(logging.DEBUG, "lock acquired", slug=export.slug, lock=store.lock_path)

@@ -168,7 +168,9 @@ Any CLI command also runs in the container, for example
   newest first, per repository or all. Needs `events_dir` in `importer.toml`.
 - **Report** (per repository): the newest difference lists — missing, extra, type,
   size, mtime, symlink target, sha256 — with the export and the time of the
-  check, each list downloadable as text.
+  check, each list downloadable as text. With differences: the **repair request**
+  (`repair-<slug>.json` and its `.sha256`) for download, to carry to the sender
+  (see [importer.md](importer.md), "Repairing the tree").
 - **Export** (per export in the inbox): status (pending, applied, superseded),
   mode, base export and whether it fits the receiver state, creation time, file,
   payload and deletion counts, archive size and parts, signature present, sender
@@ -189,7 +191,8 @@ button works for an hour and only for the same export. `--discard-staging` stays
 in the import form behind a confirmation.
 
 A full export that is already applied cannot be applied again (the importer skips
-applied exports); repairing a tree needs a new full export from the sender.
+applied exports). To repair a tree, use the repair request on the report page
+instead of a full export.
 
 ### Where the data comes from
 
