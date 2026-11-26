@@ -54,7 +54,7 @@ def capture_sync(
     cache_path = hash_cache_path(settings, repo.slug)
     cache = manifest.load_hash_cache(cache_path)
     inventory = manifest.snapshot(
-        settings.data_dir / repo.slug, pulse, cache, workers=settings.export_workers
+        settings.data_dir / repo.slug, pulse, cache, threads=settings.inventory_threads
     )
     manifest.save(path, inventory)
     manifest.save_hash_cache(cache_path, cache)
@@ -316,7 +316,7 @@ def execute(
         pulse,
         cache,
         hash_files=not full_request,
-        workers=settings.export_workers,
+        threads=settings.inventory_threads,
         stat_keys=stat_keys,
     )
     if not full_request:
@@ -439,7 +439,7 @@ def execute(
         _write_json(temporary / "manifest.json", metadata)
 
         pulse(85, "Checking repository did not change during packing")
-        if manifest.snapshot(root, pulse, cache, workers=settings.export_workers) != current:
+        if manifest.snapshot(root, pulse, cache, threads=settings.inventory_threads) != current:
             raise ExportError("repository changed during export; publication refused")
 
         _write_checksums(temporary, pulse, {path.name: digest for path, digest in part_digests})

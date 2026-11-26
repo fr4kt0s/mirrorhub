@@ -5,8 +5,9 @@ Read-only for the mirror. Modes:
 
   inventory  Walk the tree like an incremental export: fill a hash cache once (hashes
              every file; skip with --cache FILE from an earlier run), then time the
-             cached walk with each --workers value. On NFS this is dominated by one
-             stat round trip per file, so more workers help.
+             cached walk with each --threads value (setting
+             MIRRORHUB_INVENTORY_THREADS). On NFS this is dominated by one
+             stat round trip per file, so more threads help.
   full       Like a full export: inventory without hashing, then write the archive
              (hashing while packing) into --out. Writes as much as the tree holds;
              use --limit-mb to stop after that much payload.
@@ -15,7 +16,7 @@ Bytes read and written come from /proc/self/io (rchar/wchar), so they include da
 served from the page cache. --drop-caches (root) empties it first.
 
 Examples:
-  python3 scripts/bench_exporter.py inventory --root /mnt/repository/ubuntu --workers 1 8 16
+  python3 scripts/bench_exporter.py inventory --root /mnt/repository/ubuntu --threads 1 8 16
   python3 scripts/bench_exporter.py full --root /mnt/repository/ubuntu --out /mnt/scratch/bench \\
       --limit-mb 20000
 """
@@ -71,20 +72,20 @@ def inventory(args: argparse.Namespace) -> None:
     else:
         print("filling the hash cache (reads every file once) …")
         start = time.monotonic()
-        manifest.snapshot(args.root, _progress("fill"), cache, workers=max(args.workers))
+        manifest.snapshot(args.root, _progress("fill"), cache, threads=max(args.threads))
         print(f"  filled: {len(cache)} files in {time.monotonic() - start:.1f}s")
         if args.cache:
             manifest.save_hash_cache(Path(args.cache), cache)
-    for workers in args.workers:
+    for threads in args.threads:
         if args.drop_caches:
             _drop_caches()
         reads, _writes = _io()
         start = time.monotonic()
-        entries = manifest.snapshot(args.root, _progress(f"w{workers}"), cache, workers=workers)
+        entries = manifest.snapshot(args.root, _progress(f"t{threads}"), cache, threads=threads)
         elapsed = time.monotonic() - start
         read_after, _ = _io()
         print(
-            f"cached inventory: {len(entries)} entries, workers={workers:2d}: "
+            f"cached inventory: {len(entries)} entries, threads={threads:2d}: "
             f"{elapsed:7.1f}s, read {_mib(read_after - reads)}"
         )
 
@@ -102,7 +103,7 @@ def full(args: argparse.Namespace) -> None:
     reads, writes = _io()
     start = time.monotonic()
     current = manifest.snapshot(
-        args.root, _progress("inventory"), {}, hash_files=False, workers=args.workers[0]
+        args.root, _progress("inventory"), {}, hash_files=False, threads=args.threads[0]
     )
     inventory_s = time.monotonic() - start
     changed = sorted(current)
@@ -145,7 +146,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("mode", choices=["inventory", "full"])
     parser.add_argument("--root", type=Path, required=True, help="repository directory")
-    parser.add_argument("--workers", type=int, nargs="+", default=[1, 8])
+    parser.add_argument(
+        "--threads", "--workers", dest="threads", type=int, nargs="+", default=[1, 8]
+    )
     parser.add_argument("--cache", help="hash cache file to reuse/write (inventory mode)")
     parser.add_argument("--out", type=Path, help="empty scratch directory (full mode)")
     parser.add_argument("--limit-mb", type=int, default=0, help="stop packing after this much")
