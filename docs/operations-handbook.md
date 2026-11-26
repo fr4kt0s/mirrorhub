@@ -581,7 +581,7 @@ Do not import another export of the repository between steps 1 and 4 (exit 5: ba
 ### 3.8 Other open items
 
 - [ ] Existing acceptance checks from the README (container health, proxy trust, signing keys, export chain after pickup, drop folder cleanup).
-- [ ] #40 (Checkmk check): review and test on the receiver (other session).
+- [ ] Checkmk (#40, merged): install and test the local check on the receiver per `checkmk.md` sections 4–6; short test in `test-receiver-importer.md` section 6 (6.1, 6.2); J7.
 - [ ] GitHub housekeeping: delete merged branches; enable *Settings → General → Automatically delete head branches*.
 - [ ] Decide on audit log retention: how many days to keep (at least 90) and how long to keep the archives; check against retention obligations (audit, ISMS).
 

@@ -710,15 +710,22 @@ docker compose exec web python -m mirrorhub.backup \
 
 The destination must not already exist.
 
-Copy it to protected backup storage:
+Copy it, together with the export metadata copies, to protected backup storage
+**outside the project directory** (a backup inside the checkout can be mixed up
+with the code, committed by mistake or removed with the checkout):
 
 ```sh
-mkdir -p backups
-chmod 700 backups
+D=$(date +%Y%m%d)
+mkdir -p ~/mirrorhub-backups
+chmod 700 ~/mirrorhub-backups
 docker compose cp \
   web:/var/lib/mirrorhub/backups/mirrorhub-backup.sqlite3 \
-  ./backups/mirrorhub-backup.sqlite3
+  ~/mirrorhub-backups/mirrorhub-$D.sqlite3
+docker compose cp web:/var/lib/mirrorhub/export-meta ~/mirrorhub-backups/export-meta-$D
 ```
+
+The same steps with a dated database file are in the operations handbook
+(`docs/operations-handbook.md`, section 2.1).
 
 Also preserve:
 
