@@ -8,11 +8,12 @@ import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from sqlmodel import Session, col, select
 
 from mirrorhub.db import get_engine, immediate_session
-from mirrorhub.export import metadata_store, reconcile
+from mirrorhub.export import manifest, metadata_store, reconcile, repair
 from mirrorhub.export.manifest import ExportError
 from mirrorhub.models import Export, Job, Repository
 from mirrorhub.services import appsettings, audit
@@ -100,6 +101,39 @@ def check_base(settings: Settings, slug: str, base_export_id: str) -> None:
     metadata_store.load_base(settings, slug, base_export_id)
 
 
+@dataclass(frozen=True)
+class RepairPlan:
+    """What a repair export of an uploaded request will do (shown before it starts)."""
+
+    request: repair.Request
+    published_after: list[str]  # exports after the base; the receiver skips them
+    changes_since: int | None  # changed + deleted paths base -> newest published export
+    newest: str | None
+
+
+def plan_repair(settings: Settings, slug: str, request: repair.Request) -> RepairPlan:
+    """Check a request against the kept metadata copies (ExportError if it cannot work)."""
+    check_base(settings, slug, request.base_export_id)
+    base = metadata_store.load_base(settings, slug, request.base_export_id)
+    repair.check_against_base(request, base)
+    newest = metadata_store.latest_published(settings, slug)
+    after = sorted(
+        copy.export_id
+        for copy in metadata_store.published_copies(settings, slug)
+        if copy.export_id > request.base_export_id
+    )
+    changes: int | None = None
+    if newest is not None and newest != request.base_export_id:
+        try:
+            changed, deleted = manifest.diff(metadata_store.load_base(settings, slug, newest), base)
+            changes = len(changed) + len(deleted)
+        except ExportError:
+            changes = None
+    elif newest == request.base_export_id:
+        changes = 0
+    return RepairPlan(request, after, changes, newest)
+
+
 def enqueue(
     repo_id: int,
     *,
@@ -107,26 +141,42 @@ def enqueue(
     actor: str,
     ip: str = "",
     base_export_id: str | None = None,
+    repair_request: str | None = None,
+    keep_extra: bool = False,
 ) -> int:
     """Queue an export. With base_export_id: an incremental export since that export.
 
     Without a base, an already queued or running export of the repository is returned
     instead of queueing a second one; with a base that is refused, because the running
     export would not use it.
+
+    With repair_request (the SHA-256 of a kept, uploaded repair request): a repair
+    export since the request's base (#43); keep_extra keeps the receiver's extra paths.
     """
     if mode is not None and mode not in ("full", "incr"):
         raise ExportError("export mode must be full or incr")
     if base_export_id is not None and mode not in (None, "incr"):
         raise ExportError("an export since an earlier export is always incremental")
+    request: repair.Request | None = None
 
-    if base_export_id is not None:
+    if base_export_id is not None or repair_request is not None:
         # Outside the write transaction: checking the copy hashes files.json.
         with Session(get_engine()) as db:
             found = db.get(Repository, repo_id)
             slug = found.slug if found is not None else None
         if slug is None:
             raise ExportError("repository not found")
-        check_base(get_settings(), slug, base_export_id)
+        if repair_request is not None:
+            if mode not in (None, "incr"):
+                raise ExportError("a repair export is always incremental")
+            request = repair.load(get_settings().manifest_dir, slug, repair_request)
+            if base_export_id not in (None, request.base_export_id):
+                raise ExportError("a repair export is based on the request's export")
+            base_export_id = request.base_export_id
+            plan_repair(get_settings(), slug, request)
+        else:
+            assert base_export_id is not None
+            check_base(get_settings(), slug, base_export_id)
 
     with immediate_session() as db:
         repo = db.get(Repository, repo_id)
@@ -149,11 +199,19 @@ def enqueue(
                 )
             return existing.id or 0
 
-        params: dict[str, str] = {"mode": mode or repo.export_mode}
-        detail: dict[str, str] = {"repo": repo.slug, "mode": mode or repo.export_mode}
+        params: dict[str, Any] = {"mode": mode or repo.export_mode}
+        detail: dict[str, Any] = {"repo": repo.slug, "mode": mode or repo.export_mode}
         if base_export_id is not None:
             params = {"mode": "incr", "base": base_export_id}
             detail = {"repo": repo.slug, "mode": "incr", "base_export_id": base_export_id}
+        if request is not None:
+            params |= {"repair": request.sha256, "keep_extra": keep_extra}
+            detail |= {
+                "repair_request": request.sha256,
+                "resend": len(request.resend),
+                "delete": 0 if keep_extra else len(request.delete),
+                "keep_extra": keep_extra,
+            }
 
         job = Job(
             repo_id=repo_id,

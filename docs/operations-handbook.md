@@ -224,7 +224,7 @@ Since PR #63 the importer checks the permissions before it changes a tree. After
 
 ## 3. Pending tests
 
-3.1–3.4 and 3.6 are concrete practical tests with commands; 3.5 is the full checklist.
+3.1–3.4, 3.6 and 3.7 are concrete practical tests with commands; 3.5 is the full checklist.
 
 ### 3.1 After the update (#44–#49)
 
@@ -283,36 +283,6 @@ Starting point: the receiver is current, `status` shows the newest export as `la
 
   Expected: `adopted <export-id>` with the same export that was `last` before, no permission warning. Afterwards restore the old file (`cp /tmp/<slug>.json.bak $S/<slug>.json`) so the history is kept.
 
-### 3.6 User and permissions (receiver, PR #63)
-
-The importer checks before every change (import, dry run, resumed import) that its user may change every directory the import touches. If not, it stops with exit code 9, lists the directories with owner and mode, and changes nothing:
-
-```
-error: permission check failed: user mirrorhub (uid 1001) cannot change 2 directories this import needs (3 paths); nothing was changed
-  /srv/mirrorhub/mirror/<slug>/pool: owner uid 54321 (no user on this host), drwxr-xr-x — delete files, add or replace files
-      e.g. pool/b.deb
-fix: make the importer's user own the tree, e.g. sudo chown -R mirrorhub: /srv/mirrorhub/mirror/<slug> (and the staging directory), then run the import again
-```
-
-- Fix: `sudo chown -R mirrorhub: /srv/mirrorhub/mirror/<slug>`, then run the same command again.
-- Staging leftovers of a run as another user: exit code 9 with `sudo rm -rf <staging_dir>/<slug>`.
-- A permission error **while installing** (rare: the tree changed after the check, ACLs, NFS server rules) leaves the tree partly updated. Fix the permissions and run **the same import again**: it resumes from the journal. Do not use `--discard-staging`. Then `check --slug <slug>`.
-- `check` and `adopt` warn about directories the user cannot change (exit code unchanged), before an import needs them.
-- Cost: one permission check per directory, no file is read (measured: 0.4 s of 25 s for 30 000 files; `check` about +1 %).
-
-- [ ] Practical test [test system]: give one directory of a test repository to another user, run an import that changes it, restore:
-
-  ```sh
-  M=/srv/mirrorhub/mirror/<slug>
-  sudo chown nobody $M/<directory>
-  sudo -u mirrorhub $MH check --slug <slug>            # warning naming <directory>, exit 0
-  sudo -u mirrorhub $MH import --slug <slug>; echo "exit $?"
-  sudo chown -R mirrorhub: $M
-  sudo -u mirrorhub $MH import --slug <slug>; echo "exit $?"
-  ```
-
-  Expected: if the waiting export changes files in `<directory>`, the first import ends with exit 9 and "nothing was changed"; after `chown` it applies the export (exit 0). Without a waiting export only the `check` warning shows.
-
 ### 3.5 Test checklist
 
 **Legend**
@@ -322,7 +292,7 @@ fix: make the importer's user own the tree, e.g. sudo chown -R mirrorhub: /srv/m
 - `MH` is the shorthand from 4.2. `<slug>` stands for a small test repository.
 - Each test is followed by the expected result (→). If it differs, note the date, commit (`--version` or footer) and output.
 
-The practical tests 3.1–3.4 and 3.6 are referenced here, not repeated. The P1 tests alone, as a printable sign-off sheet: [`acceptance-p1.md`](acceptance-p1.md).
+The practical tests 3.1–3.4, 3.6 and 3.7 are referenced here, not repeated. The P1 tests alone, as a printable sign-off sheet: [`acceptance-p1.md`](acceptance-p1.md).
 
 #### A. Sender: deployment, login, security
 
@@ -516,6 +486,13 @@ User and permissions (PR #63)
 - [ ] **G44** (P3) `import --dry-run` in the situation of G43 → exit 9 with the same list, nothing changed.
 - [ ] **G45** (P3) New directories created by an import → mode `drwxr-xr-x` (umask 022), readable by the web server (G19).
 
+Repair export (#43)
+
+- [ ] **G46** (P2) [test system] Repair round trip → see 3.7: request written by `check`, repair export, import exit 0, `check` exit 0, request removed.
+- [ ] **G47** (P2) Upload a request with a wrong or missing `.sha256` file, or of another repository → refused with a clear message, nothing queued.
+- [ ] **G48** (P3) [test system] *Keep the receiver's extra files* → the extra file stays, the import ends with exit 11, the new request only lists it to delete.
+- [ ] **G49** (P3) An export is still pending on the same base when the repair export arrives → it is skipped as superseded, the repair export is applied.
+
 #### H. End to end through the real diode
 
 - [ ] **H1** (P1) Sync → export → pickup → diode → inbox → import without manual intervention.
@@ -547,7 +524,61 @@ User and permissions (PR #63)
 - [ ] **J8** (P3) Look at the database size and its free share now and then (commands in 4.4).
 - [ ] **J9** (P3, from PR #50) [test system] Audit purge as in 4.5: `--dry-run` shows the count; the real run writes the archive, leaves only younger entries plus `audit.purge`; `--older-than-days 30` is refused; afterwards a `DELETE FROM audit_log` is still rejected ("append-only").
 
-### 3.6 Other open items
+### 3.6 User and permissions (receiver, PR #63)
+
+The importer checks before every change (import, dry run, resumed import) that its user may change every directory the import touches. If not, it stops with exit code 9, lists the directories with owner and mode, and changes nothing:
+
+```
+error: permission check failed: user mirrorhub (uid 1001) cannot change 2 directories this import needs (3 paths); nothing was changed
+  /srv/mirrorhub/mirror/<slug>/pool: owner uid 54321 (no user on this host), drwxr-xr-x — delete files, add or replace files
+      e.g. pool/b.deb
+fix: make the importer's user own the tree, e.g. sudo chown -R mirrorhub: /srv/mirrorhub/mirror/<slug> (and the staging directory), then run the import again
+```
+
+- Fix: `sudo chown -R mirrorhub: /srv/mirrorhub/mirror/<slug>`, then run the same command again.
+- Staging leftovers of a run as another user: exit code 9 with `sudo rm -rf <staging_dir>/<slug>`.
+- A permission error **while installing** (rare: the tree changed after the check, ACLs, NFS server rules) leaves the tree partly updated. Fix the permissions and run **the same import again**: it resumes from the journal. Do not use `--discard-staging`. Then `check --slug <slug>`.
+- `check` and `adopt` warn about directories the user cannot change (exit code unchanged), before an import needs them.
+- Cost: one permission check per directory, no file is read (measured: 0.4 s of 25 s for 30 000 files; `check` about +1 %).
+
+- [ ] Practical test [test system]: give one directory of a test repository to another user, run an import that changes it, restore:
+
+  ```sh
+  M=/srv/mirrorhub/mirror/<slug>
+  sudo chown nobody $M/<directory>
+  sudo -u mirrorhub $MH check --slug <slug>            # warning naming <directory>, exit 0
+  sudo -u mirrorhub $MH import --slug <slug>; echo "exit $?"
+  sudo chown -R mirrorhub: $M
+  sudo -u mirrorhub $MH import --slug <slug>; echo "exit $?"
+  ```
+
+  Expected: if the waiting export changes files in `<directory>`, the first import ends with exit 9 and "nothing was changed"; after `chown` it applies the export (exit 0). Without a waiting export only the `check` warning shows.
+
+### 3.7 Repair export (receiver and sender, #43)
+
+Files missing or damaged on the receiver are repaired with a small request instead of a full export:
+
+1. Receiver: `check` (with `reports_dir` or `--output-dir`) ends with exit 11 and writes `repair-<slug>.json` and `repair-<slug>.json.sha256` next to the report; the importer web UI offers both on the report page.
+2. Carry both files to the sender.
+3. Sender: *Exports* → *Repair export …* of the repository → upload both files (optionally *Keep the receiver's extra files*) → *Check request*. The page shows the files to send again, the extra files, the changes since the receiver's export and the exports the receiver will skip. *Create repair export* queues it.
+4. The export travels like any other. Receiver: `import --slug <slug>` → `applied … (repair export, whole tree checked)`, exit 0; the request disappears from the report directory.
+
+Do not import another export of the repository between steps 1 and 4 (exit 5: base mismatch); then run `check` again for a new request.
+
+- [ ] Practical test [test system]:
+
+  ```sh
+  M=/srv/mirrorhub/mirror/<slug>
+  sudo -u mirrorhub mv $M/<file> /tmp/                       # one missing file
+  echo x | sudo -u mirrorhub tee -a $M/<other file> >/dev/null # one file with another size
+  sudo -u mirrorhub touch $M/<dir>/extra.test                  # one extra file
+  $MH check --slug <slug> --output-dir /var/lib/mirrorhub-reports; echo "exit $?"
+  cat /var/lib/mirrorhub-reports/<slug>/repair-<slug>.json
+  ```
+
+  Expected: exit 11; `resend` lists the two files, `delete` the extra file. After upload, repair export and import: exit 0, `check` exit 0, the request is gone, the moved file is back with its original content.
+
+### 3.8 Other open items
 
 - [ ] Existing acceptance checks from the README (container health, proxy trust, signing keys, export chain after pickup, drop folder cleanup).
 - [ ] #40 (Checkmk check): review and test on the receiver (other session).
@@ -590,7 +621,7 @@ Shorthand: `MH="python3 /opt/mirrorhub/mirrorhub-importer.pyz --config /etc/mirr
 | Full over existing data | `$MH import --export <dir> --rebase` |
 | Differences after import as files | `$MH import --slug <slug> --drift-output /var/lib/mirrorhub-reports` |
 | Show state | `$MH status [--slug <slug>]` |
-| Check the tree | `$MH check --slug <slug> \| --all [--hash] [--output-dir DIR]` |
+| Check the tree | `$MH check --slug <slug> \| --all [--hash] [--output-dir DIR]` (with differences also `DIR/<slug>/repair-<slug>.json` for a repair export) |
 | Lost state file | `$MH adopt --slug <slug> --auto [--hash]` or `--export-id <id>` |
 
 Report files from `--output-dir` / `--drift-output` in `DIR/<slug>/`: `missing.txt`, `extra.txt`, `type.txt`, `size.txt`, `mtime.txt`, `symlink-target.txt`, `sha256.txt` (only with `--hash`), `summary.txt`. Evaluate for example with `wc -l DIR/<slug>/*.txt` or `grep '^total=' DIR/*/summary.txt`.
@@ -858,7 +889,7 @@ GETATTR round trip × number of files ≈ duration of one single-threaded walk. 
 | Pickup delivers an export twice or late | nothing; the importer skips it as applied or superseded | no |
 | Sender database lost, state volume intact | restore repositories (backup or YAML import); the export history is restored from `export-meta` | no |
 | Receiver state file lost, tree intact | `adopt --slug <slug> --auto` | no |
-| Files deleted or damaged on the receiver | `check --output-dir` shows what; repair currently with full + `--rebase` (repair export planned in #43) | currently yes |
+| Files deleted or damaged on the receiver | `check` writes `repair-<slug>.json` (+ `.sha256`); upload both under *Exports → Repair export*, import the repair export (3.7) | no |
 | Incremental fails with "run a full export" | "Incremental since" with the receiver's last state; if that is not possible: full + `--rebase` | only if no matching copy is left |
 | Import stops with "permission check failed" (exit 9, nothing changed) | `sudo chown -R <importer-user>: <mirror_root>/<slug>`, run the same import again (3.6) | no |
 | "Permission denied" while installing, "the mirror tree may be partly updated" | fix the permissions, run the same import again (resumes from the journal), no `--discard-staging`; then `check` | no |
@@ -879,4 +910,4 @@ GETATTR round trip × number of files ≈ duration of one single-threaded walk. 
 - [`export-contract.md`](export-contract.md) – export format and guarantees
 - README → *Testing → Acceptance checks*; README → *Backup → Database size and VACUUM* (from PR #50)
 - Design document "Robust export base and recovery without a full export": https://claude.ai/artifact/7fMEWyCPdgNzXJRerFAERL
-- Open: #43 remainder (repair export, `importer inventory`, `adopt --accept-drift`)
+- Open: #43 remainder (`adopt --accept-drift` for a lost state file with a damaged tree)
