@@ -358,9 +358,12 @@ volumes:
     driver: local
     driver_opts:
       type: nfs
-      o: "addr=nas.example.lan,nfsvers=4.1,rw,hard"
+      o: "addr=nas.example.lan,nfsvers=4.2,rw,hard,nconnect=8,rsize=1048576,wsize=1048576,noatime"
       device: ":/export/mirrors"
 ```
+
+Mount options, readahead and server settings for good throughput:
+`docs/operations-handbook.md`, section 4.8.
 
 Apply the same pattern to export_dir.
 
