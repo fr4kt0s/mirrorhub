@@ -3,11 +3,28 @@ target-version = "py312"
 src = ["src", "tests"]
 
 [lint]
-select = ["E", "F", "W", "I", "B", "UP", "S", "C4", "SIM", "RUF"]
-ignore = ["S101"]
+select = ["E", "F", "W", "I", "B", "UP", "S", "C4", "SIM", "RUF", "D"]
+# D105/D107: magic methods and __init__ are covered by the class docstring.
+ignore = ["S101", "D105", "D107"]
+
+[lint.pydocstyle]
+convention = "pep257"
 
 [lint.per-file-ignores]
-"tests/*" = ["S"]
+"tests/*" = ["S", "D"]
+"migrations/*" = ["D"]
+# PEP 257 docstrings are added package by package; remove a line once it is done.
+"contrib/*" = ["D"]
+"scripts/*" = ["D"]
+"src/mirrorhub/enums.py" = ["D"]
+"src/mirrorhub/models.py" = ["D"]
+"src/mirrorhub/importer/*" = ["D"]
+"src/mirrorhub/queue/*" = ["D"]
+"src/mirrorhub/security/*" = ["D"]
+"src/mirrorhub/services/*" = ["D"]
+"src/mirrorhub/sync/*" = ["D"]
+"src/mirrorhub/web/*" = ["D"]
+"src/mirrorhub/worker/*" = ["D"]
 
 [lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends"]

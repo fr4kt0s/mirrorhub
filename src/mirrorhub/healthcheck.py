@@ -1,4 +1,7 @@
-"""Container healthchecks (stdlib only). Usage: python -m mirrorhub.healthcheck web|worker"""
+"""Container healthchecks (stdlib only).
+
+Usage: ``python -m mirrorhub.healthcheck web|worker``; exit code 0 means healthy.
+"""
 
 import sys
 import time
@@ -10,6 +13,7 @@ WORKER_MAX_AGE_S = 60
 
 
 def check_web() -> bool:
+    """Return True if the web process answers ``/healthz`` with 200."""
     try:
         with urllib.request.urlopen("http://127.0.0.1:8000/healthz", timeout=4) as resp:
             return bool(resp.status == 200)
@@ -18,6 +22,7 @@ def check_web() -> bool:
 
 
 def check_worker() -> bool:
+    """Return True if the worker touched its alive file within WORKER_MAX_AGE_S seconds."""
     try:
         age = time.time() - WORKER_ALIVE_FILE.stat().st_mtime
     except OSError:
@@ -26,6 +31,7 @@ def check_worker() -> bool:
 
 
 def main(argv: list[str]) -> int:
+    """Check the component named in argv; return 0 (healthy), 1 (unhealthy) or 2 (usage)."""
     if len(argv) != 1 or argv[0] not in {"web", "worker"}:
         print("usage: python -m mirrorhub.healthcheck web|worker", file=sys.stderr)
         return 2

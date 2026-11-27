@@ -16,6 +16,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Configuration from ``MIRRORHUB_*`` environment variables (see ``.env.example``)."""
+
     model_config = SettingsConfigDict(env_prefix="MIRRORHUB_", extra="ignore")
 
     role: Literal["web", "worker", "cli"] = "cli"
@@ -78,25 +80,31 @@ class Settings(BaseSettings):
 
     @property
     def db_path(self) -> Path:
+        """SQLite database file on the state volume."""
         return self.state_dir / "db" / "mirrorhub.sqlite3"
 
     @property
     def db_url(self) -> str:
+        """SQLAlchemy URL of the database file."""
         return f"sqlite:///{self.db_path}"
 
     @property
     def log_dir(self) -> Path:
+        """Directory of the job logs."""
         return self.state_dir / "logs"
 
     @property
     def manifest_dir(self) -> Path:
+        """Directory of hash caches, sync inventories and kept repair requests."""
         return self.state_dir / "manifests"
 
     @property
     def tmp_dir(self) -> Path:
+        """Scratch directory on the state volume."""
         return self.state_dir / "tmp"
 
     def ensure_dirs(self) -> None:
+        """Create the state directories that must exist before the first use."""
         for path in (
             self.db_path.parent,
             self.log_dir,
@@ -108,6 +116,7 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    """Return the settings, read once per process."""
     return Settings()
 
 

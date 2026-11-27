@@ -12,6 +12,13 @@ from urllib.parse import quote
 
 
 def backup(source: Path, destination: Path) -> None:
+    """Copy a live SQLite database to destination with the online backup API.
+
+    The copy is written to a temporary file next to the destination, must pass
+    ``PRAGMA integrity_check``, is synced to disk and only then linked into place, so
+    the destination either does not exist or holds a complete, checked copy. An
+    existing destination is never overwritten.
+    """
     source = source.resolve(strict=True)
     destination = destination.absolute()
 
@@ -59,6 +66,7 @@ def backup(source: Path, destination: Path) -> None:
 
 
 def main() -> int:
+    """Run the backup command line (``source destination``); return the exit code."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
     parser.add_argument("destination", type=Path)

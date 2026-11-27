@@ -50,10 +50,12 @@ def _checked(slug: str, export_id: str) -> None:
 
 
 def root(settings: Settings) -> Path:
+    """Return the directory holding all metadata copies (``<state>/export-meta``)."""
     return settings.state_dir / "export-meta"
 
 
 def directory(settings: Settings, slug: str, export_id: str) -> Path:
+    """Return the metadata copy directory of one export (slug and id are validated)."""
     _checked(slug, export_id)
     return root(settings) / slug / export_id
 
@@ -257,6 +259,7 @@ def _copies(settings: Settings, slug: str) -> list[Path]:
 
 
 def slugs(settings: Settings) -> list[str]:
+    """Return the repositories that have metadata copies, sorted."""
     base = root(settings)
     if not base.is_dir():
         return []
@@ -268,13 +271,13 @@ def slugs(settings: Settings) -> list[str]:
 
 
 def published_copies(settings: Settings, slug: str) -> list[PublishedCopy]:
-    """Marked copies of a repository, oldest first."""
+    """Return the copies of a repository marked as published, oldest first."""
     found = [copy for path in _copies(settings, slug) if (copy := _read_marker(path))]
     return sorted(found, key=lambda copy: (copy.created_at, copy.export_id))
 
 
 def latest_published(settings: Settings, slug: str) -> str | None:
-    """The export the next incremental export builds on, from the markers alone.
+    """Return the export the next incremental export builds on, from the markers alone.
 
     Candidates are copies no other published copy uses as its base (the heads of the
     chains); the newest of them wins. Following the base links keeps the choice right
@@ -313,6 +316,7 @@ def backfill_markers(
 
 
 def remove(settings: Settings, slug: str, export_id: str) -> None:
+    """Delete the metadata copy of one export, if present (symlinks are left alone)."""
     target = directory(settings, slug, export_id)
     if target.is_dir() and not target.is_symlink():
         shutil.rmtree(target)

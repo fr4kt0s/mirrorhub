@@ -34,6 +34,7 @@ def sync_snapshot_path(
     job_id: int,
     attempt: int,
 ) -> Path:
+    """Return the path of the sync inventory a sync attempt hands to its chained export."""
     return settings.manifest_dir / f"sync-{job_id}-attempt-{attempt}.json"
 
 
@@ -48,6 +49,13 @@ def capture_sync(
     job: Job,
     pulse: Pulse,
 ) -> Path:
+    """Record the inventory of the tree a sync just left, for the chained export.
+
+    Runs in the sync worker after a successful sync that chains an export. The
+    export compares the tree with this inventory and refuses to publish if the
+    repository changed in between. Refreshes the hash cache; returns the path of the
+    inventory file (one per job attempt, never overwritten).
+    """
     path = sync_snapshot_path(settings, job.id or 0, job.attempt)
     if path.exists():
         raise ExportError("sync inventory already exists for this attempt")
@@ -99,7 +107,8 @@ def _fill_digests(
     """Put the digests computed while packing into the inventory and the hash cache.
 
     Every file still without a digest must have been packed: files.json never carries
-    an empty digest."""
+    an empty digest.
+    """
     for path, entry in current.items():
         if entry["type"] != "file" or entry["sha256"]:
             continue
@@ -196,7 +205,7 @@ def _previous(
     settings: Settings,
     slug: str,
 ) -> tuple[str | None, Inventory]:
-    """Base of the next incremental export: the newest published export.
+    """Return the base of the next incremental export: the newest published export.
 
     The marked metadata copies on the state volume decide; the database is checked
     against them. Missing rows are restored from the copies, so a lost database does
@@ -238,7 +247,7 @@ def _previous(
 
 
 def _chosen_base(job: Job, settings: Settings, slug: str) -> str | None:
-    """Base picked by the operator ("incremental since"), validated again at run time."""
+    """Return the base picked by the operator ("incremental since"), validated again."""
     value = job.params.get("base")
     if value is None:
         return None
@@ -258,7 +267,7 @@ def _chosen_base(job: Job, settings: Settings, slug: str) -> str | None:
 def _repair_request(
     job: Job, settings: Settings, slug: str, base_id: str | None
 ) -> repair.Request | None:
-    """The kept repair request of a repair export job (#43), checked again."""
+    """Load the kept repair request of a repair export job (#43) and check it again."""
     value = job.params.get("repair")
     if value is None:
         return None
@@ -293,6 +302,17 @@ def execute(
     settings: Settings,
     pulse: Pulse,
 ) -> str:
+    """Build, check and publish one export of the repository; return its export id.
+
+    Steps: inventory of the tree (stat data and hash cache), base selection
+    (newest published export, the operator's "incremental since" or none for a full
+    export), diff, packing (each payload file read once, hashed while copied),
+    metadata and ``MANIFEST.sha256``, optional signature, a whole-tree check that
+    nothing changed meanwhile, then ``.done`` and the database record.
+
+    Raises ExportError if anything is inconsistent; nothing is published then. The
+    pulse callback reports progress and raises to cancel before publication.
+    """
     requested = str(job.params.get("mode") or repo.export_mode)
     if requested not in ("full", "incr"):
         raise ExportError("invalid export mode")

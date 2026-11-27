@@ -135,6 +135,7 @@ def reconcile(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run ``python -m mirrorhub.export.reconcile``; return the exit code."""
     parser = argparse.ArgumentParser(
         prog="python -m mirrorhub.export.reconcile",
         description="Restore export history from the metadata copies on the state volume.",

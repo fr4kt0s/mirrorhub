@@ -30,6 +30,8 @@ Pulse = Callable[[float | None, str], None]
 
 @dataclass
 class Result:
+    """Outcome of a rehash: counts, mismatched paths and duration."""
+
     files: int = 0
     bytes: int = 0
     # Files with a cache entry whose stat key still matched: their digest was checked.
@@ -39,6 +41,7 @@ class Result:
     seconds: float = 0.0
 
     def summary(self) -> str:
+        """Return the one-line summary written to the job log."""
         text = (
             f"rehashed {self.files} files ({self.bytes / 2**30:.2f} GiB) in "
             f"{self.seconds:.0f} s; {self.compared} checked against the hash cache"

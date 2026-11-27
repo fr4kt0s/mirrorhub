@@ -46,6 +46,7 @@ def _install_hooks(engine: Engine) -> None:
 
 @lru_cache(maxsize=1)
 def get_engine() -> Engine:
+    """Return the process-wide SQLite engine (WAL, foreign keys, explicit BEGIN)."""
     settings = get_settings()
     settings.ensure_dirs()
     engine = create_engine(
@@ -83,6 +84,7 @@ def immediate_session() -> Iterator[Session]:
 
 
 def db_ok() -> bool:
+    """Return True if the database answers a trivial query (health checks)."""
     try:
         with get_engine().connect() as conn:
             conn.execute(text("SELECT 1"))
@@ -92,11 +94,13 @@ def db_ok() -> bool:
 
 
 def run_migrations() -> None:
+    """Upgrade the database schema to the newest Alembic revision."""
     cfg = Config(ALEMBIC_INI)
     command.upgrade(cfg, "head")
 
 
 def schema_ready() -> bool:
+    """Return True if migrations have run (``alembic_version`` holds a revision)."""
     try:
         with get_engine().connect() as conn:
             row: Any = conn.execute(text("SELECT version_num FROM alembic_version")).first()
