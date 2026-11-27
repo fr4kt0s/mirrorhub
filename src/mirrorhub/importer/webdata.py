@@ -40,6 +40,7 @@ def reports_dir(config: Config) -> Path:
 
 
 def parse_time(value: object) -> datetime | None:
+    """Parse an ISO 8601 time from an event file; None if missing or invalid."""
     if not isinstance(value, str) or not value:
         return None
     try:
@@ -98,6 +99,7 @@ class EventIndex:
         return list(reversed(found))[:limit]
 
     def repo_status(self) -> dict[str, RepoStatus]:
+        """Return the latest import, tree check and failure events per repository."""
         status: dict[str, RepoStatus] = {}
         for event in self.events():
             repo = event.get("repo")
@@ -129,7 +131,7 @@ class RepoStatus:
     check_failed: dict[str, Any] | None = None
 
     def failed_last(self) -> bool:
-        """The newest import attempt failed (no success after it)."""
+        """Return True if the newest import attempt failed (no success after it)."""
         if self.import_failed is None:
             return False
         if self.import_ok is None:
@@ -142,6 +144,8 @@ class RepoStatus:
 
 @dataclass
 class Report:
+    """A difference report of one repository: summary.txt and the per-kind lists."""
+
     slug: str
     summary: dict[str, str]
     kinds: dict[str, list[str]] = field(default_factory=dict)
@@ -149,6 +153,7 @@ class Report:
 
     @property
     def total(self) -> int:
+        """Total number of differences from summary.txt (0 if unreadable)."""
         try:
             return int(self.summary.get("total", "0"))
         except ValueError:
@@ -187,7 +192,7 @@ def report_file(config: Config, slug: str, kind: str) -> Path | None:
 
 
 def repair_request(config: Config, slug: str) -> tuple[Path, dict[str, Any]] | None:
-    """The repair request next to the report (#43): path and document, if there is one."""
+    """Return the repair request next to the report (#43): path and document, if any."""
     if not SLUG_RE.fullmatch(slug):
         return None
     path = repair.request_path(reports_dir(config), slug)
@@ -196,7 +201,7 @@ def repair_request(config: Config, slug: str) -> tuple[Path, dict[str, Any]] | N
 
 
 def repair_file(config: Config, slug: str, name: str) -> Path | None:
-    """The request or its .sha256 file for download, by exact name only."""
+    """Return the request or its .sha256 file for download, by exact name only."""
     if not SLUG_RE.fullmatch(slug):
         return None
     request = repair.request_name(slug)
@@ -211,6 +216,8 @@ def repair_file(config: Config, slug: str, name: str) -> Path | None:
 
 @dataclass
 class ExportInfo:
+    """What the web UI shows about an export in the inbox."""
+
     slug: str
     export_id: str
     directory: Path
@@ -227,21 +234,25 @@ class ExportInfo:
 
     @property
     def mode(self) -> str:
+        """Export mode (full or incr), from manifest.json or the export id."""
         return str(self.manifest.get("mode") or self.export_id.rsplit("-", 1)[-1])
 
     @property
     def counts(self) -> dict[str, Any]:
+        """The manifest's file counts (empty if missing)."""
         counts = self.manifest.get("counts")
         return counts if isinstance(counts, dict) else {}
 
     @property
     def sender_commit(self) -> str:
+        """MirrorHub commit of the sender that built the export (empty if unknown)."""
         versions = self.manifest.get("tool_versions")
         value = versions.get("mirrorhub_commit") if isinstance(versions, dict) else None
         return str(value or "")
 
 
 def export_info(config: Config, slug: str, export_id: str, state: RepoState) -> ExportInfo | None:
+    """Describe an export in the inbox for the web UI; None if the id or directory is invalid."""
     if not SLUG_RE.fullmatch(slug) or not EXPORT_ID_RE.fullmatch(export_id):
         return None
     directory = config.export_dir / slug / export_id

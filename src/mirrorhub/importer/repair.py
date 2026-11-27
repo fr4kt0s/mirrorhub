@@ -36,6 +36,7 @@ DELETE_KINDS = frozenset({"extra"})
 
 
 def request_name(slug: str) -> str:
+    """Return the file name of a repository's repair request."""
     return f"repair-{slug}.json"
 
 
@@ -45,7 +46,7 @@ def request_path(report_dir: Path, slug: str) -> Path:
 
 
 def _travels(path: str) -> bool:
-    """Can the path be named in an export (files.json, deleted.txt)?"""
+    """Return True if the path can be named in an export (files.json, deleted.txt)."""
     try:
         path.encode("utf-8")
     except UnicodeEncodeError:  # undecodable bytes kept as surrogates
@@ -56,7 +57,7 @@ def _travels(path: str) -> bool:
 def build_request(
     slug: str, export_id: str, found: list[str], *, hashed: bool
 ) -> dict[str, Any] | None:
-    """The request document for the differences `found`, or None without any."""
+    """Build the request document for the differences `found`; None if there are none."""
     resend: set[str] = set()
     delete: set[str] = set()
     skipped = 0
@@ -120,6 +121,7 @@ def count(document: dict[str, Any]) -> str:
 
 
 def read_request(path: Path) -> dict[str, Any] | None:
+    """Read a repair request document; None if it is missing or not valid JSON."""
     try:
         document = json.loads(path.read_text(encoding="ascii"))
     except (OSError, ValueError):

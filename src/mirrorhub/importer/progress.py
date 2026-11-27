@@ -35,6 +35,7 @@ def configure(interval: float) -> None:
 
 
 def interval() -> float:
+    """Return the progress interval in seconds (0 disables progress lines)."""
     return _interval
 
 
@@ -65,6 +66,7 @@ class Progress:
         self._next = self.started + _interval
 
     def advance(self, files: int = 1, nbytes: int = 0) -> None:
+        """Count files and bytes; log a progress line once per interval."""
         self.files += files
         self.bytes += nbytes
         if _interval <= 0:
@@ -104,6 +106,7 @@ class Progress:
         self.reported = True
 
     def finish(self) -> None:
+        """Log the phase's totals (``phase done``): info if it reported progress, else debug."""
         elapsed = _clock() - self.started
         values: dict[str, object] = {
             "phase": self.phase,

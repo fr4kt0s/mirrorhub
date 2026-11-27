@@ -54,6 +54,7 @@ def _path(base: Path, value: Any, key: str) -> Path:
 
 
 def load_config(path: Path) -> Config:
+    """Read and check the importer's TOML configuration (ConfigError if invalid)."""
     try:
         with path.open("rb") as handle:
             raw = tomllib.load(handle)

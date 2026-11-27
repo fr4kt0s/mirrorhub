@@ -17,26 +17,32 @@ from mirrorhub.importer.errors import ImporterError, LockError, VerificationFail
 
 @dataclass
 class RepoState:
+    """The receiver's state of one repository: last applied export and history."""
+
     slug: str
     last_export_id: str | None = None
     history: list[dict[str, Any]] = field(default_factory=list)
 
     def applied(self, export_id: str) -> bool:
-        """True if the export was applied (or its state adopted); skipped ones are not."""
+        """Return True if the export was applied (or adopted); skipped ones were not."""
         return any(
             item.get("export_id") == export_id and item.get("status") != "superseded"
             for item in self.history
         )
 
     def superseded(self, export_id: str) -> bool:
+        """Return True if the export was recorded as superseded (skipped)."""
         return any(
             item.get("export_id") == export_id and item.get("status") == "superseded"
             for item in self.history
         )
 
     def is_superseded_by_state(self, export_id: str) -> bool:
-        """An unapplied export older than the last applied one was skipped by a later
-        export with an earlier base (or a full with --rebase). Export ids sort by time."""
+        """Return True if an unapplied export is older than the last applied one.
+
+        It was skipped by a later export with an earlier base (or a full export with
+        --rebase). Export ids sort by time.
+        """
         return (
             self.last_export_id is not None
             and export_id < self.last_export_id
@@ -45,6 +51,8 @@ class RepoState:
 
 
 class StateStore:
+    """The state file, inventory copies and lock of one repository on the receiver."""
+
     def __init__(self, state_dir: Path, slug: str) -> None:
         if not SLUG_RE.fullmatch(slug):
             raise VerificationFailed(f"invalid repository slug: {slug!r}")
@@ -54,6 +62,7 @@ class StateStore:
         self.lock_path = state_dir / f"{slug}.lock"
 
     def load(self) -> RepoState:
+        """Read the state; an empty state if the file does not exist yet."""
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -74,6 +83,7 @@ class StateStore:
 
     @property
     def inventory_dir(self) -> Path:
+        """Directory of the kept files.json copies of this repository."""
         return self.state_dir / "inventories" / self.slug
 
     def save_inventory(self, export_id: str, source: Path) -> Path:
@@ -97,6 +107,7 @@ class StateStore:
         return target
 
     def load_inventory(self, export_id: str) -> dict[str, Any] | None:
+        """Return the kept files.json of an export, or None if there is no copy."""
         path = self.inventory_dir / f"{export_id}.json"
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
@@ -109,6 +120,7 @@ class StateStore:
         return value
 
     def save(self, state: RepoState) -> None:
+        """Write the state atomically (temporary file, fsync, rename)."""
         self.state_dir.mkdir(parents=True, exist_ok=True)
         document = {
             "format": 1,
@@ -131,6 +143,7 @@ class StateStore:
 
     @contextmanager
     def locked(self) -> Iterator[None]:
+        """Hold the repository lock (flock) for the block; LockError if it is taken."""
         self.state_dir.mkdir(parents=True, exist_ok=True)
         descriptor = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
         try:

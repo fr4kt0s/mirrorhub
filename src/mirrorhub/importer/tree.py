@@ -24,6 +24,8 @@ SHOWN_DIFFERENCES = 10
 
 @dataclass(frozen=True)
 class TreeEntry:
+    """What the tree scan records per entry: kind, size, mtime and symlink target."""
+
     kind: str  # "file", "symlink" or "other"
     size: int
     mtime_ns: int
@@ -33,10 +35,11 @@ class TreeEntry:
 def scan_tree(
     root: Path, progress: Progress | None = None, directories: list[Path] | None = None
 ) -> dict[str, TreeEntry]:
-    """lstat every entry below root once; symlinked directories count as entries.
+    """Scan the tree with one lstat per entry; symlinked directories count as entries.
 
     If `directories` is given, every directory walked (root included) is appended,
-    so callers can check them later without listing the tree a second time."""
+    so callers can check them later without listing the tree a second time.
+    """
     found: dict[str, TreeEntry] = {}
     for directory, names, filenames in os.walk(root, followlinks=False):
         base = Path(directory)
@@ -148,6 +151,7 @@ def hash_contents(
 
 
 def summary(label: str, found: list[str]) -> str:
+    """Return a one-line summary of the differences (the first few, then a count)."""
     shown = "; ".join(found[:SHOWN_DIFFERENCES])
     more = f"; and {len(found) - SHOWN_DIFFERENCES} more" if len(found) > SHOWN_DIFFERENCES else ""
     return f"tree does not match {label}: {len(found)} differences: {shown}{more}"
@@ -166,8 +170,11 @@ REPORT_FILES = {
 
 
 def _report_line(path: str) -> str:
-    """The path as one line. Names with control characters (a line break in a file
-    name, possible only for extra paths) are written with backslash escapes."""
+    """Return the path as one report line.
+
+    Names with control characters (a line break in a file name, possible only for
+    extra paths) are written with backslash escapes.
+    """
     if all(ord(character) >= 32 for character in path):
         return path
     return path.encode("unicode_escape", "backslashreplace").decode("ascii")

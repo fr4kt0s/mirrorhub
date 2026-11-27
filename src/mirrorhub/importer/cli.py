@@ -193,7 +193,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def pending_exports(config: Config, slug: str) -> list[Path]:
-    """Published exports (with .done) in the inbox, oldest first."""
+    """Return the published exports (with .done) in the inbox, oldest first."""
     if not SLUG_RE.fullmatch(slug):
         raise ConfigError(f"invalid slug: {slug!r}")
     directory = config.export_dir / slug
@@ -276,7 +276,10 @@ def _base_of(path: Path) -> str | None:
 
 
 def _jumped_by(path: Path, pending: list[Path], last: str | None) -> str | None:
-    """A later pending export that starts at the current state skips this one."""
+    """Return the later pending export that starts at the current state, if any.
+
+    Such an export makes this one unnecessary (it is skipped as superseded).
+    """
     if last is None:
         return None
     for later in pending:
@@ -541,8 +544,11 @@ def _run_import(config: Config, arguments: argparse.Namespace) -> int:
 
 
 def _run_import_with_event(config: Config, arguments: argparse.Namespace) -> int:
-    """_run_import plus one import_run event per run (also when nothing was pending), so
-    monitoring can tell a stopped timer from an idle inbox."""
+    """Run _run_import and write one import_run event per run.
+
+    The event is written also when nothing was pending, so monitoring can tell a
+    stopped timer from an idle inbox.
+    """
     started = time.monotonic()
     code = 1  # an unexpected exception ends the process with exit code 1
     try:
@@ -631,8 +637,10 @@ def _check(config: Config, arguments: argparse.Namespace) -> int:
 
 
 def _warn_permissions(config: Config, slug: str, directories: list[Path]) -> None:
-    """check/adopt: warn if the tree has directories the importer's user cannot
-    change (the next import touching them would stop at the permission check)."""
+    """Warn (check/adopt) about directories the importer's user cannot change.
+
+    The next import touching them would stop at the permission check.
+    """
     try:
         warning = permissions.tree_warning(config.mirror_root / slug, directories)
     except OSError:
@@ -672,6 +680,7 @@ def _slug_of(arguments: argparse.Namespace) -> str | None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the importer command line; return the process exit code."""
     arguments = _parser().parse_args(argv)
     configure_logging(arguments.log_level, arguments.log_format)
     progress.configure(arguments.progress_interval)

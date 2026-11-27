@@ -1,4 +1,4 @@
-"""Which user runs the importer, and may it change the directories an import touches?
+"""Permission checks: may the running user change the directories an import touches.
 
 Issue #60: an import aborted mid-way with "Permission denied" while deleting a file in
 a tree whose directories belonged to a foreign uid (copied from another system with
@@ -72,7 +72,7 @@ def _effective() -> bool:
 
 
 def writable(directory: Path) -> bool:
-    """May the running user create, delete and rename entries in directory?"""
+    """Return True if the running user may create, delete and rename entries in directory."""
     return os.access(directory, os.W_OK | os.X_OK, effective_ids=_effective())
 
 
@@ -85,6 +85,8 @@ def _existing(path: Path) -> Path:
 
 @dataclass
 class Problem:
+    """A directory the running user cannot change, with what the import needs to do there."""
+
     directory: Path
     actions: list[str] = field(default_factory=list)  # what the import needs to do there
     examples: list[str] = field(default_factory=list)
@@ -92,6 +94,7 @@ class Problem:
 
     @property
     def action(self) -> str:
+        """What the import needs to do in the directory, as one string."""
         return ", ".join(self.actions)
 
 
@@ -166,7 +169,7 @@ def report(problems: list[Problem], target: Path, *, changed: bool = False) -> s
 
 
 def explain(exc: PermissionError, phase: str, hint: str = "") -> PermissionFailure:
-    """A PermissionError with the phase, the running user and the directory's owner."""
+    """Explain a PermissionError: the phase, the running user and the directory's owner."""
     path = Path(exc.filename) if exc.filename else None
     lines = [f"permission denied while {phase}: {path or exc}", f"  running as {who()}"]
     if path is not None:
@@ -191,11 +194,13 @@ def _walk(root: Path) -> Iterator[Path]:
 def unwritable_dirs(
     root: Path, limit: int = SHOWN, directories: Iterable[Path] | None = None
 ) -> tuple[int, list[Path]]:
-    """Directories below root (root included) the running user cannot change:
-    their number and the first `limit` of them. Symlinks are not followed.
+    """Return the directories below root (root included) the running user cannot change.
+
+    Returns their number and the first `limit` of them. Symlinks are not followed.
 
     `directories` are the directories a tree scan already walked; without them
-    the tree is walked here."""
+    the tree is walked here.
+    """
     count = 0
     found: list[Path] = []
     for path in _walk(root) if directories is None else directories:
