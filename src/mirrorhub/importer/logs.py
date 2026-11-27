@@ -33,13 +33,16 @@ def _fields(record: logging.LogRecord) -> dict[str, Any]:
 
 
 def _ordered(fields: Mapping[str, Any]) -> dict[str, Any]:
-    """slug and export_id first, then the other fields in logging order."""
+    """Order the fields: slug and export_id first, then the rest in logging order."""
     first = {key: fields[key] for key in CONTEXT if key in fields}
     return first | {key: value for key, value in fields.items() if key not in first}
 
 
 class JsonFormatter(logging.Formatter):
+    """Format a record as one JSON object: ts, level, event, slug, export_id, rest."""
+
     def format(self, record: logging.LogRecord) -> str:
+        """Return the record as a single-line JSON object."""
         payload: dict[str, Any] = {
             "ts": datetime.fromtimestamp(record.created, UTC).isoformat(timespec="seconds"),
             "level": record.levelname.lower(),
@@ -114,6 +117,7 @@ class TextFormatter(logging.Formatter):
         self.colour = colour
 
     def format(self, record: logging.LogRecord) -> str:
+        """Return the record as one readable line (time, level, event, context, fields)."""
         fields = _ordered(_fields(record))
         event = record.getMessage()
         parts = [
@@ -141,7 +145,7 @@ def _is_terminal(stream: TextIO) -> bool:
 
 
 def resolve_format(fmt: str, stream: TextIO | None = None) -> str:
-    """auto -> text on a terminal, json otherwise."""
+    """Resolve "auto" to text on a terminal and json otherwise."""
     if fmt not in FORMATS:
         raise ValueError(f"unknown log format: {fmt!r}")
     if fmt != "auto":
@@ -150,6 +154,11 @@ def resolve_format(fmt: str, stream: TextIO | None = None) -> str:
 
 
 def configure_logging(level: str, fmt: str = "json") -> None:
+    """Send the importer's log events to stderr as JSON or text.
+
+    fmt "auto" chooses text on a terminal and JSON otherwise; colours follow
+    NO_COLOR and TERM.
+    """
     stream = sys.stderr
     handler = logging.StreamHandler(stream)
     if resolve_format(fmt, stream) == "text":
@@ -164,4 +173,5 @@ def configure_logging(level: str, fmt: str = "json") -> None:
 
 
 def log_event(level: int, event: str, **fields: object) -> None:
+    """Log an event with its fields (``key=value`` in text, keys in JSON)."""
     LOGGER.log(level, event, extra={"fields": fields})

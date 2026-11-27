@@ -82,6 +82,8 @@ class FormError(ValueError):
 
 @dataclass
 class Run:
+    """One importer command started from the web UI: its arguments, output and result."""
+
     id: int
     title: str
     argv: list[str]
@@ -95,9 +97,11 @@ class Run:
 
     @property
     def running(self) -> bool:
+        """True while the child process has not exited."""
         return self.exit_code is None
 
     def append(self, text: str) -> None:
+        """Add output (the oldest part is dropped beyond MAX_OUTPUT) and copy it to the run log."""
         with self.lock:
             self.output += text
             if len(self.output) > MAX_OUTPUT:
@@ -110,6 +114,7 @@ class Run:
                     self.log = None  # keep running without the file
 
     def state(self) -> str:
+        """Return ok, differs (exit code 11), failed or running, for display."""
         if self.running:
             return "running"
         if self.exit_code == 11:
@@ -117,6 +122,7 @@ class Run:
         return "ok" if self.exit_code == 0 else "failed"
 
     def metadata(self) -> dict[str, Any]:
+        """Return what is kept about the run across restarts (without the output)."""
         return {
             "id": self.id,
             "title": self.title,
@@ -127,8 +133,11 @@ class Run:
         }
 
     def plan(self) -> tuple[str, int, int, int] | None:
-        """(export directory, added, changed, deleted) of a finished --dry-run --rebase
-        run of one export directory, from its summary line; else None."""
+        """Return the plan of a finished ``--dry-run --rebase`` run of one export.
+
+        The plan is (export directory, added, changed, deleted) from the run's summary
+        line; None for any other run.
+        """
         if self.exit_code != 0 or "--dry-run" not in self.argv or "--rebase" not in self.argv:
             return None
         if "--export" not in self.argv:
@@ -218,9 +227,11 @@ class Runner:
             pass  # the run itself does not depend on its record
 
     def active(self) -> Run | None:
+        """Return the run that is still active, if any."""
         return next((run for run in self.runs.values() if run.running), None)
 
     def start(self, title: str, args: list[str]) -> Run:
+        """Start an importer command as a child process (FormError if one is active)."""
         with self._lock:
             if self.active() is not None:
                 raise FormError("another run is still active; wait for it or cancel it")
@@ -266,6 +277,7 @@ class Runner:
         self._save(run)
 
     def cancel(self, run: Run) -> None:
+        """Ask a running command to stop (SIGTERM)."""
         if run.running and run.process is not None:
             run.append("\n# cancel requested (SIGTERM)\n")
             run.process.terminate()
@@ -298,8 +310,11 @@ PLAN_MAX_AGE_S = 3600
 
 
 def _planned_rebase(form: dict[str, list[str]], export: str, runner: Runner | None) -> int:
-    """A rebase needs a finished dry run with --rebase of the same export, not older
-    than an hour, so the user has seen how many paths it deletes. Returns its id."""
+    """Return the id of the dry run that allows this rebase (FormError if there is none).
+
+    A rebase needs a finished dry run with --rebase of the same export, not older
+    than an hour, so the user has seen how many paths it deletes.
+    """
     plan_id = _one(form, "plan")
     run = runner.runs.get(int(plan_id)) if runner is not None and plan_id.isdigit() else None
     plan = run.plan() if run is not None else None
@@ -413,6 +428,8 @@ def build_command(
 
 @dataclass
 class RepoRow:
+    """One repository on the overview page: state, history counts and pending exports."""
+
     slug: str
     last_export_id: str | None
     applied_at: str
@@ -423,6 +440,7 @@ class RepoRow:
 
 
 def overview(config: Config) -> list[RepoRow]:
+    """Return the overview rows for every repository in the inbox or the state directory."""
     slugs: set[str] = set()
     if config.export_dir.is_dir():
         slugs |= {
@@ -540,6 +558,7 @@ details { margin-top: 0.5rem; } summary { cursor: pointer; color: var(--muted); 
 
 
 def esc(value: object) -> str:
+    """Escape a value for HTML text and attributes."""
     return html.escape(str(value), quote=True)
 
 
@@ -597,11 +616,14 @@ def _duration(run: Run) -> str:
 
 
 class Page:
+    """Renders the pages of the web UI as HTML strings."""
+
     def __init__(self, ui: WebUI, nonce: str) -> None:
         self.ui = ui
         self.nonce = nonce
 
     def layout(self, title: str, body: str, *, nav: bool = True) -> str:
+        """Wrap a page body in the common layout (header, navigation, footer)."""
         return (
             "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width, initial-scale=1'>"
@@ -622,6 +644,7 @@ class Page:
         )
 
     def form(self, command: str, inner: str, button: str, cls: str = "") -> str:
+        """Return a form that starts an importer command (``POST /run``, with CSRF token)."""
         return (
             f"<form method='post' action='/run'><input type='hidden' name='csrf' "
             f"value='{esc(self.ui.csrf)}'><input type='hidden' name='command' value='{command}'>"
@@ -629,12 +652,14 @@ class Page:
         )
 
     def quick(self, command: str, fields: dict[str, str], button: str, cls: str = "") -> str:
+        """Return a one-button form with hidden fields."""
         hidden = "".join(
             f"<input type='hidden' name='{esc(k)}' value='{esc(v)}'>" for k, v in fields.items()
         )
         return self.form(command, hidden, button, cls)
 
     def index(self, error: str = "") -> str:
+        """Render the overview page (repositories, actions, recent runs)."""
         config = self.ui.config
         try:
             rows = overview(config)
@@ -755,6 +780,7 @@ class Page:
     # -- History, report, export pages
 
     def history(self, slug: str | None) -> str:
+        """Render the event history, for one repository or all."""
         found = self.ui.events.history(slug)
         title = f"History of {slug}" if slug else "History"
         body = f"<h1>{esc(title)}</h1>"
@@ -831,6 +857,7 @@ class Page:
         )
 
     def report(self, slug: str) -> str:
+        """Render the difference report of a repository, with its repair request."""
         report = webdata.read_report(self.ui.config, slug)
         title = f"Tree report of {slug}"
         body = f"<h1>{esc(title)}</h1>"
@@ -895,6 +922,7 @@ class Page:
         return self.layout(title, body)
 
     def export(self, info: webdata.ExportInfo) -> str:
+        """Render the details of an export in the inbox."""
         slug, export_id = esc(info.slug), esc(info.export_id)
         counts = info.counts
         state = {"applied": "ok", "superseded": "muted", "pending": "differs"}[info.status]
@@ -960,6 +988,7 @@ class Page:
         return self.layout(f"Export {info.export_id}", body)
 
     def import_card(self) -> str:
+        """Render the form for ``import``."""
         inner = (
             "<label>What</label>"
             "<label class='check'><input type='radio' name='scope' value='all' checked> "
@@ -998,6 +1027,7 @@ class Page:
         )
 
     def check_card(self) -> str:
+        """Render the form for ``check``."""
         inner = (
             "<label>Repository (empty: all)</label><input type='text' name='slug'>"
             "<label class='check'><input type='checkbox' name='hash'> also SHA-256 "
@@ -1013,6 +1043,7 @@ class Page:
         )
 
     def adopt_card(self) -> str:
+        """Render the form for ``adopt``."""
         inner = (
             "<label>Repository</label><input type='text' name='slug' required>"
             "<label>Export id (empty: try the inbox, newest first)</label>"
@@ -1027,6 +1058,7 @@ class Page:
         )
 
     def status_card(self) -> str:
+        """Render the form for ``status``."""
         inner = "<label>Repository (empty: all)</label><input type='text' name='slug'>"
         return (
             "<div class='card'><h2>Status</h2><p class='muted'>Receiver state as printed by "
@@ -1036,6 +1068,7 @@ class Page:
         )
 
     def runs_card(self) -> str:
+        """Render the table of recent runs."""
         runs = list(reversed(self.ui.runner.runs.values()))
         rows = "".join(
             f"<tr><td><a href='/runs/{run.id}'>#{run.id}</a></td><td>{esc(run.title)}</td>"
@@ -1056,6 +1089,7 @@ class Page:
         )
 
     def run(self, run: Run) -> str:
+        """Render one run with its output (refreshed while it runs)."""
         meaning = EXIT_CODES.get(run.exit_code, "") if run.exit_code is not None else ""
         result = f"<span class='state {run.state()}'>{run.state()}</span>" + (
             f" — exit code {run.exit_code} {esc(meaning)}" if run.exit_code is not None else ""
@@ -1119,6 +1153,7 @@ class Page:
         return self.layout(f"Run #{run.id}", body)
 
     def login(self, error: str = "") -> str:
+        """Render the login form (only used when a password is set)."""
         message = f"<div class='alert'>{esc(error)}</div>" if error else ""
         return self.layout(
             "Login",
@@ -1136,6 +1171,8 @@ class Page:
 
 
 class WebUI:
+    """Shared state of the web UI: configuration, password, tokens, runner and events."""
+
     def __init__(
         self,
         config: Config,
@@ -1154,6 +1191,7 @@ class WebUI:
         self.events = webdata.EventIndex(config.events_dir)
 
     def host_allowed(self, host_header: str) -> bool:
+        """Return True if the Host header names localhost, an IP address or an allowed host."""
         host = urlsplit("//" + host_header).hostname or ""
         if host in ("localhost", *self.allowed_hosts):
             return True
@@ -1165,10 +1203,13 @@ class WebUI:
 
 
 class Handler(BaseHTTPRequestHandler):
+    """HTTP request handler of the web UI (standard library server)."""
+
     server_version = "mirrorhub-importer-ui"
     ui: WebUI
 
     def log_message(self, format: str, *args: Any) -> None:
+        """Write the access log line to stderr."""
         sys.stderr.write(f"ui {self.address_string()} {format % args}\n")
 
     # -- helpers
@@ -1236,7 +1277,7 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def _form(self) -> dict[str, list[str]] | None:
-        """Parsed POST body after origin and CSRF checks; None if a response was sent."""
+        """Parse the POST body after origin and CSRF checks; None if a response was sent."""
         origin = self.headers.get("Origin")
         if origin and urlsplit(origin).netloc != self.headers.get("Host", ""):
             self._send(
@@ -1264,6 +1305,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- routes
     def do_GET(self) -> None:
+        """Serve pages, run output and file downloads."""
         if not self._guard():
             return
         url = urlsplit(self.path)
@@ -1358,6 +1400,7 @@ class Handler(BaseHTTPRequestHandler):
         self._text(HTTPStatus.NOT_FOUND, "not found")
 
     def do_POST(self) -> None:
+        """Handle login, starting runs and cancelling them."""
         if not self._guard():
             return
         parts = [p for p in urlsplit(self.path).path.split("/") if p]
@@ -1399,6 +1442,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def parse_listen(value: str) -> tuple[str, int]:
+    """Split a ``HOST:PORT`` listen address (ValueError if invalid)."""
     host, sep, port = value.rpartition(":")
     if not sep or not port.isdigit() or not 0 <= int(port) <= 65535:
         raise ValueError(f"--listen must be HOST:PORT, got {value!r}")
@@ -1406,6 +1450,7 @@ def parse_listen(value: str) -> tuple[str, int]:
 
 
 def make_server(ui: WebUI, host: str, port: int) -> ThreadingHTTPServer:
+    """Create the threaded HTTP server for the web UI."""
     handler = type("BoundHandler", (Handler,), {"ui": ui})
     server = ThreadingHTTPServer((host, port), handler)
     server.daemon_threads = True
@@ -1413,6 +1458,7 @@ def make_server(ui: WebUI, host: str, port: int) -> ThreadingHTTPServer:
 
 
 def serve(config: Config, config_path: Path, listen: str) -> int:
+    """Run the web UI until interrupted (``serve`` command); return the exit code."""
     host, port = parse_listen(listen)
     password = os.environ.get(PASSWORD_ENV) or None
     hosts = tuple(h.strip() for h in os.environ.get(HOSTS_ENV, "").split(",") if h.strip())

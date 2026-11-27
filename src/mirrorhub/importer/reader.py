@@ -38,9 +38,14 @@ class PartReader(io.RawIOBase):
         self._size = 0
 
     def readable(self) -> bool:
+        """Return True (the stream supports reading)."""
         return True
 
     def readinto(self, buffer: Buffer, /) -> int:
+        """Read the next bytes of the concatenated parts into buffer.
+
+        Raises VerificationFailed at the end of a part whose SHA-256 does not match.
+        """
         view = memoryview(buffer).cast("B")
         while True:
             if self._handle is None:
@@ -69,6 +74,7 @@ class PartReader(io.RawIOBase):
             self._index += 1
 
     def close(self) -> None:
+        """Close the open part and the stream."""
         if self._handle is not None:
             self._handle.close()
             self._handle = None

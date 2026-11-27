@@ -31,6 +31,8 @@ from mirrorhub.importer.state import StateStore
 
 @dataclass(frozen=True)
 class Adopted:
+    """Result of adopting an export as the receiver's state (tree already in place)."""
+
     slug: str
     export_id: str
     entries: int

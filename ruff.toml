@@ -18,7 +18,6 @@ convention = "pep257"
 "scripts/*" = ["D"]
 "src/mirrorhub/enums.py" = ["D"]
 "src/mirrorhub/models.py" = ["D"]
-"src/mirrorhub/importer/*" = ["D"]
 "src/mirrorhub/queue/*" = ["D"]
 "src/mirrorhub/security/*" = ["D"]
 "src/mirrorhub/services/*" = ["D"]

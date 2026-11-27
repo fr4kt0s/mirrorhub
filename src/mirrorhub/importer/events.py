@@ -59,6 +59,7 @@ def configure(directory: Path | None, keep_days: int = DEFAULT_KEEP_DAYS) -> Non
 
 
 def enabled() -> bool:
+    """Return True if event files are written (``events_dir`` configured)."""
     return _directory is not None
 
 

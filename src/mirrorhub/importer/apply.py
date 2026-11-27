@@ -57,6 +57,8 @@ from mirrorhub.importer.state import RepoState, StateStore
 
 @dataclass(frozen=True)
 class Options:
+    """Options of one import run (command-line flags of ``import``)."""
+
     dry_run: bool = False
     rebase: bool = False
     # Re-read and hash the whole tree after applying (otherwise: metadata only).
@@ -70,6 +72,8 @@ class Options:
 
 @dataclass
 class Plan:
+    """What applying an export changes in the tree: paths added, replaced and deleted."""
+
     adds: list[str] = field(default_factory=list)
     changes: list[str] = field(default_factory=list)
     deletes: list[str] = field(default_factory=list)
@@ -77,6 +81,8 @@ class Plan:
 
 @dataclass
 class Outcome:
+    """Result of handling one export: its status, plan and tree differences."""
+
     export_id: str
     status: str
     plan: Plan
@@ -104,7 +110,7 @@ def _tree_paths(root: Path) -> set[str]:
 
 
 def _tree_has_entries(root: Path) -> bool:
-    """True as soon as one file or symlink is found (same rules as _tree_paths)."""
+    """Return True as soon as one file or symlink is found (same rules as _tree_paths)."""
     if not root.is_dir():
         return False
     for directory, names, filenames in os.walk(root, followlinks=False):
@@ -118,6 +124,12 @@ def _tree_has_entries(root: Path) -> bool:
 
 
 def build_plan(export: Export, target: Path, replace: bool) -> Plan:
+    """Plan the changes an export makes to the tree at target.
+
+    Payload paths that exist are changes, the others adds; deleted.txt entries that
+    exist are deletes. With replace (``--rebase``), every path not in files.json is
+    deleted as well, so the tree ends up exactly as the export describes it.
+    """
     plan = Plan()
     for relative in sorted(export.payload):
         (plan.changes if os.path.lexists(target / relative) else plan.adds).append(relative)
@@ -129,6 +141,11 @@ def build_plan(export: Export, target: Path, replace: bool) -> Plan:
 
 
 def check_chain(state: RepoState, export: Export, tree_has_entries: bool, rebase: bool) -> None:
+    """Raise ChainError unless the export may be applied on top of the current state.
+
+    A full export needs an empty state and tree, or ``--rebase``. An incremental
+    export must start at the last applied export (its ``base_export_id``).
+    """
     if export.mode == "full":
         if (state.last_export_id is not None or tree_has_entries) and not rebase:
             raise ChainError(
@@ -180,7 +197,7 @@ def post_check(
     hash_contents: bool,
     tolerate_extra: bool = False,
 ) -> list[str]:
-    """The resulting tree must match files.json (touched paths, or the whole tree).
+    """Check that the resulting tree matches files.json (touched paths or whole tree).
 
     Type, size, mtime and symlink targets are always compared. Contents were hashed
     while staging; hash_contents (--full-check) reads every file back and hashes it
@@ -271,8 +288,10 @@ def _read_journal(path: Path) -> dict[str, Any] | None:
 
 
 def _sync_filesystem(path: Path) -> None:
-    """Flush the file system holding path to disk: syncfs(2) where available
-    (Linux), else sync(2) for all file systems."""
+    """Flush the file system holding path to disk.
+
+    Uses syncfs(2) where available (Linux), else sync(2) for all file systems.
+    """
     try:
         libc = ctypes.CDLL(None, use_errno=True)
         syncfs = libc.syncfs
@@ -329,8 +348,11 @@ def apply_journal(
 
 
 def _clear_staging(staging: Path) -> None:
-    """Remove a previous staging directory; refuse (exit 9) if entries cannot be
-    removed, e.g. left behind by a run as another user (issue #60)."""
+    """Remove a previous staging directory.
+
+    Refuses (exit 9) if entries cannot be removed, e.g. left behind by a run as
+    another user (issue #60).
+    """
     failed: list[tuple[str, BaseException]] = []
 
     def collect(function: Any, path: str, exc: BaseException) -> None:
@@ -353,8 +375,10 @@ def _clear_staging(staging: Path) -> None:
 
 
 def _remove_staging(staging: Path, slug: str) -> None:
-    """Remove staging after a finished or failed run; a leftover is only a warning
-    (the next run refuses it with an explanation)."""
+    """Remove staging after a finished or failed run.
+
+    A leftover is only a warning; the next run refuses it with an explanation.
+    """
     shutil.rmtree(staging, ignore_errors=True)
     if os.path.lexists(staging):
         log_event(
@@ -574,6 +598,7 @@ def _apply_locked(
 
 
 def log_tree_check(slug: str, export_id: str, entries: int, drift: list[str]) -> None:
+    """Log the result of the quick tree check at debug level."""
     log_event(
         logging.DEBUG,
         "tree check done",
@@ -652,8 +677,11 @@ def warn_on_version_mismatch(export: Export) -> bool:
 
 
 def _superseded(export: Export, state: RepoState, options: Options) -> bool:
-    """Skip an unapplied export older than the last applied one, unless it is a full
-    export the operator explicitly applies with --rebase."""
+    """Return True if an unapplied export is older than the last applied one.
+
+    Such an export is skipped, unless it is a full export the operator explicitly
+    applies with --rebase.
+    """
     if options.rebase and export.mode == "full":
         return False
     return state.is_superseded_by_state(export.export_id)
@@ -681,9 +709,11 @@ def _record_superseded(export: Export, store: StateStore, state: RepoState) -> N
 
 
 def skip_jumped(export_dir: Path, config: Config, options: Options, jumped_by: str) -> Outcome:
-    """Record an export as superseded because a later pending export starts at the
-    receiver's current state (an "incremental since" export). Only the export's
-    metadata is checked; nothing in the tree changes."""
+    """Record an export as superseded by a later pending export.
+
+    The later export starts at the receiver's current state (an "incremental since"
+    export). Only the export's metadata is checked; nothing in the tree changes.
+    """
     directory = Path(os.path.abspath(export_dir))
     try:
         metadata = load_metadata(directory)

@@ -23,6 +23,8 @@ from mirrorhub.importer.state import StateStore
 
 @dataclass
 class CheckResult:
+    """Result of ``check``: the compared export, entries and differences found."""
+
     slug: str
     export_id: str
     entries: int
@@ -32,7 +34,10 @@ class CheckResult:
 
 
 def _inventory(config: Config, store: StateStore, export_id: str) -> Inventory:
-    """The local copy, or the export in the inbox for states written before copies."""
+    """Return the inventory of an applied export.
+
+    From the local copy, or from the inbox for states written before copies were kept.
+    """
     stored = store.load_inventory(export_id)
     if stored is not None:
         log_event(logging.DEBUG, "inventory from local copy", slug=store.slug, export_id=export_id)
@@ -50,6 +55,12 @@ def _inventory(config: Config, store: StateStore, export_id: str) -> Inventory:
 
 
 def check_tree(config: Config, slug: str, *, hash_contents: bool = False) -> CheckResult:
+    """Compare the repository's tree with the last applied export's files.json.
+
+    Holds the repository lock, so no import changes the tree meanwhile. Compares
+    type, size, mtime and symlink targets; hash_contents (``check --hash``) also
+    reads and hashes every file. Changes nothing.
+    """
     if not SLUG_RE.fullmatch(slug):
         raise ConfigError(f"invalid slug: {slug!r}")
     store = StateStore(config.state_dir, slug)

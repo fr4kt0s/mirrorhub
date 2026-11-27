@@ -42,6 +42,8 @@ Inventory = dict[str, dict[str, Any]]
 
 @dataclass(frozen=True)
 class Export:
+    """A verified export in the inbox, ready to be applied."""
+
     directory: Path
     slug: str
     export_id: str
@@ -59,6 +61,7 @@ class Export:
 
 
 def safe_relative(value: str) -> bool:
+    """Return True if value is a safe relative path (no absolute, ``..`` or control characters)."""
     return (
         bool(value)
         and not value.startswith("/")
@@ -69,6 +72,7 @@ def safe_relative(value: str) -> bool:
 
 
 def safe_link(path: str, target: object) -> bool:
+    """Return True if a symlink at path with this target stays inside the repository."""
     if (
         not isinstance(target, str)
         or not target
@@ -114,7 +118,7 @@ def _read_checksums(directory: Path) -> dict[str, str]:
 
 
 def _verify_without_parts(directory: Path) -> tuple[dict[str, Any], Inventory]:
-    """The checks of mirrorhub.verify.verify() except hashing the archive parts.
+    """Run the checks of mirrorhub.verify.verify() except hashing the archive parts.
 
     The parts must exist and be listed in MANIFEST.sha256; their digests are compared
     while the archive is streamed (reader.PartReader), so a large export is read once
@@ -311,9 +315,11 @@ def _sha256_file(path: Path) -> str:
 
 
 def load_metadata(directory: Path) -> ExportMetadata:
-    """Check files.json and manifest.json against MANIFEST.sha256; archive parts are
-    neither required nor hashed. The detached signature, if checked, covers
-    MANIFEST.sha256 and therefore these two files."""
+    """Check files.json and manifest.json against MANIFEST.sha256.
+
+    Archive parts are neither required nor hashed. The detached signature, if checked, covers
+    MANIFEST.sha256 and therefore these two files.
+    """
     try:
         done = (directory / ".done").read_text(encoding="ascii").strip()
         digests: dict[str, str] = {}
