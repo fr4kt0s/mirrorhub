@@ -47,6 +47,7 @@
   <label>Cron expression (UTC: minute hour day-of-month month weekday)
     <input name="cron_expr" value="{{ cron.expr }}" maxlength="120" required
            hx-post="/schedules/cron-helper" hx-trigger="change consume"
+           hx-include="closest form" hx-target="#cron-helper" hx-swap="outerHTML"
            hx-vals='{"cb_source": "cron"}'>
   </label>
   <div class="cron-preview" aria-live="polite">
