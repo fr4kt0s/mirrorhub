@@ -1,5 +1,7 @@
 """Job list, execution controls and bounded live logs."""
 
+import os
+from collections.abc import Iterator
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -8,7 +10,7 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlmodel import Session, col, select
 
 from mirrorhub.db import get_engine
-from mirrorhub.enums import TERMINAL_JOB_STATUSES, JobStatus, JobType, Trigger
+from mirrorhub.enums import TERMINAL_JOB_STATUSES, JobStatus, JobType, Tool, Trigger
 from mirrorhub.models import Job
 from mirrorhub.services import jobs as jobsvc
 from mirrorhub.services import logs, repos
@@ -132,6 +134,7 @@ def detail(
     offset = 0
     if job.log_path:
         lines, offset = logs.tail_snapshot(Path(job.log_path), lines=200)
+    is_terminal = job.status in TERMINAL_JOB_STATUSES
 
     return render(
         request,
@@ -141,8 +144,71 @@ def detail(
             "repo": repo,
             "lines": lines,
             "log_offset": offset,
-            "is_terminal": job.status in TERMINAL_JOB_STATUSES,
+            "is_terminal": is_terminal,
+            "rsync_log": _rsync_log(job, repo.slug if repo else None, is_terminal) is not None
+            or (job.tool == Tool.FTPSYNC.value and not is_terminal),
         },
+    )
+
+
+def _rsync_log(job: Job, slug: str | None, is_terminal: bool) -> Path | None:
+    """The complete rsync log of an ftpsync job: kept with the job once it ended,
+    the file ftpsync is writing while it runs."""
+    if job.tool != Tool.FTPSYNC.value or job.id is None:
+        return None
+    kept = logs.kept_log_path(job.id, logs.RSYNC_LOG)
+    if kept.is_file():
+        return kept
+    if not is_terminal and slug is not None:
+        live = logs.ftpsync_rsync_log(slug)
+        if live.is_file():
+            return live
+    return None
+
+
+@router.get("/jobs/{job_id}/rsync-log")
+def rsync_log(
+    job_id: int,
+    request: Request,
+    _user: CurrentUser = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Download the complete rsync log of an ftpsync job (the job log shows 500 lines)."""
+    job = jobsvc.get(db, job_id)
+    if job is None:
+        return render(request, "error.html", {"status": 404, "detail": "Job not found"}, 404)
+    repo = repos.get(db, job.repo_id)
+    slug = repo.slug if repo else None
+    path = _rsync_log(job, slug, job.status in TERMINAL_JOB_STATUSES)
+    if path is None:
+        return render(
+            request,
+            "error.html",
+            {"status": 404, "detail": "No rsync log for this job (yet)"},
+            404,
+        )
+    try:
+        handle = path.open("rb")
+        size = os.fstat(handle.fileno()).st_size
+    except OSError:
+        return render(request, "error.html", {"status": 404, "detail": "rsync log gone"}, 404)
+
+    def chunks() -> Iterator[bytes]:
+        # up to the size at the start: a running ftpsync keeps writing to the file
+        left = size
+        with handle:
+            while left > 0:
+                data = handle.read(min(left, 1024 * 1024))
+                if not data:
+                    break
+                left -= len(data)
+                yield data
+
+    name = f"job-{job_id}-rsync-{slug or job.repo_id}.log"
+    return StreamingResponse(
+        chunks(),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
     )
 
 

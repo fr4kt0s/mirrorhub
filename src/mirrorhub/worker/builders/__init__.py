@@ -4,6 +4,6 @@ No shell strings anywhere: every step is a list passed straight to exec.
 `base` is imported before the submodules so its types exist before they are needed.
 """
 
-from .base import BuildError, BuildPlan, Step, resolve_paths
+from .base import BuildError, BuildPlan, FollowedLog, Step, resolve_paths
 
-__all__ = ["BuildError", "BuildPlan", "Step", "resolve_paths"]
+__all__ = ["BuildError", "BuildPlan", "FollowedLog", "Step", "resolve_paths"]

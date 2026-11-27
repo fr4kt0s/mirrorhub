@@ -17,6 +17,9 @@ STREAM_MAX_BYTES = 64 * 1024
 
 
 RUN_HEADER_PREFIX = "# run job "
+# files kept next to a job log: <job id>.<name>.log (worker/followlog.py)
+RSYNC_LOG = "rsync"
+KEPT_LOGS = (RSYNC_LOG,)
 
 
 def job_log_path(
@@ -66,6 +69,21 @@ def quarantine_stale(path: Path) -> Path | None:
     return target
 
 
+def kept_log_path(job_id: int, name: str, settings: Settings | None = None) -> Path:
+    """A log kept next to the job log, e.g. the complete rsync log of an ftpsync job."""
+    return (settings or get_settings()).log_dir / "jobs" / f"{int(job_id)}.{name}.log"
+
+
+def ftpsync_log_dir(slug: str, settings: Settings | None = None) -> Path:
+    """LOGDIR of ftpsync for a repository (worker/builders/ftpsync.py)."""
+    return (settings or get_settings()).tmp_dir / "ftpsync" / slug / "log"
+
+
+def ftpsync_rsync_log(slug: str, settings: Settings | None = None) -> Path:
+    """The rsync output ftpsync writes for a repository while it runs."""
+    return ftpsync_log_dir(slug, settings) / f"rsync-ftpsync-{slug}.log"
+
+
 def remove_job_logs(
     job_ids: Iterable[int],
     settings: Settings | None = None,
@@ -74,13 +92,17 @@ def remove_job_logs(
     base = (settings or get_settings()).log_dir / "jobs"
     removed = 0
     for job_id in job_ids:
-        try:
-            (base / f"{int(job_id)}.log").unlink()
-            removed += 1
-        except FileNotFoundError:
-            continue
-        except OSError:
-            log.warning("could not remove job log", extra={"job_id": job_id})
+        names = [f"{int(job_id)}.log", *(f"{int(job_id)}.{kept}.log" for kept in KEPT_LOGS)]
+        for name in names:
+            try:
+                (base / name).unlink()
+            except FileNotFoundError:
+                continue
+            except OSError:
+                log.warning("could not remove job log", extra={"job_id": job_id, "file": name})
+                continue
+            if name.count(".") == 1:  # count jobs, not files
+                removed += 1
     return removed
 
 
