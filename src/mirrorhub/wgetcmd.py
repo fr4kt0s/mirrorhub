@@ -30,6 +30,8 @@ MAX_ARGS = 60
 
 @dataclass(frozen=True)
 class Opt:
+    """How the value of an allowed wget option is checked (see ALLOWED)."""
+
     kind: str  # flag | int | level | rate | choice | choices | regex | pattern
     lo: int = 0
     hi: int = 0
@@ -113,12 +115,15 @@ _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
 class CommandError(ValueError):
+    """A hand-edited wget command was refused; ``messages`` lists every reason."""
+
     def __init__(self, messages: list[str]) -> None:
         super().__init__("; ".join(messages))
         self.messages = messages
 
 
 def tree_url(method: str, host: str, root: str) -> str:
+    """Return the URL of the upstream tree, always ending with a slash."""
     root = root.strip("/")
     return f"{method}://{host}/{root}/" if root else f"{method}://{host}/"
 
@@ -162,7 +167,7 @@ def generated_args(
 
 
 def full_argv(args: Iterable[str], *, target: str, url: str, dry_run: bool) -> list[str]:
-    """The argv MirrorHub runs: options, then the managed options, then the URL."""
+    """Return the argv MirrorHub runs: options, then the managed options, then the URL."""
     return [
         "wget",
         *args,

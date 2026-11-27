@@ -63,6 +63,7 @@ class PartWriter:
         self._path = None
 
     def write(self, data: bytes | bytearray | memoryview) -> int:
+        """Write data, starting a new part whenever the current one is full."""
         view = memoryview(data)
         total = len(view)
         while view:
@@ -80,11 +81,12 @@ class PartWriter:
         return total
 
     def flush(self) -> None:
+        """Flush the current part to the operating system."""
         if self._handle is not None:
             self._handle.flush()
 
     def close(self) -> list[tuple[Path, str]]:
-        """Finish writing; returns (path, sha256) of every part in order."""
+        """Finish writing; return (path, sha256) of every part in order."""
         self._finish_current()
         if not self.parts and self.part_bytes <= 0:
             # Nothing written at all: keep the single-file layout (an empty file).
@@ -93,6 +95,7 @@ class PartWriter:
         return self.parts
 
     def abort(self) -> None:
+        """Close the current part without finishing it; it is not added to ``parts``."""
         if self._handle is not None:
             self._handle.close()
             self._handle = None

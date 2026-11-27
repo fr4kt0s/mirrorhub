@@ -40,6 +40,8 @@ _NUMBER = r"(\d{1,2})"
 
 @dataclass
 class Helper:
+    """The helper's fields; ``freq`` is one of the FREQUENCIES keys."""
+
     freq: str = "daily"
     minute: int = 0
     hour: int = 3
@@ -49,11 +51,12 @@ class Helper:
 
     @property
     def time(self) -> str:
+        """Time of day as ``HH:MM`` (the value of the form's time input)."""
         return f"{self.hour:02d}:{self.minute:02d}"
 
 
 def build(helper: Helper) -> str | None:
-    """The cron expression for the helper fields; None for "custom"."""
+    """Return the cron expression for the helper fields, or None for "custom"."""
     minute, hour = helper.minute, helper.hour
     if helper.freq == "hourly":
         return f"{minute} * * * *"
@@ -102,7 +105,10 @@ def _parse_days(text: str) -> list[int] | None:
 
 
 def parse(expr: str) -> Helper:
-    """Helper fields for a cron expression; freq "custom" if the helper cannot show it."""
+    """Return the helper fields for a cron expression.
+
+    ``freq`` is "custom" if the helper cannot show the expression.
+    """
     fields = expr.split()
     custom = Helper(freq="custom")
     if len(fields) != 5:
@@ -141,7 +147,10 @@ def parse(expr: str) -> Helper:
 
 
 def describe(expr: str) -> str:
-    """A short English description of the expression ("" if the helper cannot show it)."""
+    """Describe the expression in a short English sentence.
+
+    Returns "" if the helper cannot show the expression.
+    """
     helper = parse(expr)
     if helper.freq == "hourly":
         return f"Every hour at minute {helper.minute}"
@@ -172,7 +181,10 @@ def _int(form: Mapping[str, object], name: str, default: int, low: int, high: in
 
 
 def from_form(form: Mapping[str, object], days: list[str]) -> Helper:
-    """Helper fields from the submitted form (cb_* fields); out-of-range values are clamped."""
+    """Read the helper fields from the submitted form (``cb_*`` fields).
+
+    Out-of-range values are clamped; an unknown frequency becomes "custom".
+    """
     freq = str(form.get("cb_freq") or "custom")
     if freq not in FREQUENCY_KEYS:
         freq = "custom"

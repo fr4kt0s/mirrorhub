@@ -70,7 +70,10 @@ def reject_regex(keep: list[str]) -> str:
 
 
 def combine_reject(user_regex: str, keep: list[str]) -> str:
-    """The operator's exclude regex and the architecture filter as one --reject-regex."""
+    """Combine the operator's exclude regex and the architecture filter into one regex.
+
+    The result is passed to wget as ``--reject-regex``.
+    """
     generated = reject_regex(keep)
     if user_regex and generated:
         return f"({user_regex})|({generated})"

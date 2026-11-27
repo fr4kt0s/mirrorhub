@@ -83,7 +83,7 @@ MIN_PREFIX = 7  # git's default abbreviation; GitHub shows commits with 7 digits
 
 
 def same_commit(first: str, second: str) -> bool:
-    """True if both ids name the same commit, allowing different abbreviations.
+    """Return True if both ids name the same commit, allowing different abbreviations.
 
     ``MIRRORHUB_COMMIT`` may be given as 7 digits (GitHub), 12 (``.git`` in the image)
     or 40; suffixes such as ``-dirty`` must match.

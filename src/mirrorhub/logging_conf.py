@@ -12,18 +12,25 @@ _RESERVED = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
 
 
 def redact(text: str) -> str:
+    """Replace the value after ``password=``, ``token:`` and similar keys with ``***``."""
     return _SECRET_RE.sub(r"\1\2***", text)
 
 
 class RedactingFilter(logging.Filter):
+    """Redact secrets in every log message before it is formatted."""
+
     def filter(self, record: logging.LogRecord) -> bool:
+        """Format the message once, redact it and keep the record."""
         record.msg = redact(record.getMessage())
         record.args = None
         return True
 
 
 class JsonFormatter(logging.Formatter):
+    """Format a record as one JSON object, including the fields passed in ``extra``."""
+
     def format(self, record: logging.LogRecord) -> str:
+        """Return the record as a single-line JSON object."""
         payload: dict[str, Any] = {
             "ts": datetime.fromtimestamp(record.created, UTC).isoformat(timespec="milliseconds"),
             "level": record.levelname,
@@ -39,6 +46,7 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure_logging(fmt: str = "text", level: str = "INFO") -> None:
+    """Send all logging to stderr as text or JSON (fmt "json"), with secrets redacted."""
     handler = logging.StreamHandler(sys.stderr)
     handler.addFilter(RedactingFilter())
     if fmt == "json":

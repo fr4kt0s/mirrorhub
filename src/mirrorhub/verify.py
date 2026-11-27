@@ -188,6 +188,7 @@ def verify(directory: Path | str) -> dict[str, Any]:
 
 
 def main() -> int:
+    """Run ``python -m mirrorhub.verify <directory>``; return the exit code."""
     if len(sys.argv) != 2:
         print("usage: python -m mirrorhub.verify <export-or-repository-directory>", file=sys.stderr)
         return 2

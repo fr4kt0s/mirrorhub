@@ -36,6 +36,11 @@ class ExportError(RuntimeError):
 
 
 def validate_relative(value: str) -> None:
+    """Raise ExportError unless value is a safe relative path inside the repository.
+
+    Refused: empty, absolute, ``.``/``..`` or empty components, backslashes and
+    control characters.
+    """
     parts = value.split("/")
     if (
         not value
@@ -48,6 +53,10 @@ def validate_relative(value: str) -> None:
 
 
 def validate_link(path: str, target: str) -> None:
+    """Raise ExportError unless the symlink at path stays inside the repository.
+
+    The target must be relative and must not resolve above the repository root.
+    """
     if (
         not target
         or target.startswith("/")
@@ -72,6 +81,11 @@ def _identity(info: os.stat_result) -> tuple[int, int, int, int, int]:
 
 
 def file_hash(path: Path, pulse: Pulse | None = None) -> str:
+    """Return the SHA-256 hex digest of a regular file (symlinks are not followed).
+
+    Raises ExportError if path is not a regular file or changed while it was read
+    (device, inode, size, mtime or ctime differ before and after).
+    """
     digest = hashlib.sha256()
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
 
@@ -327,8 +341,9 @@ def resolve_against_base(
     *,
     threads: int = 1,
 ) -> list[str]:
-    """Hash the files whose digest the inventory left empty but whose size and mtime
-    equal the base entry: only their content decides whether they changed.
+    """Hash the undigested files whose size and mtime equal the base entry.
+
+    Only their content decides whether they changed.
 
     An incremental export builds its inventory with ``hash_files=False``. A file
     without a cache hit whose size or mtime differs from the base is changed anyway;
@@ -371,12 +386,21 @@ def diff(
     current: Inventory,
     previous: Inventory,
 ) -> tuple[list[str], list[str]]:
+    """Compare two inventories; return the sorted changed and deleted paths.
+
+    Changed: new paths and paths whose entry (type, size, mtime, digest or link
+    target) differs. Deleted: paths only in the previous inventory.
+    """
     changed = sorted(path for path, entry in current.items() if previous.get(path) != entry)
     deleted = sorted(set(previous) - set(current))
     return changed, deleted
 
 
 def save(path: Path, inventory: Inventory) -> None:
+    """Write an inventory as compact, sorted JSON (``files.json``) and fsync it.
+
+    The file must not exist yet.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
 
     with path.open("x", encoding="utf-8") as handle:
@@ -392,6 +416,7 @@ def save(path: Path, inventory: Inventory) -> None:
 
 
 def load(path: Path) -> Inventory:
+    """Read an inventory and check its shape and every path (ExportError if invalid)."""
     with path.open(encoding="utf-8") as handle:
         value = json.load(handle)
 

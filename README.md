@@ -849,6 +849,13 @@ Runs compileall, ruff check, ruff format --check, mypy (strict), pytest and
 `docker compose config`. The checks stop at the first failure. A mypy failure is
 a failed release gate; do not disable strict mode to hide it.
 
+Code style is PEP 8 (ruff, line length 100). Docstrings follow PEP 257 in
+English: every public module, class, method and function has one, the first
+line is a one-line summary in the imperative mood ("Return …", not
+"Returns …"), and comments explain why rather than what. ruff enforces this
+(rule set `D`, `ruff.toml`); packages still listed under `per-file-ignores`
+there have not been converted yet. Tests and migrations are exempt.
+
 GitHub Actions (.github/workflows/check.yml) runs two jobs for every pull
 request and push to master:
 

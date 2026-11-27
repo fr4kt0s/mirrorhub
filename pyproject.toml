@@ -41,18 +41,6 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-q"
 
-[tool.ruff]
-line-length = 100
-target-version = "py312"
-src = ["src", "tests"]
-
-[tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "S", "C4", "SIM", "RUF"]
-ignore = ["S101"]
-
-[tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S"]
-
 [tool.mypy]
 python_version = "3.12"
 strict = true

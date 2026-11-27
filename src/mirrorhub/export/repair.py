@@ -41,6 +41,8 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 @dataclass(frozen=True)
 class Request:
+    """A checked repair request of a receiver (format ``mirrorhub-repair-request`` v1)."""
+
     slug: str
     base_export_id: str
     created_at: str
@@ -53,6 +55,7 @@ class Request:
 
 
 def request_name(slug: str) -> str:
+    """Return the file name the importer gives a repair request (``repair-<slug>.json``)."""
     return f"repair-{slug}.json"
 
 
@@ -128,8 +131,11 @@ def parse(data: bytes, checksum: bytes, slug: str) -> Request:
 
 
 def check_against_base(request: Request, base: Inventory) -> None:
-    """The receiver compared its tree with the base's files.json: what it misses or has
-    differently must be listed there, what it has extra must not."""
+    """Check the request's paths against the base inventory (ExportError if inconsistent).
+
+    The receiver compared its tree with the base's files.json: what it misses or has
+    differently must be listed there, what it has extra must not.
+    """
     unknown = [path for path in request.resend if path not in base]
     if unknown:
         raise ExportError(
@@ -154,7 +160,8 @@ def _directory(root: Path, slug: str) -> Path:
 def store(root: Path, request: Request, data: bytes) -> Path:
     """Keep the uploaded request until its export is published (named by its SHA-256).
 
-    Requests older than a week that never became an export are removed here."""
+    Requests older than a week that never became an export are removed here.
+    """
     directory = _directory(root, request.slug)
     directory.mkdir(parents=True, exist_ok=True)
     cutoff = time.time() - KEEP_SECONDS
@@ -172,7 +179,7 @@ def store(root: Path, request: Request, data: bytes) -> Path:
 
 
 def load(root: Path, slug: str, sha256: str) -> Request:
-    """A kept request by its SHA-256, checked again."""
+    """Load a kept request by its SHA-256 and check it again."""
     if not SHA256_RE.fullmatch(sha256):
         raise ExportError("invalid repair request id")
     path = _directory(root, slug) / f"{sha256}.json"
@@ -184,6 +191,7 @@ def load(root: Path, slug: str, sha256: str) -> Request:
 
 
 def discard(root: Path, slug: str, sha256: str) -> None:
+    """Remove a kept request (after its export was published)."""
     if SHA256_RE.fullmatch(sha256):
         (_directory(root, slug) / f"{sha256}.json").unlink(missing_ok=True)
 
@@ -193,6 +201,8 @@ def discard(root: Path, slug: str, sha256: str) -> None:
 
 @dataclass(frozen=True)
 class Applied:
+    """A repair request applied to an export's payload and deletion list."""
+
     changed: list[str]
     deleted: list[str]
     resent: int  # requested paths added to the payload

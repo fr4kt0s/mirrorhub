@@ -41,17 +41,20 @@ CREATE_DELETE_TRIGGER = (
 
 
 class PurgeError(Exception):
-    pass
+    """The purge was refused (period too short, archive file exists)."""
 
 
 @dataclass
 class PurgeResult:
+    """Outcome of a purge: the cutoff time, the entries removed and their archive."""
+
     cutoff: str
     count: int
     archive: Path | None
 
 
 def default_archive() -> Path:
+    """Return the default archive file: ``<state>/backups/audit-archive-<UTC time>.jsonl``."""
     stamp = utcnow().strftime("%Y%m%d-%H%M%S")
     return get_settings().state_dir / "backups" / f"audit-archive-{stamp}.jsonl"
 
@@ -114,6 +117,7 @@ def purge(days: int, archive: Path | None = None, *, dry_run: bool = False) -> P
 
 
 def main(arguments: list[str] | None = None) -> int:
+    """Run the ``python -m mirrorhub.audit`` command line; return the exit code."""
     parser = argparse.ArgumentParser(prog="python -m mirrorhub.audit", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     prune = commands.add_parser("purge", help="remove audit entries older than N days")
