@@ -36,6 +36,8 @@ class InvalidCredentials(Exception):
 
 
 class LoginLocked(Exception):
+    """Login refused because the (username, IP) pair is locked; retry_after_s says how long."""
+
     def __init__(self, retry_after_s: int) -> None:
         super().__init__(f"locked for {retry_after_s}s")
         self.retry_after_s = retry_after_s
@@ -63,6 +65,7 @@ class IpRateLimiter:
         self._last_prune = clock()
 
     def allow(self, key: str) -> bool:
+        """Count an attempt from key; return False once the window's limit is exceeded."""
         with self._lock:
             now = self._clock()
             self._prune(now)
@@ -76,7 +79,7 @@ class IpRateLimiter:
             return len(hits) <= self.limit
 
     def first_rejection(self, key: str) -> bool:
-        """True once per window for a rejected address, so only that one gets audited."""
+        """Return True once per window for a rejected address, so it is audited once."""
         with self._lock:
             now = self._clock()
             last = self._reported.get(key)
@@ -99,11 +102,12 @@ class IpRateLimiter:
         }
 
     def tracked(self) -> int:
-        """Number of addresses currently held in memory."""
+        """Return the number of addresses currently held in memory."""
         with self._lock:
             return len(self._hits)
 
     def reset(self) -> None:
+        """Forget all counted attempts (tests)."""
         with self._lock:
             self._hits.clear()
             self._reported.clear()
@@ -113,11 +117,13 @@ ip_limiter = IpRateLimiter()
 
 
 def hash_password(password: str) -> str:
+    """Return the argon2 hash of a password (concurrent hashing is capped)."""
     with _hash_slots:
         return _hasher.hash(password)
 
 
 def verify_password(password_hash: str, password: str) -> bool:
+    """Return True if the password matches the argon2 hash."""
     try:
         with _hash_slots:
             return _hasher.verify(password_hash, password)
@@ -150,7 +156,10 @@ def bootstrap_admin(db: Session, settings: Settings | None = None) -> str | None
 
 
 def print_generated_password(username: str, password: str) -> None:
-    """Printed once straight to stderr (not via logging, whose filter redacts passwords)."""
+    """Print the generated admin password once to stderr.
+
+    Not via logging, whose filter would redact the password.
+    """
     banner = "=" * 64
     sys.stderr.write(
         f"\n{banner}\nMirrorHub first start: initial admin credentials (shown only once)\n"
@@ -249,7 +258,7 @@ def _session_id(token: str) -> str:
 def create_session(
     db: Session, admin: Admin, ip: str, settings: Settings | None = None
 ) -> tuple[str, AuthSession]:
-    """Returns (cookie token, session row). Only the token's hash is stored."""
+    """Start a session; return (cookie token, session row). Only the token's hash is stored."""
     s = settings or get_settings()
     assert admin.id is not None
     token = secrets.token_urlsafe(32)
@@ -268,6 +277,7 @@ def create_session(
 
 
 def lookup_session(db: Session, token: str, now: datetime | None = None) -> AuthSession | None:
+    """Return the unexpired session of a cookie token, or None."""
     if not token or len(token) > 128:
         return None
     row = db.get(AuthSession, _session_id(token))
@@ -277,6 +287,7 @@ def lookup_session(db: Session, token: str, now: datetime | None = None) -> Auth
 
 
 def delete_session(db: Session, token: str) -> None:
+    """Delete the session of a cookie token (logout)."""
     row = db.get(AuthSession, _session_id(token))
     if row is not None:
         db.delete(row)
@@ -284,6 +295,7 @@ def delete_session(db: Session, token: str) -> None:
 
 
 def purge_expired_sessions(db: Session) -> int:
+    """Delete expired sessions; return how many were removed."""
     rows = db.exec(select(AuthSession).where(col(AuthSession.expires_at) <= utcnow())).all()
     for row in rows:
         db.delete(row)

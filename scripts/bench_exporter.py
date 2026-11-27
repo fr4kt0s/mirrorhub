@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure the exporter's inventory and packing on an existing mirror.
+r"""Measure the exporter's inventory and packing on an existing mirror.
 
 Read-only for the mirror. Modes:
 
@@ -17,7 +17,7 @@ served from the page cache. --drop-caches (root) empties it first.
 
 Examples:
   python3 scripts/bench_exporter.py inventory --root /mnt/repository/ubuntu --threads 1 8 16
-  python3 scripts/bench_exporter.py full --root /mnt/repository/ubuntu --out /mnt/scratch/bench \\
+  python3 scripts/bench_exporter.py full --root /mnt/repository/ubuntu --out /mnt/scratch/bench \
       --limit-mb 20000
 """
 
@@ -65,6 +65,7 @@ def _mib(value: int) -> str:
 
 
 def inventory(args: argparse.Namespace) -> None:
+    """Time the inventory walk with a hash cache for each thread count."""
     cache: manifest.HashCache = {}
     if args.cache and Path(args.cache).exists():
         cache = manifest.load_hash_cache(Path(args.cache))
@@ -91,6 +92,7 @@ def inventory(args: argparse.Namespace) -> None:
 
 
 def full(args: argparse.Namespace) -> None:
+    """Time a full export's packing into a scratch directory."""
     out: Path = args.out
     if out.resolve().is_relative_to(args.root.resolve()):
         raise SystemExit("--out must not be inside --root")
@@ -143,6 +145,7 @@ def full(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    """Run the command line."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("mode", choices=["inventory", "full"])
     parser.add_argument("--root", type=Path, required=True, help="repository directory")

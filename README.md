@@ -853,8 +853,8 @@ Code style is PEP 8 (ruff, line length 100). Docstrings follow PEP 257 in
 English: every public module, class, method and function has one, the first
 line is a one-line summary in the imperative mood ("Return …", not
 "Returns …"), and comments explain why rather than what. ruff enforces this
-(rule set `D`, `ruff.toml`); packages still listed under `per-file-ignores`
-there have not been converted yet. Tests and migrations are exempt.
+(rule set `D`, `ruff.toml`) for `src/`, `scripts/` and `contrib/`; tests and
+migrations are exempt.
 
 GitHub Actions (.github/workflows/check.yml) runs two jobs for every pull
 request and push to master:

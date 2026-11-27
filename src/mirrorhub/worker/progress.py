@@ -13,11 +13,14 @@ PERCENT_RE = re.compile(r"(?<!\d)(\d{1,3})%")
 
 
 class ProgressParser:
+    """Extracts a percentage and a status text from tool output lines."""
+
     def __init__(self) -> None:
         self.pct: float | None = None
         self.text: str = ""
 
     def feed(self, line: str) -> tuple[float | None, str]:
+        """Read one output line; return the current (percentage, text)."""
         text = line.strip()
         if not text:
             return self.pct, self.text

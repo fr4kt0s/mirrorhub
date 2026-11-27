@@ -29,6 +29,8 @@ BASE_HEADERS: dict[str, str] = {
 
 
 class SecurityHeadersMiddleware:
+    """ASGI middleware that adds BASE_HEADERS (CSP, HSTS, framing) to every response."""
+
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
@@ -38,6 +40,7 @@ class SecurityHeadersMiddleware:
         receive: Receive,
         send: Send,
     ) -> None:
+        """Add the security headers to each HTTP response as its headers are sent."""
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return

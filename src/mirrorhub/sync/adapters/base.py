@@ -19,6 +19,7 @@ class SyncAdapter:
     result_label: str
 
     def validate_plan(self, plan: SyncPlan) -> None:
+        """Raise SyncConfigurationError unless the plan suits this adapter."""
         raise NotImplementedError
 
     def build_plan(
@@ -26,6 +27,7 @@ class SyncAdapter:
         plan: SyncPlan,
         context: SyncExecutionContext,
     ) -> BuildPlan:
+        """Turn a validated plan into the command steps the worker runs."""
         raise NotImplementedError
 
     def interpret_result(
@@ -35,6 +37,7 @@ class SyncAdapter:
         started_at: datetime,
         finished_at: datetime,
     ) -> SyncResult:
+        """Map the tool's exit code and output to a normalized SyncResult."""
         if result.cancelled:
             return SyncResult(
                 status=SyncStatus.CANCELLED,

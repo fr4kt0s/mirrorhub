@@ -4,12 +4,16 @@ from enum import StrEnum
 
 
 class RepoKind(StrEnum):
+    """What a repository mirrors: an APT or Arch repository, or generic files."""
+
     APT = "apt"
     ARCH = "arch"
     GENERIC = "generic"
 
 
 class Tool(StrEnum):
+    """The sync tool of a repository; ``export`` marks jobs of the export worker."""
+
     DEBMIRROR = "debmirror"
     RSYNC = "rsync"
     WGET = "wget"
@@ -18,24 +22,32 @@ class Tool(StrEnum):
 
 
 class Method(StrEnum):
+    """Transport to the upstream mirror."""
+
     HTTP = "http"
     HTTPS = "https"
     RSYNC = "rsync"
 
 
 class DiffMode(StrEnum):
+    """debmirror's handling of pdiff index files (``--diff``)."""
+
     USE = "use"
     MIRROR = "mirror"
     NONE = "none"
 
 
 class CleanupMode(StrEnum):
+    """When debmirror removes files that are no longer in the upstream index."""
+
     POST = "post"  # debmirror default (--postcleanup), not passed explicitly
     CLEANUP = "cleanup"  # advanced
     NONE = "none"  # advanced (--nocleanup)
 
 
 class JobType(StrEnum):
+    """What a job does."""
+
     SYNC = "sync"
     EXPORT = "export"
     # Re-read every file and rebuild the hash cache; runs in the export worker.
@@ -47,6 +59,8 @@ SCHEDULE_JOB_TYPES = (JobType.SYNC.value, JobType.EXPORT.value, JobType.REHASH.v
 
 
 class JobStatus(StrEnum):
+    """Life cycle of a job."""
+
     QUEUED = "queued"
     RUNNING = "running"
     CANCELLING = "cancelling"
@@ -62,6 +76,8 @@ TERMINAL_JOB_STATUSES = frozenset(
 
 
 class Trigger(StrEnum):
+    """What started a job."""
+
     MANUAL = "manual"
     SCHEDULE = "schedule"
     CHAIN = "chain"
@@ -69,28 +85,38 @@ class Trigger(StrEnum):
 
 
 class ExportMode(StrEnum):
+    """Full export of the whole tree or incremental export since a base."""
+
     INCR = "incr"
     FULL = "full"
 
 
 class ExportFormat(StrEnum):
+    """Archive format of an export."""
+
     TAR = "tar"
     ZST = "tar.zst"
 
 
 class ExportStatus(StrEnum):
+    """Life cycle of an export record."""
+
     BUILDING = "building"
     PUBLISHED = "published"
     FAILED = "failed"
 
 
 class ChannelType(StrEnum):
+    """How a notification channel delivers."""
+
     SMTP = "smtp"
     WEBHOOK = "webhook"
     FILE = "file"
 
 
 class NotifyEvent(StrEnum):
+    """Events a notification rule can send."""
+
     JOB_FAILED = "job_failed"
     JOB_SUCCEEDED = "job_succeeded"
     RETRY_EXHAUSTED = "retry_exhausted"

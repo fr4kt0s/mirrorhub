@@ -17,6 +17,7 @@ def build(
     target: Path,
     cwd: Path,
 ) -> BuildPlan:
+    """Build the debmirror command for a repository (BuildError if invalid)."""
     if not repo.architectures:
         raise BuildError("no architectures configured; use 'none' to mirror no architectures")
     if not repo.suites:

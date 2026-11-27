@@ -8,6 +8,8 @@ from enum import StrEnum
 
 
 class SyncStatus(StrEnum):
+    """Outcome of a sync run."""
+
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -18,6 +20,8 @@ class SyncStatus(StrEnum):
 
 
 class SyncErrorCode(StrEnum):
+    """Why a sync run failed, independent of the tool."""
+
     CONFIG_INVALID = "config_invalid"
     AUTH_FAILED = "auth_failed"
     SOURCE_UNREACHABLE = "source_unreachable"
@@ -44,6 +48,7 @@ class SyncResult:
 
     @property
     def succeeded(self) -> bool:
+        """True if the sync succeeded, with or without warnings."""
         return self.status in {
             SyncStatus.SUCCEEDED,
             SyncStatus.SUCCEEDED_WITH_WARNINGS,

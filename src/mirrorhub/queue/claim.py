@@ -28,6 +28,8 @@ ACTIVE_STATUSES = (JobStatus.QUEUED.value, JobStatus.RUNNING.value)
 
 @dataclass(frozen=True)
 class ClaimedJob:
+    """The fields a worker needs from a job it claimed (detached from the session)."""
+
     id: int
     repo_id: int
     tool: str
@@ -145,6 +147,11 @@ def heartbeat(
     progress_text: str | None = None,
     now: datetime | None = None,
 ) -> bool:
+    """Record that the worker still runs the job, with optional progress.
+
+    Also refreshes the repository lock. Returns False if the job is no longer running
+    under this worker (cancelled, recovered as stale), so the worker can stop.
+    """
     now = now or utcnow()
     with immediate_session() as db:
         job = db.get(Job, job_id)
@@ -164,12 +171,14 @@ def heartbeat(
 
 
 def should_cancel(job_id: int, worker_id: str) -> bool:
+    """Return True if an operator asked to cancel the job this worker runs."""
     with immediate_session() as db:
         job = db.get(Job, job_id)
         return bool(job and job.claimed_by == worker_id and job.cancel_requested)
 
 
 def release(job_id: int, worker_id: str) -> None:
+    """Free the repository lock of a job this worker has finished."""
     with immediate_session() as db:
         job = db.get(Job, job_id)
         if (

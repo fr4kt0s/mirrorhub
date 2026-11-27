@@ -20,6 +20,7 @@ def backoff_seconds(policy: dict[str, Any], attempt: int) -> int:
 
 
 def is_retryable(policy: dict[str, Any], exit_code: int | None) -> bool:
+    """Return True if the policy retries a run that ended with exit_code."""
     if exit_code is None:
         return False
     codes = policy.get("retryable_exit_codes") or []
@@ -27,4 +28,5 @@ def is_retryable(policy: dict[str, Any], exit_code: int | None) -> bool:
 
 
 def attempts_left(policy: dict[str, Any], attempt: int) -> bool:
+    """Return True if the policy allows another attempt after this one."""
     return attempt < int(policy.get("max_attempts", 1))

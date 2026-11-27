@@ -27,6 +27,7 @@ def build(
     cwd: Path,
     settings: Settings,
 ) -> BuildPlan:
+    """Write the ftpsync configuration and build its command (BuildError if invalid)."""
     if job.dry_run:
         raise BuildError("ftpsync does not support dry runs")
 

@@ -18,6 +18,7 @@ class WgetAdapter(SyncAdapter):
     result_label = "wget"
 
     def validate_plan(self, plan: SyncPlan) -> None:
+        """Require a WgetPlan over http or https."""
         if not isinstance(plan, WgetPlan):
             raise SyncConfigurationError("wget adapter requires a WgetPlan")
 
@@ -29,6 +30,7 @@ class WgetAdapter(SyncAdapter):
         plan: SyncPlan,
         context: SyncExecutionContext,
     ) -> BuildPlan:
+        """Build the wget steps for the plan (tree or file list)."""
         self.validate_plan(plan)
 
         return build_wget(

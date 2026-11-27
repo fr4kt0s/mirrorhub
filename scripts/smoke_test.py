@@ -34,6 +34,8 @@ class CheckError(Exception):
 
 @dataclass
 class Result:
+    """Outcome of one smoke check: name, PASS/WARN/FAIL and detail."""
+
     name: str
     status: str
     detail: str = ""
@@ -213,8 +215,11 @@ def evaluate_services(
     services: list[dict[str, object]],
     required: tuple[str, ...],
 ) -> tuple[str, str]:
-    """Every container of a required service must be running and, if it has a
-    healthcheck, healthy. "starting" is a warning; "unhealthy" fails."""
+    """Check that every container of a required service runs and is healthy.
+
+    Containers without a healthcheck only need to run. "starting" is a warning;
+    "unhealthy" fails.
+    """
     containers: dict[str, list[tuple[str, str]]] = {}
     for service in services:
         name = str(service.get("Service", "?"))
@@ -261,6 +266,7 @@ def evaluate_services(
 
 
 def replica_count(services: list[dict[str, object]], name: str) -> int:
+    """Return how many containers of a Compose service are listed."""
     return sum(1 for service in services if str(service.get("Service")) == name)
 
 
@@ -275,10 +281,12 @@ def _compose_services() -> list[dict[str, object]]:
 
 
 def check_compose(required: tuple[str, ...]) -> tuple[str, str]:
+    """Check that every required service runs and is healthy."""
     return evaluate_services(_compose_services(), required)
 
 
 def check_login_page(base_url: str, options: TlsOptions) -> tuple[str, str]:
+    """Check that the login page is served."""
     status, body = _get(f"{base_url.rstrip('/')}/login", options)
     if status != 200:
         raise CheckError(f"GET /login returned {status}: {_tail(body, 80)}")
@@ -292,6 +300,7 @@ def check_unauthenticated_redirect(
     base_url: str,
     options: TlsOptions,
 ) -> tuple[str, str]:
+    """Check that a protected page redirects to the login without a session."""
     status, body = _get(f"{base_url.rstrip('/')}/jobs", options, follow=False)
     if status in (301, 302, 303, 307, 308):
         return PASS, f"redirected with {status}"
@@ -319,6 +328,7 @@ def _replicas(service: str) -> int:
 
 
 def check_worker_tools(worker: str) -> tuple[str, str]:
+    """Check debmirror and gpgv (required), patch and ed (for diffs) in every sync worker."""
     replicas = _replicas(worker)
     optional_missing: set[str] = set()
     for index in range(1, replicas + 1):
@@ -336,6 +346,7 @@ def check_worker_tools(worker: str) -> tuple[str, str]:
 
 
 def check_keyring(worker: str, path: str = "/gnupg/trustedkeys.gpg") -> tuple[str, str]:
+    """Check that every sync worker sees a keyring with keys."""
     replicas = _replicas(worker)
     counts: list[int] = []
     for index in range(1, replicas + 1):
@@ -358,6 +369,7 @@ def check_keyring(worker: str, path: str = "/gnupg/trustedkeys.gpg") -> tuple[st
 
 
 def check_export_tools(export_worker: str) -> tuple[str, str]:
+    """Check that zstd and gpg are installed in the export worker."""
     missing = _missing_tools(export_worker, ("zstd", "gpg"), 1)
     if missing:
         raise CheckError(f"missing in {export_worker}: {', '.join(sorted(missing))}")
@@ -365,6 +377,7 @@ def check_export_tools(export_worker: str) -> tuple[str, str]:
 
 
 def check_export_writable(export_worker: str, path: str) -> tuple[str, str]:
+    """Check that the export worker can write to the drop folder."""
     # A top-level dot file: drop-folder housekeeping only looks at directories.
     probe = f"{path.rstrip('/')}/.mirrorhub-smoke-probe"
     try:
@@ -390,6 +403,7 @@ def check_data_space(
     path: str,
     minimum_free_pct: float,
 ) -> tuple[str, str]:
+    """Check that the data directory has at least minimum_free_pct free."""
     output = _exec(worker, f"df -Pk {path} | tail -1")
     fields = output.split()
     if len(fields) < 6:
@@ -405,6 +419,7 @@ def check_data_space(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run all checks and print the results; return the exit code."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--base-url",
