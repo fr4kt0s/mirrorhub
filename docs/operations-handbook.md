@@ -354,7 +354,7 @@ The practical tests 3.1–3.4, 3.6 and 3.7 are referenced here, not repeated. Th
 - [ ] **C19** (P2) YAML import with an error (e.g. unknown field, typo in the tool name) → error message in the plan, nothing applied.
 - [ ] **C20** (P1) Create a schedule → sync starts at the scheduled time.
 - [ ] **C21** (P2) Schedule with a following export → export starts only after a successful sync; no export after a failed sync.
-- [ ] **C22** (P2) Edit and delete a schedule → takes effect at the next run time.
+- [ ] **C22** (P2) *Edit* a schedule (change repository, job type, cron, enabled) → the page shows the current values, saving recomputes *Next run*, audit `schedule.update` lists the changes; an invalid cron keeps the input and changes nothing. Delete a schedule → it no longer fires.
 - [ ] **C23** (P3) Schedule becomes due while the same sync is still running → no second run.
 - [ ] **C24** (P2) wget repository, mode *File list* with plain URLs from two different hosts and one `URL -> path` line → sync succeeds, files under the expected paths in `/data/<slug>/` (4.6).
 - [ ] **C25** (P3) wget *File list*: empty list, 501 lines, two lines with the same target path, URL ending in `/`, URL with `?` → form error each time, nothing saved.

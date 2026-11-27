@@ -1,11 +1,15 @@
 """Schedule CRUD routes."""
 
+from dataclasses import dataclass
+from typing import Any
+
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session, col, select
+from starlette.datastructures import FormData
 
 from mirrorhub.enums import SCHEDULE_JOB_TYPES
-from mirrorhub.models import Schedule
+from mirrorhub.models import Repository, Schedule
 from mirrorhub.security import validators
 from mirrorhub.services import audit, repos, scheduler
 from mirrorhub.web.deps import CurrentUser, client_ip, get_db, render, require_user
@@ -23,24 +27,129 @@ def _chain_choice(value: object) -> bool | str | None:
     return CHAIN_CHOICES[text]
 
 
+DEFAULT_VALUES: dict[str, Any] = {
+    "repo_id": None,
+    "job_type": "sync",
+    "preset_label": "",
+    "cron_expr": "0 3 * * *",
+    "enabled": True,
+    "chain_export": "inherit",
+}
+
+
+def _chain_name(value: bool | None) -> str:
+    return next(name for name, choice in CHAIN_CHOICES.items() if choice is value)
+
+
+def _values_of(schedule: Schedule) -> dict[str, Any]:
+    return {
+        "repo_id": schedule.repo_id,
+        "job_type": schedule.job_type,
+        "preset_label": schedule.preset_label,
+        "cron_expr": schedule.cron_expr,
+        "enabled": schedule.enabled,
+        "chain_export": _chain_name(schedule.chain_export),
+    }
+
+
+def _values_from(form: FormData) -> dict[str, Any]:
+    """The submitted fields, to show them again next to an error."""
+    try:
+        repo_id: int | None = int(str(form.get("repo_id") or 0))
+    except ValueError:
+        repo_id = None
+    return {
+        "repo_id": repo_id,
+        "job_type": str(form.get("job_type") or "sync"),
+        "preset_label": str(form.get("preset_label") or ""),
+        "cron_expr": str(form.get("cron_expr") or ""),
+        "enabled": bool(form.get("enabled")),
+        "chain_export": str(form.get("chain_export") or "inherit"),
+    }
+
+
+@dataclass
+class _Fields:
+    repo: Repository
+    job_type: str
+    cron: str
+    preset_label: str
+    enabled: bool
+    chain: bool | None
+
+
+def _parse(db: Session, form: FormData) -> _Fields | str:
+    """Validate the schedule form; return the fields or an error message."""
+    try:
+        repo_id = int(str(form.get("repo_id") or 0))
+    except ValueError:
+        return "select a valid repository"
+
+    cron = str(form.get("cron_expr") or "").strip()
+    error = validators.validate_cron(cron)
+    if error or repo_id <= 0:
+        return error or "select a repository"
+
+    repo = repos.get(db, repo_id)
+    if repo is None:
+        return "unknown repository"
+
+    job_type = str(form.get("job_type") or "sync")
+    if job_type not in SCHEDULE_JOB_TYPES:
+        return "job type must be sync, export or rehash"
+
+    chain = _chain_choice(form.get("chain_export"))
+    if isinstance(chain, str):
+        return chain
+    if job_type != "sync":
+        chain = None  # only a sync can chain an export
+
+    preset_label = str(form.get("preset_label") or "")
+    if preset_label and preset_label not in scheduler.PRESETS:
+        return "unknown preset"
+
+    return _Fields(
+        repo=repo,
+        job_type=job_type,
+        cron=cron,
+        preset_label=preset_label,
+        enabled=bool(form.get("enabled")),
+        chain=chain,
+    )
+
+
+def _context(db: Session, errors: list[str] | None, values: dict[str, Any]) -> dict[str, Any]:
+    repositories = repos.list_all(db)
+    return {
+        "repositories": repositories,
+        "repos_by_id": {repo.id: repo for repo in repositories},
+        "presets": scheduler.PRESETS,
+        "errors": errors or [],
+        "values": values,
+    }
+
+
 def _page(
     request: Request,
     db: Session,
     errors: list[str] | None = None,
+    values: dict[str, Any] | None = None,
 ) -> Response:
-    schedules = list(db.exec(select(Schedule).order_by(col(Schedule.id))).all())
-    repositories = repos.list_all(db)
-    return render(
-        request,
-        "schedules.html",
-        {
-            "schedules": schedules,
-            "repositories": repositories,
-            "repos_by_id": {repo.id: repo for repo in repositories},
-            "presets": scheduler.PRESETS,
-            "errors": errors or [],
-        },
-    )
+    context = _context(db, errors, values or DEFAULT_VALUES)
+    context["schedules"] = list(db.exec(select(Schedule).order_by(col(Schedule.id))).all())
+    return render(request, "schedules/list.html", context)
+
+
+def _edit_page(
+    request: Request,
+    db: Session,
+    schedule: Schedule,
+    errors: list[str] | None = None,
+    values: dict[str, Any] | None = None,
+) -> Response:
+    context = _context(db, errors, values or _values_of(schedule))
+    context["schedule"] = schedule
+    return render(request, "schedules/edit.html", context)
 
 
 @router.get("/schedules")
@@ -59,38 +168,18 @@ async def create(
     db: Session = Depends(get_db),
 ) -> Response:
     form = await request.form()
-    try:
-        repo_id = int(str(form.get("repo_id") or 0))
-    except ValueError:
-        return _page(request, db, ["select a valid repository"])
-
-    cron = str(form.get("cron_expr") or "").strip()
-    error = validators.validate_cron(cron)
-    if error or repo_id <= 0:
-        return _page(request, db, [error or "select a repository"])
-
-    repo = repos.get(db, repo_id)
-    if repo is None:
-        return _page(request, db, ["unknown repository"])
-
-    job_type = str(form.get("job_type") or "sync")
-    if job_type not in SCHEDULE_JOB_TYPES:
-        return _page(request, db, ["job type must be sync, export or rehash"])
-
-    chain = _chain_choice(form.get("chain_export"))
-    if isinstance(chain, str):
-        return _page(request, db, [chain])
-    if job_type != "sync":
-        chain = None  # only a sync can chain an export
+    fields = _parse(db, form)
+    if isinstance(fields, str):
+        return _page(request, db, [fields], _values_from(form))
 
     schedule = Schedule(
-        repo_id=repo_id,
-        job_type=job_type,
-        cron_expr=cron,
-        preset_label=str(form.get("preset_label") or ""),
-        enabled=bool(form.get("enabled")),
-        chain_export=chain,
-        next_fire_at=scheduler.next_after(cron),
+        repo_id=fields.repo.id or 0,
+        job_type=fields.job_type,
+        cron_expr=fields.cron,
+        preset_label=fields.preset_label,
+        enabled=fields.enabled,
+        chain_export=fields.chain,
+        next_fire_at=scheduler.next_after(fields.cron),
     )
     db.add(schedule)
     audit.record(
@@ -99,12 +188,25 @@ async def create(
         ip=client_ip(request),
         action="schedule.create",
         target_type="schedule",
-        target_id=repo.slug,
-        detail={"cron": cron, "job_type": job_type},
+        target_id=fields.repo.slug,
+        detail={"cron": fields.cron, "job_type": fields.job_type},
         commit=False,
     )
     db.commit()
     return RedirectResponse("/schedules", status_code=303)
+
+
+@router.get("/schedules/{schedule_id}/edit")
+def edit_page(
+    schedule_id: int,
+    request: Request,
+    _user: CurrentUser = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    schedule = db.get(Schedule, schedule_id)
+    if schedule is None:
+        return render(request, "error.html", {"status": 404, "detail": "Schedule not found"}, 404)
+    return _edit_page(request, db, schedule)
 
 
 @router.post("/schedules/{schedule_id}")
@@ -119,20 +221,21 @@ async def update(
         return _page(request, db, ["unknown schedule"])
 
     form = await request.form()
-    cron = str(form.get("cron_expr") or "").strip()
-    error = validators.validate_cron(cron)
-    if error:
-        return _page(request, db, [error])
-    chain = _chain_choice(form.get("chain_export"))
-    if isinstance(chain, str):
-        return _page(request, db, [chain])
+    fields = _parse(db, form)
+    if isinstance(fields, str):
+        return _edit_page(request, db, schedule, [fields], _values_from(form))
 
-    schedule.cron_expr = cron
-    schedule.enabled = bool(form.get("enabled"))
-    schedule.chain_export = chain
-    schedule.preset_label = str(form.get("preset_label") or "")
-    schedule.next_fire_at = scheduler.next_after(cron)
+    before = _values_of(schedule)
+    schedule.repo_id = fields.repo.id or 0
+    schedule.job_type = fields.job_type
+    schedule.cron_expr = fields.cron
+    schedule.enabled = fields.enabled
+    schedule.chain_export = fields.chain
+    schedule.preset_label = fields.preset_label
+    schedule.next_fire_at = scheduler.next_after(fields.cron)
     db.add(schedule)
+    after = _values_of(schedule)
+    changes = {key: [before[key], after[key]] for key in after if before[key] != after[key]}
 
     audit.record(
         db,
@@ -141,7 +244,7 @@ async def update(
         action="schedule.update",
         target_type="schedule",
         target_id=str(schedule_id),
-        detail={"cron": cron},
+        detail={"cron": fields.cron, "repo": fields.repo.slug, "changes": changes},
         commit=False,
     )
     db.commit()

@@ -498,6 +498,9 @@ the export succeeded. Leftovers older than seven days are removed automatically.
 
 A schedule runs one job type: *Sync*, *Export* (in the repository's export mode)
 or *Rehash*. "Export after a successful sync" applies to sync schedules only.
+*Edit* on the Schedules page changes every field of a schedule (repository, job
+type, preset, cron, enabled, export after sync); saving recomputes the next run.
+The audit entry `schedule.update` lists the changed fields.
 
 ### Rehash
 
