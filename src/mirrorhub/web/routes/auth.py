@@ -25,6 +25,7 @@ router = APIRouter()
 
 @router.get("/login")
 def login_page(request: Request) -> Response:
+    """Show the login form (redirect to the dashboard if already logged in)."""
     if getattr(request.state, "user", None) is not None:
         return RedirectResponse("/", status_code=303)
     return render(request, "login.html")
@@ -37,6 +38,7 @@ def login(
     password: Annotated[str, Form(max_length=auth.MAX_PASSWORD_LEN)],
     db: Session = Depends(get_db),
 ) -> Response:
+    """Check the credentials (with per-user and per-IP throttling) and start a session."""
     ip = client_ip(request)
 
     if not auth.ip_limiter.allow(ip):
@@ -82,6 +84,7 @@ def logout(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """End the session and clear its cookie."""
     token = request.cookies.get(SESSION_COOKIE, "")
     auth.delete_session(db, token)
     record(db, actor=user.admin.username, ip=client_ip(request), action="logout")

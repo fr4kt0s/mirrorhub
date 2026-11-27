@@ -30,6 +30,7 @@ def list_page(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Show the repositories."""
     return render(request, "repos/list.html", {"repos": repos.list_all(db), "errors": []})
 
 
@@ -70,6 +71,7 @@ def new_page(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Show the form for a new repository (optionally from a preset)."""
     values = _blank_values()
     values["tool"] = tool
     values["method"] = "rsync" if tool in {"rsync", "ftpsync"} else "https"
@@ -101,6 +103,7 @@ def edit_page(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Show the form for editing a repository."""
     repo = repos.get(db, repo_id)
     if repo is None:
         return render(request, "error.html", {"status": 404, "detail": "Repository not found"}, 404)
@@ -218,6 +221,7 @@ async def create_repo(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Create a repository from the form (re-show the form with errors)."""
     return await _save(request, db, user, None)
 
 
@@ -246,6 +250,7 @@ async def update_repo(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Save the edited repository (re-show the form with errors)."""
     repo = repos.get(db, repo_id)
     if repo is None:
         return render(request, "error.html", {"status": 404, "detail": "Repository not found"}, 404)
@@ -259,6 +264,7 @@ def delete_repo(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Delete a repository unless something blocks it."""
     repo = repos.get(db, repo_id)
     if repo is None:
         return Response("not found", status_code=404)

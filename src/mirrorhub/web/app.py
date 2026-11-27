@@ -39,6 +39,12 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Prepare the web process and run its background tasks.
+
+    On start: create the admin on first run, purge expired sessions and throttles,
+    seed presets and fill missing schedule times; then run the scheduler and the
+    notification sender until shutdown.
+    """
     settings = get_settings()
     settings.ensure_dirs()
 
@@ -100,6 +106,7 @@ async def _http_error(request: Request, exc: Exception) -> Response:
 
 
 def create_app() -> FastAPI:
+    """Build the FastAPI application: middleware, routes, static files and error pages."""
     settings = get_settings()
     configure_logging(settings.log_format, settings.log_level)
     app = FastAPI(

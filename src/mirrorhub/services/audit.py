@@ -61,6 +61,11 @@ def query(
     limit: int = 50,
     offset: int = 0,
 ) -> list[AuditLog]:
+    """Return audit entries, newest first, filtered for the audit page.
+
+    actor matches exactly, action as a prefix, text within the target id; since and
+    until bound the time (until exclusive).
+    """
     stmt = select(AuditLog)
     if actor:
         stmt = stmt.where(AuditLog.actor == actor)

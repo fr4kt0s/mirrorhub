@@ -16,6 +16,7 @@ def list_page(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Show the presets."""
     return render(request, "presets/list.html", {"presets": presets.list_all(db)})
 
 
@@ -26,6 +27,7 @@ def delete_preset(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Delete a preset."""
     row = presets.get(db, preset_id)
     if row is not None:
         presets.delete(db, row, actor=user.admin.username, ip=client_ip(request))
@@ -38,6 +40,7 @@ def reseed(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Restore the built-in presets that were deleted."""
     created = presets.seed(db, restore=True)
     if created:
         audit.record(

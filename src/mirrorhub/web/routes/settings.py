@@ -17,6 +17,7 @@ def page(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Show the settings page."""
     return render(
         request,
         "settings.html",
@@ -30,6 +31,7 @@ async def save(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Save log retention and disk alert thresholds."""
     form = await request.form()
     errors: list[str] = []
     try:

@@ -171,14 +171,17 @@ def seed(db: Session, *, restore: bool = False) -> int:
 
 
 def list_all(db: Session) -> list[Preset]:
+    """Return all presets, by name."""
     return list(db.exec(select(Preset).order_by(col(Preset.name))).all())
 
 
 def get(db: Session, preset_id: int) -> Preset | None:
+    """Return a preset by id."""
     return db.get(Preset, preset_id)
 
 
 def config_for_repo(repo: Repository) -> dict[str, Any]:
+    """Return a repository's settings in the form a preset stores them."""
     config = {
         "kind": repo.kind,
         "tool": repo.tool,
@@ -227,6 +230,7 @@ def config_for_repo(repo: Repository) -> dict[str, Any]:
 def save_from_repo(
     db: Session, repo: Repository, name: str, *, actor: str, ip: str = "", overwrite: bool = False
 ) -> Preset:
+    """Save a repository's settings as a preset (ValueError if the name exists)."""
     clean = name.strip()[:128] or repo.name
     existing = db.exec(select(Preset).where(Preset.name == clean)).first()
     if existing is not None and not overwrite:
@@ -258,6 +262,7 @@ def save_from_repo(
 
 
 def delete(db: Session, preset: Preset, *, actor: str, ip: str = "") -> None:
+    """Delete a preset; a deleted seed preset is remembered and not seeded again."""
     audit.record(
         db,
         actor=actor,

@@ -22,6 +22,7 @@ def _defaults() -> dict[str, Any]:
 
 
 def get(db: Session, key: str, default: Any = None) -> Any:
+    """Return a stored setting, else the given default, else the built-in default."""
     row = db.get(Setting, key)
     if row is not None:
         return row.value
@@ -31,6 +32,7 @@ def get(db: Session, key: str, default: Any = None) -> Any:
 
 
 def set_value(db: Session, key: str, value: Any, *, commit: bool = True) -> None:
+    """Store a setting (insert or update); commit unless told not to."""
     row = db.get(Setting, key)
     if row is None:
         db.add(Setting(key=key, value=value))
@@ -42,6 +44,7 @@ def set_value(db: Session, key: str, value: Any, *, commit: bool = True) -> None
 
 
 def snapshot(db: Session) -> dict[str, Any]:
+    """Return all settings: built-in defaults overlaid with the stored values."""
     values = _defaults()
     for row in db.exec(select(Setting)).all():
         values[row.key] = row.value

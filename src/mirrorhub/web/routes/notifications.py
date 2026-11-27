@@ -46,6 +46,7 @@ def page_get(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Show channels, rules and recent deliveries."""
     return _page(request, db)
 
 
@@ -55,6 +56,7 @@ async def create_channel(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Create a notification channel from the form."""
     form = await request.form()
     name = str(form.get("name") or "").strip()
     channel_type = str(form.get("type") or "")
@@ -106,6 +108,7 @@ def delete_channel(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Delete a channel with its rules and queued deliveries."""
     channel = db.get(NotificationChannel, channel_id)
     if channel is not None:
         notify.delete_channel(db, channel, actor=user.admin.username, ip=client_ip(request))
@@ -119,6 +122,7 @@ def test_channel(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Send a test message through a channel."""
     channel = db.get(NotificationChannel, channel_id)
     if channel is None:
         return _page(request, db, ["unknown channel"])
@@ -145,6 +149,7 @@ async def create_rule(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Create a rule that sends an event to a channel."""
     form = await request.form()
     channel_raw = str(form.get("channel_id") or "")
     if not channel_raw.isdigit():
@@ -174,6 +179,7 @@ def delete_rule(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Delete a rule."""
     rule = db.get(NotificationRule, rule_id)
     if rule is not None:
         notify.delete_rule(db, rule, actor=user.admin.username, ip=client_ip(request))

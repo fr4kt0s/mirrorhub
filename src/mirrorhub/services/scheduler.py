@@ -39,6 +39,7 @@ TICK_SECONDS = 30.0
 
 
 def next_after(expr: str, after: datetime | None = None) -> datetime:
+    """Return the next time after `after` (default now, UTC) the cron expression fires."""
     base = after or utcnow()
     return cast(datetime, croniter(expr, base).get_next(datetime))
 
@@ -102,6 +103,7 @@ def fire_due(db: Session, now: datetime | None = None, actor: str = "scheduler")
 
 
 def upcoming(db: Session, limit: int = 5) -> list[Schedule]:
+    """Return the enabled schedules that fire next, soonest first."""
     return list(
         db.exec(
             select(Schedule)
@@ -186,6 +188,7 @@ def _retention_due(clock: Callable[[], float] = time.monotonic) -> bool:
 
 
 async def run_forever() -> None:
+    """Run tick() every TICK_SECONDS in a worker thread, logging failures; never returns."""
     log.info("scheduler loop started", extra={"interval_s": TICK_SECONDS})
     while True:
         try:

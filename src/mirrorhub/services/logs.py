@@ -26,6 +26,7 @@ def job_log_path(
     job_id: int,
     settings: Settings | None = None,
 ) -> Path:
+    """Return the log file of a job (its directory is created)."""
     base = (settings or get_settings()).log_dir / "jobs"
     base.mkdir(parents=True, exist_ok=True)
     return base / f"{job_id}.log"
@@ -40,8 +41,11 @@ def run_header(
     worker: str,
     started: datetime,
 ) -> str:
-    """First line of every run, so a log is self-describing and the current run can be
-    cut out of it (retries append to the same file)."""
+    """Return the header line written at the start of every run.
+
+    It makes a log self-describing and lets the current run be cut out of it
+    (retries append to the same file).
+    """
     # models.utcnow() returns naive UTC; astimezone() would read it as local time.
     aware = started.replace(tzinfo=UTC) if started.tzinfo is None else started.astimezone(UTC)
     stamp = aware.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -70,7 +74,7 @@ def quarantine_stale(path: Path) -> Path | None:
 
 
 def kept_log_path(job_id: int, name: str, settings: Settings | None = None) -> Path:
-    """A log kept next to the job log, e.g. the complete rsync log of an ftpsync job."""
+    """Return a log kept next to the job log, e.g. the complete rsync log of an ftpsync job."""
     return (settings or get_settings()).log_dir / "jobs" / f"{int(job_id)}.{name}.log"
 
 
@@ -80,7 +84,7 @@ def ftpsync_log_dir(slug: str, settings: Settings | None = None) -> Path:
 
 
 def ftpsync_rsync_log(slug: str, settings: Settings | None = None) -> Path:
-    """The rsync output ftpsync writes for a repository while it runs."""
+    """Return the file ftpsync writes its rsync output to while it runs."""
     return ftpsync_log_dir(slug, settings) / f"rsync-ftpsync-{slug}.log"
 
 
@@ -134,6 +138,7 @@ def tail_snapshot(
 
 
 def tail(path: Path, lines: int = 200) -> list[str]:
+    """Return the last lines of a log file."""
     values, _offset = tail_snapshot(path, lines)
     return values
 
@@ -201,6 +206,7 @@ def retention_sweep(
     settings: Settings | None = None,
     days: int = 30,
 ) -> int:
+    """Delete job logs older than days; return how many were removed."""
     settings = settings or get_settings()
     base = settings.log_dir / "jobs"
     if not base.is_dir():

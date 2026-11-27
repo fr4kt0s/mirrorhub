@@ -17,6 +17,7 @@ def dashboard(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Show the dashboard: job counts, next schedules, recent failures, disk usage."""
     counts = {
         status.value: int(
             db.exec(

@@ -27,6 +27,11 @@ def enqueue(
     requested_by: str = "system",
     parent_job_id: int | None = None,
 ) -> Job:
+    """Queue a job for the repository and record it in the audit log.
+
+    Sync jobs run with the repository's tool, export and rehash jobs in the export
+    worker. max_attempts comes from the repository's retry policy.
+    """
     if repo.id is None:
         raise ValueError("repository must be persisted before enqueueing a job")
     repo_id = repo.id
@@ -69,6 +74,7 @@ def enqueue(
 
 
 def find_active(db: Session, repo_id: int, job_type: str) -> Job | None:
+    """Return a queued or running job of this type for the repository, if any."""
     return db.exec(
         select(Job)
         .where(
@@ -81,10 +87,12 @@ def find_active(db: Session, repo_id: int, job_type: str) -> Job | None:
 
 
 def get(db: Session, job_id: int) -> Job | None:
+    """Return a job by id."""
     return db.get(Job, job_id)
 
 
 def recent(db: Session, limit: int = 100) -> list[Job]:
+    """Return the newest jobs, newest first."""
     return list(db.exec(select(Job).order_by(col(Job.id).desc()).limit(limit)).all())
 
 

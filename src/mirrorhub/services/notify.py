@@ -1,4 +1,6 @@
-"""Notifications: SMTP email, generic webhooks (ntfy, Gotify, Slack, plain JSON) and
+"""Notifications: email, webhooks and event files for the data diode.
+
+Channels are SMTP email, generic webhooks (ntfy, Gotify, Slack, plain JSON) and
 JSON event files in the drop folder for transfer through the data diode.
 
 Events are queued in the notification_delivery outbox, one row per (event, channel).
@@ -69,11 +71,15 @@ SENDER_INTERVAL_S = 5
 
 
 class NotifyError(RuntimeError):
+    """A channel configuration is invalid or a delivery failed."""
+
     pass
 
 
 @dataclass(frozen=True)
 class Delivery:
+    """Result of one delivery attempt to a channel."""
+
     channel: str
     ok: bool
     detail: str = ""
@@ -85,6 +91,7 @@ def _fernet() -> Fernet:
 
 
 def encrypt_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Return the channel config with its secret fields encrypted (``enc:`` prefix)."""
     out = dict(config)
     for key in SECRET_FIELDS:
         value = out.get(key)
@@ -94,6 +101,7 @@ def encrypt_config(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def decrypt_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Return the channel config with its secret fields decrypted."""
     out = dict(config)
     for key in SECRET_FIELDS:
         value = out.get(key)
@@ -174,6 +182,7 @@ def create_channel(
     actor: str,
     ip: str = "",
 ) -> NotificationChannel:
+    """Validate and store a new channel (secrets encrypted); NotifyError on a duplicate name."""
     clean = validate_config(channel_type, config)
     if db.exec(select(NotificationChannel).where(NotificationChannel.name == name[:64])).first():
         raise NotifyError(f"a channel named {name[:64]!r} already exists")
@@ -215,10 +224,12 @@ def describe_channel(channel: NotificationChannel) -> str:
 
 
 def list_channels(db: Session) -> list[NotificationChannel]:
+    """Return all channels, by name."""
     return list(db.exec(select(NotificationChannel).order_by(col(NotificationChannel.name))).all())
 
 
 def delete_channel(db: Session, channel: NotificationChannel, *, actor: str, ip: str = "") -> None:
+    """Delete a channel together with its rules and queued deliveries."""
     for rule in db.exec(
         select(NotificationRule).where(NotificationRule.channel_id == channel.id)
     ).all():
@@ -249,6 +260,7 @@ def create_rule(
     actor: str,
     ip: str = "",
 ) -> NotificationRule:
+    """Store a rule that sends an event (optionally of one repository) to a channel."""
     if event not in NotifyEvent:
         raise NotifyError("unknown notification event")
     if db.get(NotificationChannel, channel_id) is None:
@@ -271,10 +283,12 @@ def create_rule(
 
 
 def list_rules(db: Session) -> list[NotificationRule]:
+    """Return all rules, oldest first."""
     return list(db.exec(select(NotificationRule).order_by(col(NotificationRule.id))).all())
 
 
 def delete_rule(db: Session, rule: NotificationRule, *, actor: str, ip: str = "") -> None:
+    """Delete a rule."""
     audit.record(
         db,
         actor=actor,
@@ -407,6 +421,7 @@ def _iso(moment: datetime | None) -> str | None:
 
 
 def events_dir(settings: Settings | None = None) -> Path:
+    """Return the drop-folder directory for event files (``<export>/_events``)."""
     return (settings or get_settings()).export_dir / EVENTS_DIRNAME
 
 
@@ -419,8 +434,11 @@ def _fsync_dir(path: Path) -> None:
 
 
 def _atomic_write(directory: Path, name: str, data: bytes) -> None:
-    """Write via a hidden temporary file and rename, so a pickup tool never sees a
-    partial file."""
+    """Write a file atomically in directory.
+
+    Writes a hidden temporary file and renames it, so a pickup tool never sees a
+    partial file.
+    """
     temporary = directory / f".{name}.tmp"
     with temporary.open("wb") as handle:
         handle.write(data)
@@ -485,6 +503,7 @@ def send_channel(
     *,
     ref: str = "test",
 ) -> Delivery:
+    """Send one message through a channel now; a NotifyError becomes a failed Delivery."""
     try:
         config = decrypt_config(channel.config)
         if channel.type == ChannelType.SMTP.value:
@@ -596,6 +615,7 @@ def deliver(delivery_id: int, now: datetime | None = None) -> Delivery | None:
 
 
 def deliver_due(now: datetime | None = None, limit: int = 50) -> list[Delivery]:
+    """Deliver the outbox rows that are due (pending, next attempt passed)."""
     now = now or utcnow()
     with Session(get_engine()) as db:
         ids = list(
@@ -639,6 +659,7 @@ def dispatch(
 
 
 def test_channel(db: Session, channel: NotificationChannel) -> Delivery:
+    """Send a test message through a channel (Test button)."""
     return send_channel(
         channel,
         "MirrorHub test notification",
@@ -793,6 +814,7 @@ def check_disk(db: Session, usage: Any) -> list[NotificationDelivery]:
 
 
 def recent_deliveries(db: Session, limit: int = 25) -> list[NotificationDelivery]:
+    """Return the newest outbox rows, for the notifications page."""
     return list(
         db.exec(
             select(NotificationDelivery).order_by(col(NotificationDelivery.id).desc()).limit(limit)
@@ -801,6 +823,7 @@ def recent_deliveries(db: Session, limit: int = 25) -> list[NotificationDelivery
 
 
 def purge_deliveries(db: Session, now: datetime | None = None) -> int:
+    """Delete sent and failed outbox rows older than DELIVERY_RETENTION_DAYS."""
     cutoff = (now or utcnow()) - timedelta(days=DELIVERY_RETENTION_DAYS)
     rows = db.exec(
         select(NotificationDelivery).where(
@@ -817,8 +840,11 @@ def purge_deliveries(db: Session, now: datetime | None = None) -> int:
 def purge_event_files(
     db: Session, settings: Settings | None = None, now: float | None = None
 ) -> int:
-    """Delete event files the pickup tool left behind, after the longest retention of
-    any file channel (default 14 days), and stale temporary files."""
+    """Delete event files the pickup tool left behind, and stale temporary files.
+
+    Event files are kept for the longest retention of any file channel (default 14
+    days).
+    """
     directory = events_dir(settings)
     if not directory.is_dir() or directory.is_symlink():
         return 0

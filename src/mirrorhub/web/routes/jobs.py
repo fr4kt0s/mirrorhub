@@ -28,6 +28,7 @@ def list_page(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Show the job list (filter by status and repository) with start buttons."""
     statement = select(Job).order_by(col(Job.id).desc()).limit(200)
     if status not in {item.value for item in JobStatus}:
         status = ""  # unknown filter values are ignored and never echoed into the page
@@ -58,6 +59,7 @@ def start(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Queue a sync or dry run (redirect to an already active one)."""
     repo = repos.get(db, repo_id)
     if repo is None:
         return render(
@@ -120,6 +122,7 @@ def detail(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Show one job with its log."""
     job = jobsvc.get(db, job_id)
     if job is None:
         return render(
@@ -152,8 +155,11 @@ def detail(
 
 
 def _rsync_log(job: Job, slug: str | None, is_terminal: bool) -> Path | None:
-    """The complete rsync log of an ftpsync job: kept with the job once it ended,
-    the file ftpsync is writing while it runs."""
+    """Return the complete rsync log of an ftpsync job, if there is one.
+
+    Once the job ended, the copy kept with the job; while it runs, the file
+    ftpsync is writing.
+    """
     if job.tool != Tool.FTPSYNC.value or job.id is None:
         return None
     kept = logs.kept_log_path(job.id, logs.RSYNC_LOG)
@@ -219,6 +225,7 @@ def events(
     offset: int = Query(default=0, ge=0),
     _user: CurrentUser = Depends(require_user),
 ) -> Response:
+    """Stream a job's log and status to the job page (server-sent events)."""
     with Session(get_engine()) as db:
         job = db.get(Job, job_id)
         if job is None:
@@ -246,6 +253,7 @@ def cancel(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Cancel a queued job or ask the worker to stop a running one."""
     job = jobsvc.get(db, job_id)
     if job is None:
         return render(
@@ -266,6 +274,7 @@ def cleanup(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Delete finished jobs (optionally of one status or repository)."""
     jobsvc.delete_finished(
         db,
         actor=user.admin.username,
@@ -285,6 +294,7 @@ def delete(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Delete one finished job and its log."""
     job = jobsvc.get(db, job_id)
     if job is None:
         return render(request, "error.html", {"status": 404, "detail": "Job not found"}, 404)

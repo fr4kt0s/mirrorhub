@@ -61,6 +61,8 @@ NAV: list[tuple[str, str]] = [
 
 @dataclass
 class CurrentUser:
+    """The logged-in admin and the session of the request."""
+
     admin: Admin
     session: AuthSession
 
@@ -70,11 +72,13 @@ class NotAuthenticated(Exception):
 
 
 def get_db() -> Iterator[Session]:
+    """Yield a database session for one request."""
     with Session(get_engine()) as session:
         yield session
 
 
 def client_ip(request: Request) -> str:
+    """Return the client address of the request (as forwarded by the trusted proxy)."""
     return request.client.host if request.client else ""
 
 
@@ -84,6 +88,7 @@ def set_cookie(
     value: str,
     max_age: int,
 ) -> None:
+    """Set a cookie that is Secure, HttpOnly and SameSite=Strict."""
     response.set_cookie(
         key,
         value,
@@ -99,6 +104,11 @@ async def security_context(
     request: Request,
     db: Session = Depends(get_db),
 ) -> None:
+    """Resolve the session and check CSRF for every request (dependency of all routes).
+
+    Stores the user and the CSRF secret in ``request.state``. Unsafe methods need a
+    same-origin request and a valid token, else 403 "CSRF validation failed".
+    """
     user: CurrentUser | None = None
     secret: str | None = None
 
@@ -164,6 +174,7 @@ async def security_context(
 
 
 def require_user(request: Request) -> CurrentUser:
+    """Return the logged-in admin; NotAuthenticated (redirect to login) otherwise."""
     user: CurrentUser | None = getattr(request.state, "user", None)
     if user is None:
         raise NotAuthenticated
@@ -176,6 +187,7 @@ def render(
     context: dict[str, Any] | None = None,
     status_code: int = 200,
 ) -> Response:
+    """Render a template with the CSRF token, user, navigation and version added."""
     secret: str | None = getattr(request.state, "csrf_secret", None)
     fresh = secret is None
 
