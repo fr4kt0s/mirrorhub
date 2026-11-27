@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Edit schedule {{ schedule.id }}{% endblock %}
+{% block content %}
+<h1>Edit schedule {{ schedule.id }}</h1>
+{% if errors %}<ul class="alert alert-error">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+
+<section class="card">
+  <p class="muted">Next run {{ schedule.next_fire_at | ts }}, last run {{ schedule.last_fire_at | ts }}.
+    Saving recomputes the next run from the cron expression.</p>
+  <form method="post" action="/schedules/{{ schedule.id }}">
+    {% include "schedules/_form.html" %}
+    <div class="row-actions">
+      <button class="btn" type="submit">Save</button>
+      <a class="btn btn-secondary" href="/schedules">Cancel</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

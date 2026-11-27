@@ -7,36 +7,7 @@
 <section class="card">
   <h2>Add a schedule</h2>
   <form method="post" action="/schedules">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label>Repository
-      <select name="repo_id" required>
-        {% for r in repositories %}<option value="{{ r.id }}">{{ r.slug }} ({{ r.tool }})</option>{% endfor %}
-      </select>
-    </label>
-    <label>Job
-      <select name="job_type">
-        <option value="sync" selected>Sync</option>
-        <option value="export">Export (repository's export mode)</option>
-        <option value="rehash">Rehash (re-read every file, rebuild the hash cache)</option>
-      </select>
-    </label>
-    <label>Preset
-      <select name="preset_label">
-        <option value="">custom</option>
-        {% for key, preset in presets.items() %}<option value="{{ key }}">{{ preset[1] }} - {{ preset[0] }}</option>{% endfor %}
-      </select>
-    </label>
-    <label>Cron expression (UTC)
-      <input name="cron_expr" value="0 3 * * *" maxlength="120" required>
-    </label>
-    <label class="check"><input type="checkbox" name="enabled" checked> Enabled</label>
-    <label>Export after a successful sync (sync schedules only)
-      <select name="chain_export">
-        <option value="inherit" selected>Use the repository setting</option>
-        <option value="always">Always (override)</option>
-        <option value="never">Never (override)</option>
-      </select>
-    </label>
+    {% include "schedules/_form.html" %}
     <button class="btn" type="submit">Create schedule</button>
   </form>
 </section>
@@ -50,7 +21,7 @@
       {% set repo = repos_by_id.get(s.repo_id) %}
       <td>{{ repo.slug if repo else s.repo_id }}</td>
       <td>{{ s.job_type }}</td>
-      <td><code>{{ s.cron_expr }}</code></td>
+      <td><code>{{ s.cron_expr }}</code>{% set text = s.cron_expr | cron_text %}{% if text %}<br><small class="muted">{{ text }}</small>{% endif %}</td>
       <td>{{ s.preset_label }}</td>
       <td>{{ s.next_fire_at | ts }}</td>
       <td>{{ s.last_fire_at | ts }}</td>
@@ -62,6 +33,7 @@
         {% else %}never (override){% endif %}
       </td>
       <td class="row-actions">
+        <a class="btn btn-secondary" href="/schedules/{{ s.id }}/edit">Edit</a>
         <button class="btn btn-danger" hx-post="/schedules/{{ s.id }}/delete" hx-target="body"
                 hx-confirm="Delete schedule {{ s.id }}?">Delete</button>
       </td>

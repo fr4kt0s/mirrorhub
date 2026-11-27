@@ -1,0 +1,65 @@
+{# Cron expression with a helper (frequency, weekdays, time). Re-rendered by
+   POST /schedules/cron-helper (htmx): a helper change rebuilds the expression,
+   an edited expression updates the helper. Needs: cron (expr, helper, text,
+   next_runs, error), frequencies, weekdays, intervals. #}
+<fieldset id="cron-helper" class="cron-helper"
+          hx-post="/schedules/cron-helper" hx-trigger="change"
+          hx-include="closest form" hx-target="this" hx-swap="outerHTML"
+          hx-vals='{"cb_source": "helper"}'>
+  <legend>When</legend>
+  <div class="cron-fields">
+    <label>Repeat
+      <select name="cb_freq">
+        {% for key, text in frequencies %}<option value="{{ key }}"{% if key == cron.helper.freq %} selected{% endif %}>{{ text }}</option>{% endfor %}
+      </select>
+    </label>
+    {% if cron.helper.freq == "hourly" %}
+    <label>At minute
+      <input name="cb_minute" type="number" min="0" max="59" value="{{ cron.helper.minute }}">
+    </label>
+    {% elif cron.helper.freq == "hours" %}
+    <label>Every
+      <select name="cb_every">
+        {% for hours in intervals %}<option value="{{ hours }}"{% if hours == cron.helper.every %} selected{% endif %}>{{ hours }} hours</option>{% endfor %}
+      </select>
+    </label>
+    <label>Starting at (UTC)
+      <input name="cb_time" type="time" value="{{ cron.helper.time }}">
+    </label>
+    {% elif cron.helper.freq in ("daily", "weekly", "monthly") %}
+    <label>Time (UTC)
+      <input name="cb_time" type="time" value="{{ cron.helper.time }}">
+    </label>
+    {% endif %}
+    {% if cron.helper.freq == "monthly" %}
+    <label>Day of the month
+      <input name="cb_dom" type="number" min="1" max="31" value="{{ cron.helper.day_of_month }}">
+    </label>
+    {% endif %}
+  </div>
+  {% if cron.helper.freq == "weekly" %}
+  <div class="cron-days" role="group" aria-label="Weekdays">
+    {% for number, name in weekdays %}
+    <label class="check"><input type="checkbox" name="cb_day" value="{{ number }}"{% if number in cron.helper.days %} checked{% endif %}> {{ name }}</label>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <label>Cron expression (UTC: minute hour day-of-month month weekday)
+    <input name="cron_expr" value="{{ cron.expr }}" maxlength="120" required
+           hx-post="/schedules/cron-helper" hx-trigger="change consume"
+           hx-include="closest form" hx-target="#cron-helper" hx-swap="outerHTML"
+           hx-vals='{"cb_source": "cron"}'>
+  </label>
+  <div class="cron-preview" aria-live="polite">
+    {% if cron.error %}
+    <p class="error-text">{{ cron.error }}</p>
+    {% else %}
+    {% if cron.text %}<p><strong>{{ cron.text }}</strong></p>{% endif %}
+    {% if cron.next_runs %}
+    <p class="muted">Next runs:
+      {% for run in cron.next_runs %}<time datetime="{{ run.strftime('%Y-%m-%dT%H:%M:%SZ') }}" data-local>{{ run.strftime('%a %Y-%m-%d %H:%M') }} UTC</time>{% if not loop.last %} · {% endif %}{% endfor %}
+    </p>
+    {% endif %}
+    {% endif %}
+  </div>
+</fieldset>

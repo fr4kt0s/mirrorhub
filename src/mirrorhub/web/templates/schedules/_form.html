@@ -1,0 +1,25 @@
+{# Schedule fields, shared by the create form and the edit page.
+   Needs: values (repo_id, job_type, enabled, chain_export), repositories and the
+   context of schedules/_cron.html. #}
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Repository
+      <select name="repo_id" required>
+        {% for r in repositories %}<option value="{{ r.id }}"{% if r.id == values.repo_id %} selected{% endif %}>{{ r.slug }} ({{ r.tool }})</option>{% endfor %}
+      </select>
+    </label>
+    <label>Job
+      <select name="job_type">
+        {% for value, text in [("sync", "Sync"), ("export", "Export (repository's export mode)"), ("rehash", "Rehash (re-read every file, rebuild the hash cache)")] %}
+        <option value="{{ value }}"{% if value == values.job_type %} selected{% endif %}>{{ text }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {% include "schedules/_cron.html" %}
+    <label class="check"><input type="checkbox" name="enabled"{% if values.enabled %} checked{% endif %}> Enabled</label>
+    <label>Export after a successful sync (sync schedules only)
+      <select name="chain_export">
+        {% for value, text in [("inherit", "Use the repository setting"), ("always", "Always (override)"), ("never", "Never (override)")] %}
+        <option value="{{ value }}"{% if value == values.chain_export %} selected{% endif %}>{{ text }}</option>
+        {% endfor %}
+      </select>
+    </label>
