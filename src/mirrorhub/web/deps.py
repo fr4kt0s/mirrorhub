@@ -10,7 +10,7 @@ from fastapi import Depends, HTTPException, Request, Response
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 
-from mirrorhub import archfilter, buildinfo
+from mirrorhub import archfilter, buildinfo, cronhelp
 from mirrorhub.db import get_engine
 from mirrorhub.models import Admin, AuthSession
 from mirrorhub.security import auth, csrf, validators
@@ -24,6 +24,7 @@ PRE_COOKIE_TTL_S = 3600
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.filters["ts"] = lambda value: value.strftime("%Y-%m-%d %H:%M:%S") if value else ""
+templates.env.filters["cron_text"] = cronhelp.describe
 templates.env.globals["max_extra_files"] = validators.MAX_EXTRA_FILES
 templates.env.globals["wget_arch_groups"] = archfilter.ARCH_GROUPS
 templates.env.globals["wget_arch_reject"] = lambda text: archfilter.reject_regex(

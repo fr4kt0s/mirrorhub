@@ -1,6 +1,6 @@
 {# Schedule fields, shared by the create form and the edit page.
-   Needs: values (repo_id, job_type, preset_label, cron_expr, enabled, chain_export),
-   repositories, presets. #}
+   Needs: values (repo_id, job_type, enabled, chain_export), repositories and the
+   context of schedules/_cron.html. #}
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>Repository
       <select name="repo_id" required>
@@ -14,15 +14,7 @@
         {% endfor %}
       </select>
     </label>
-    <label>Preset
-      <select name="preset_label">
-        <option value="">custom</option>
-        {% for key, preset in presets.items() %}<option value="{{ key }}"{% if key == values.preset_label %} selected{% endif %}>{{ preset[1] }} - {{ preset[0] }}</option>{% endfor %}
-      </select>
-    </label>
-    <label>Cron expression (UTC)
-      <input name="cron_expr" value="{{ values.cron_expr }}" maxlength="120" required>
-    </label>
+    {% include "schedules/_cron.html" %}
     <label class="check"><input type="checkbox" name="enabled"{% if values.enabled %} checked{% endif %}> Enabled</label>
     <label>Export after a successful sync (sync schedules only)
       <select name="chain_export">

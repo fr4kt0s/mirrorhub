@@ -1,6 +1,7 @@
 """Schedule CRUD routes."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -8,8 +9,9 @@ from fastapi.responses import RedirectResponse
 from sqlmodel import Session, col, select
 from starlette.datastructures import FormData
 
+from mirrorhub import cronhelp
 from mirrorhub.enums import SCHEDULE_JOB_TYPES
-from mirrorhub.models import Repository, Schedule
+from mirrorhub.models import Repository, Schedule, utcnow
 from mirrorhub.security import validators
 from mirrorhub.services import audit, repos, scheduler
 from mirrorhub.web.deps import CurrentUser, client_ip, get_db, render, require_user
@@ -27,10 +29,16 @@ def _chain_choice(value: object) -> bool | str | None:
     return CHAIN_CHOICES[text]
 
 
+NEXT_RUNS = 3
+CRON_CHOICES: dict[str, Any] = {
+    "frequencies": cronhelp.FREQUENCIES,
+    "weekdays": cronhelp.WEEKDAYS,
+    "intervals": cronhelp.INTERVALS,
+}
+
 DEFAULT_VALUES: dict[str, Any] = {
     "repo_id": None,
     "job_type": "sync",
-    "preset_label": "",
     "cron_expr": "0 3 * * *",
     "enabled": True,
     "chain_export": "inherit",
@@ -45,7 +53,6 @@ def _values_of(schedule: Schedule) -> dict[str, Any]:
     return {
         "repo_id": schedule.repo_id,
         "job_type": schedule.job_type,
-        "preset_label": schedule.preset_label,
         "cron_expr": schedule.cron_expr,
         "enabled": schedule.enabled,
         "chain_export": _chain_name(schedule.chain_export),
@@ -61,7 +68,6 @@ def _values_from(form: FormData) -> dict[str, Any]:
     return {
         "repo_id": repo_id,
         "job_type": str(form.get("job_type") or "sync"),
-        "preset_label": str(form.get("preset_label") or ""),
         "cron_expr": str(form.get("cron_expr") or ""),
         "enabled": bool(form.get("enabled")),
         "chain_export": str(form.get("chain_export") or "inherit"),
@@ -104,18 +110,38 @@ def _parse(db: Session, form: FormData) -> _Fields | str:
     if job_type != "sync":
         chain = None  # only a sync can chain an export
 
-    preset_label = str(form.get("preset_label") or "")
-    if preset_label and preset_label not in scheduler.PRESETS:
-        return "unknown preset"
-
     return _Fields(
         repo=repo,
         job_type=job_type,
         cron=cron,
-        preset_label=preset_label,
+        preset_label=_preset_for(cron),
         enabled=bool(form.get("enabled")),
         chain=chain,
     )
+
+
+def _preset_for(cron: str) -> str:
+    """The preset label (shown in the table) of an expression that equals a preset."""
+    return next((key for key, (expr, _) in scheduler.PRESETS.items() if expr == cron), "")
+
+
+def _cron_context(expr: str, helper: cronhelp.Helper | None = None) -> dict[str, Any]:
+    """What schedules/_cron.html shows for an expression: helper, description, next runs."""
+    expr = expr.strip()
+    error = validators.validate_cron(expr)
+    next_runs: list[datetime] = []
+    if not error:
+        run = utcnow()
+        for _ in range(NEXT_RUNS):
+            run = scheduler.next_after(expr, run)
+            next_runs.append(run)
+    return {
+        "expr": expr,
+        "helper": helper or cronhelp.parse(expr),
+        "text": "" if error else cronhelp.describe(expr),
+        "next_runs": next_runs,
+        "error": error,
+    }
 
 
 def _context(db: Session, errors: list[str] | None, values: dict[str, Any]) -> dict[str, Any]:
@@ -123,9 +149,10 @@ def _context(db: Session, errors: list[str] | None, values: dict[str, Any]) -> d
     return {
         "repositories": repositories,
         "repos_by_id": {repo.id: repo for repo in repositories},
-        "presets": scheduler.PRESETS,
         "errors": errors or [],
         "values": values,
+        "cron": _cron_context(str(values.get("cron_expr") or "")),
+        **CRON_CHOICES,
     }
 
 
@@ -194,6 +221,33 @@ async def create(
     )
     db.commit()
     return RedirectResponse("/schedules", status_code=303)
+
+
+@router.post("/schedules/cron-helper")
+async def cron_helper(
+    request: Request,
+    _user: CurrentUser = Depends(require_user),
+) -> Response:
+    """Re-render the cron field and its helper (htmx).
+
+    A change in the helper (cb_source=helper) rebuilds the expression unless the
+    helper is set to "custom"; an edited expression (cb_source=cron) is shown in
+    the helper where it can be.
+    """
+    form = await request.form()
+    expr = str(form.get("cron_expr") or "").strip()
+    helper: cronhelp.Helper | None = None
+    if form.get("cb_source") == "helper":
+        helper = cronhelp.from_form(form, [str(day) for day in form.getlist("cb_day")])
+        built = cronhelp.build(helper)
+        if built is not None:
+            expr = built
+            helper = None  # show the expression as parsed (e.g. no weekday ticked → Monday)
+    return render(
+        request,
+        "schedules/_cron.html",
+        {"cron": _cron_context(expr, helper), **CRON_CHOICES},
+    )
 
 
 @router.get("/schedules/{schedule_id}/edit")

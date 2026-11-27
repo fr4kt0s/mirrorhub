@@ -50,7 +50,9 @@ def test_edit_page_shows_the_current_values(admin: TestClient) -> None:
     assert f'action="/schedules/{schedule_id}"' in page
     assert _selected(page, "repo_id") == str(first)
     assert _selected(page, "job_type") == "sync"
-    assert _selected(page, "preset_label") == "daily"
+    assert _selected(page, "cb_freq") == "daily"
+    assert 'name="cb_time" type="time" value="03:00"' in page
+    assert "Daily at 03:00 UTC" in page
     assert _selected(page, "chain_export") == "always"
     assert 'name="cron_expr" value="0 3 * * *"' in page
     assert 'name="enabled" checked' in page
@@ -68,7 +70,6 @@ def test_update_changes_every_field(admin: TestClient, csrf_token: str) -> None:
             "csrf_token": csrf_token,
             "repo_id": str(second),
             "job_type": "rehash",
-            "preset_label": "monthly",
             "cron_expr": "0 3 1 * *",
             "chain_export": "always",
         },
@@ -122,3 +123,55 @@ def test_create_error_keeps_the_input(admin: TestClient, csrf_token: str) -> Non
     ).text
     assert "select a repository" in page
     assert 'name="cron_expr" value="5 4 * * *"' in page
+
+
+def test_cron_helper_builds_the_expression(admin: TestClient, csrf_token: str) -> None:
+    page = admin.post(
+        "/schedules/cron-helper",
+        data={
+            "csrf_token": csrf_token,
+            "cb_source": "helper",
+            "cb_freq": "weekly",
+            "cb_time": "04:30",
+            "cb_day": ["1", "2", "3", "4", "5"],
+            "cron_expr": "0 3 * * *",
+        },
+    ).text
+    assert 'name="cron_expr" value="30 4 * * 1-5"' in page
+    assert "Every Mon, Tue, Wed, Thu, Fri at 04:30 UTC" in page
+    assert page.count("data-local") == 3  # next three runs
+
+
+def test_cron_helper_follows_an_edited_expression(admin: TestClient, csrf_token: str) -> None:
+    page = admin.post(
+        "/schedules/cron-helper",
+        data={
+            "csrf_token": csrf_token,
+            "cb_source": "cron",
+            "cb_freq": "daily",
+            "cron_expr": "15 2 1 * *",
+        },
+    ).text
+    assert _selected(page, "cb_freq") == "monthly"
+    assert 'name="cb_dom" type="number" min="1" max="31" value="1"' in page
+    assert "Monthly on day 1 at 02:15 UTC" in page
+
+
+def test_cron_helper_custom_and_invalid(admin: TestClient, csrf_token: str) -> None:
+    custom = admin.post(
+        "/schedules/cron-helper",
+        data={
+            "csrf_token": csrf_token,
+            "cb_source": "helper",
+            "cb_freq": "custom",
+            "cron_expr": "*/5 * * * *",
+        },
+    ).text
+    assert _selected(custom, "cb_freq") == "custom"
+    assert 'name="cron_expr" value="*/5 * * * *"' in custom
+    assert custom.count("data-local") == 3
+    invalid = admin.post(
+        "/schedules/cron-helper",
+        data={"csrf_token": csrf_token, "cb_source": "cron", "cron_expr": "61 * * * *"},
+    ).text
+    assert "cron: invalid expression" in invalid

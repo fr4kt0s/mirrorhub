@@ -347,3 +347,11 @@ ul.counters li { justify-content: space-between; max-width: 220px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Schedule helper (schedules/_cron.html) */
+.cron-fields { display: flex; flex-wrap: wrap; gap: 0 1rem; }
+.cron-fields label { flex: 1 1 12rem; }
+.cron-days { display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; margin: 0.25rem 0 0.75rem; }
+.cron-preview p { margin: 0.35rem 0; }
+.cron-preview time { white-space: nowrap; }
+.error-text { color: var(--err); font-weight: 600; }

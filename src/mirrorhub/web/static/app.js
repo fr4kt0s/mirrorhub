@@ -141,31 +141,26 @@
     };
   }
 
-  function bindSchedulePresets() {
-    document.querySelectorAll(
-      "select[name='preset_label']"
-    ).forEach(function (select) {
-      if (select.dataset.bound === "true") {
+  // Next runs of a schedule are shown in UTC; add the browser's local time.
+  function localizeTimes(root) {
+    (root || document).querySelectorAll("time[data-local]").forEach(function (node) {
+      if (node.dataset.localized === "true") {
         return;
       }
-      select.dataset.bound = "true";
-
-      select.addEventListener("change", function () {
-        var option = select.options[select.selectedIndex];
-        var cron = (option.textContent || "").split(" - ")[1];
-        var form = select.closest("form");
-        var field = form
-          ? form.querySelector("input[name='cron_expr']")
-          : null;
-        if (cron && field) {
-          field.value = cron.trim();
-        }
+      var when = new Date(node.getAttribute("datetime"));
+      if (isNaN(when.getTime())) {
+        return;
+      }
+      node.dataset.localized = "true";
+      var local = when.toLocaleString([], {
+        weekday: "short", hour: "2-digit", minute: "2-digit"
       });
+      node.appendChild(document.createTextNode(" (" + local + " local)"));
     });
   }
 
   function initialize() {
-    bindSchedulePresets();
+    localizeTimes(document);
     startStream();
   }
 

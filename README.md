@@ -499,8 +499,17 @@ the export succeeded. Leftovers older than seven days are removed automatically.
 A schedule runs one job type: *Sync*, *Export* (in the repository's export mode)
 or *Rehash*. "Export after a successful sync" applies to sync schedules only.
 *Edit* on the Schedules page changes every field of a schedule (repository, job
-type, preset, cron, enabled, export after sync); saving recomputes the next run.
-The audit entry `schedule.update` lists the changed fields.
+type, time, enabled, export after sync); saving recomputes the next run. The
+audit entry `schedule.update` lists the changed fields.
+
+The *When* box builds the cron expression: *Repeat* every hour (at a minute),
+every 2–12 hours (from a start time), daily, weekly on ticked weekdays or monthly
+on a day, plus the time in UTC. The expression below it stays editable; an
+expression the helper cannot show (e.g. `*/5 * * * *`) sets *Repeat* to
+*Custom*. Under the field: a plain-English description and the next three runs
+in UTC and in the browser's local time. The schedules table shows the
+description below each expression; *Preset* is filled in when the expression
+equals one of the presets.
 
 ### Rehash
 

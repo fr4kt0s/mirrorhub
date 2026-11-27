@@ -21,7 +21,7 @@
       {% set repo = repos_by_id.get(s.repo_id) %}
       <td>{{ repo.slug if repo else s.repo_id }}</td>
       <td>{{ s.job_type }}</td>
-      <td><code>{{ s.cron_expr }}</code></td>
+      <td><code>{{ s.cron_expr }}</code>{% set text = s.cron_expr | cron_text %}{% if text %}<br><small class="muted">{{ text }}</small>{% endif %}</td>
       <td>{{ s.preset_label }}</td>
       <td>{{ s.next_fire_at | ts }}</td>
       <td>{{ s.last_fire_at | ts }}</td>
