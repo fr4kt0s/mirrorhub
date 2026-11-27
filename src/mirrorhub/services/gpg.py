@@ -28,11 +28,14 @@ class GpgError(RuntimeError):
 
 @dataclass(frozen=True)
 class KeyInfo:
+    """A public key in the keyring: fingerprint and first user id."""
+
     fingerprint: str
     uid: str
 
 
 def keyring_path() -> Path:
+    """Return the trusted keyring that debmirror and gpgv read (``trustedkeys.gpg``)."""
     return get_settings().gnupg_dir / KEYRING_NAME
 
 
@@ -104,6 +107,7 @@ def _parse_colons(output: str) -> list[KeyInfo]:
 
 
 def keyring_args() -> list[str]:
+    """Return the gpg options that select the trusted keyring only."""
     return [
         "--no-default-keyring",
         "--keyring",
@@ -112,6 +116,7 @@ def keyring_args() -> list[str]:
 
 
 def list_keys() -> list[KeyInfo]:
+    """Return the keys in the trusted keyring (empty if it does not exist)."""
     if not keyring_path().exists():
         return []
 
@@ -123,6 +128,12 @@ def list_keys() -> list[KeyInfo]:
 
 
 def import_key_bytes(data: bytes) -> list[KeyInfo]:
+    """Import public keys from an upload into the trusted keyring.
+
+    The upload is read in a scratch GnuPG home first; only the public keys found
+    there are exported and added to the keyring, so secret keys and other material
+    never reach it. Returns the imported keys; GpgError if there are none.
+    """
     if not data:
         raise GpgError("empty upload")
 
@@ -172,12 +183,14 @@ def import_key_bytes(data: bytes) -> list[KeyInfo]:
 
 
 def import_key_file(path: Path) -> list[KeyInfo]:
+    """Import public keys from a file (e.g. a distribution keyring package)."""
     if not path.is_file():
         raise GpgError(f"keyring file not found: {path.name}")
     return import_key_bytes(path.read_bytes())
 
 
 def delete_key(fingerprint: str) -> None:
+    """Remove a key from the trusted keyring by its full primary-key fingerprint."""
     valid_lengths = {40, 64}
     if len(fingerprint) not in valid_lengths or any(
         character not in "0123456789abcdefABCDEF" for character in fingerprint
@@ -191,6 +204,7 @@ def delete_key(fingerprint: str) -> None:
 
 
 def package_candidates() -> list[Path]:
+    """Return the archive keyrings installed in the image (``/usr/share/keyrings``)."""
     if not KEYRING_DIR.is_dir():
         return []
 

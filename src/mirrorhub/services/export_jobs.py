@@ -292,6 +292,7 @@ def published_for_job(job_id: int, settings: Settings) -> str | None:
 
 
 def list_exports(db: Session, limit: int = 200) -> list[Export]:
+    """Return the newest export records, newest first."""
     return list(db.exec(select(Export).order_by(col(Export.id).desc()).limit(limit)).all())
 
 
@@ -325,6 +326,7 @@ def base_choices(settings: Settings, slug: str) -> list[metadata_store.Published
 
 
 def publication_directory(settings: Settings, slug: str, export_id: str) -> Path:
+    """Return an export's directory in the drop folder (ExportError if it escapes it)."""
     path = settings.export_dir / slug / export_id
     if path.resolve().parent.parent != settings.export_dir.resolve():
         raise ExportError("export directory escapes the drop folder")
@@ -336,6 +338,7 @@ _EXPORT_ID = re.compile(r"\d{8}T\d{6}Z-(?:full|incr)")
 
 
 def keep_chains(db: Session) -> int:
+    """Return the "chains to keep" setting (0: automatic retention off)."""
     try:
         return max(int(appsettings.get(db, RETENTION_KEY, 0) or 0), 0)
     except (TypeError, ValueError):
@@ -344,11 +347,14 @@ def keep_chains(db: Session) -> int:
 
 @dataclass
 class RetentionPlan:
+    """Published exports that retention would remove, for the preview and the sweep."""
+
     keep: int
     exports: list[Export] = field(default_factory=list)
 
     @property
     def total_bytes(self) -> int:
+        """Archive bytes of all exports in the plan."""
         return sum(row.total_bytes for row in self.exports)
 
 
@@ -499,7 +505,7 @@ def _latest_published(db: Session) -> dict[str, str]:
 
 
 def _only_leftovers(directory: Path) -> bool:
-    """True if the directory holds no archive part, only small metadata files."""
+    """Return True if the directory holds no archive part, only small metadata files."""
     for entry in directory.iterdir():
         if entry.is_symlink() or not entry.is_file() or entry.name not in _LEFTOVER_FILES:
             return False

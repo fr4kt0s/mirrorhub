@@ -16,6 +16,7 @@ def page(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Show disk usage and the cached per-repository storage figures."""
     cache = storage.cached(db)
     rows = [{"repo": repo, "cache": cache.get(repo.id or 0)} for repo in repos.list_all(db)]
     return render(
@@ -29,5 +30,6 @@ def page(
 def refresh(
     _user: CurrentUser = Depends(require_user),
 ) -> Response:
+    """Start a background refresh of the storage figures."""
     storage.start_refresh()
     return RedirectResponse("/storage", status_code=303)

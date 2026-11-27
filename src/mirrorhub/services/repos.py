@@ -65,6 +65,8 @@ DATA_FIELDS = (
 
 
 class FormError(ValueError):
+    """The repository form or import was refused; ``messages`` lists every reason."""
+
     def __init__(self, messages: list[str]) -> None:
         super().__init__("; ".join(messages))
         self.messages = messages
@@ -82,7 +84,7 @@ WGET_MODES = ("tree", "files")
 
 
 def wget_mode_for(extra_files: list[dict[str, str]] | None) -> str:
-    """A wget repository with file entries downloads those files; otherwise the whole tree."""
+    """Return the wget mode: "files" if there are file entries, else "tree"."""
     return "files" if extra_files else "tree"
 
 
@@ -276,9 +278,10 @@ def _int_or_zero(text: str) -> int:
 
 
 def wget_command_values(values: Mapping[str, str]) -> dict[str, str]:
-    """Generated and current wget command for the form, from the form's own strings.
+    """Return the generated and the current wget command for the form.
 
-    Works on half-filled forms (live preview): unknown pieces are shown as placeholders.
+    Built from the form's own strings; works on half-filled forms (live preview):
+    unknown pieces are shown as placeholders.
     """
     if values.get("tool") != "wget":
         return {}
@@ -319,6 +322,7 @@ def wget_command_values(values: Mapping[str, str]) -> dict[str, str]:
 
 
 def validate(data: dict[str, Any]) -> list[str]:
+    """Check repository data from the form or a YAML import; return the error messages."""
     errors: list[str] = []
     tool = data["tool"]
     method = data["method"]
@@ -478,6 +482,7 @@ def slug_conflict(db: Session, slug: str, repo_id: int | None) -> str | None:
 
 
 def create(db: Session, data: dict[str, Any], *, actor: str, ip: str = "") -> Repository:
+    """Store a new repository and record it in the audit log."""
     repo = Repository(**{field: data[field] for field in DATA_FIELDS if field in data})
     db.add(repo)
     db.flush()
@@ -510,6 +515,7 @@ def create(db: Session, data: dict[str, Any], *, actor: str, ip: str = "") -> Re
 def update(
     db: Session, repo: Repository, data: dict[str, Any], *, actor: str, ip: str = ""
 ) -> Repository:
+    """Apply validated form data to a repository (the slug never changes) and audit it."""
     before = {field: getattr(repo, field) for field in ("slug", "name", "verify_signatures")}
     for field in DATA_FIELDS:
         if field == "slug" or field not in data:
@@ -542,6 +548,7 @@ def update(
 
 
 def deletion_blockers(db: Session, repo_id: int) -> list[str]:
+    """Return why the repository cannot be deleted now (e.g. active jobs); empty if it can."""
     blockers: list[str] = []
     jobs = db.exec(
         select(Job).where(
@@ -554,6 +561,10 @@ def deletion_blockers(db: Session, repo_id: int) -> list[str]:
 
 
 def delete(db: Session, repo: Repository, *, actor: str, ip: str = "") -> list[str]:
+    """Delete a repository and its dependent rows unless something blocks it.
+
+    Returns the blockers; nothing is deleted if there are any.
+    """
     blockers = deletion_blockers(db, repo.id or 0)
     if blockers:
         return blockers
@@ -590,8 +601,10 @@ def delete(db: Session, repo: Repository, *, actor: str, ip: str = "") -> list[s
 
 
 def get(db: Session, repo_id: int) -> Repository | None:
+    """Return a repository by id."""
     return db.get(Repository, repo_id)
 
 
 def list_all(db: Session) -> list[Repository]:
+    """Return all repositories, by slug."""
     return list(db.exec(select(Repository).order_by(col(Repository.slug))).all())

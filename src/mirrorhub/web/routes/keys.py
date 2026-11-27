@@ -32,6 +32,7 @@ def list_page(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Show the keys in the trusted keyring."""
     return _page(request, db)
 
 
@@ -41,6 +42,7 @@ async def upload(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Import public keys from an uploaded file."""
     form = await request.form()
     upload_file = form.get("keyfile")
     if not hasattr(upload_file, "read"):
@@ -72,6 +74,7 @@ async def import_package(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Import an archive keyring installed in the image."""
     form = await request.form()
     name = Path(str(form.get("package") or "")).name
     allowed = {path.name for path in gpg.package_candidates()}
@@ -101,6 +104,7 @@ def delete(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Remove a key from the trusted keyring."""
     if not fingerprint.isalnum() or len(fingerprint) < 16:
         return _page(request, db, ["Invalid fingerprint"])
     try:

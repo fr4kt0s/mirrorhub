@@ -25,6 +25,8 @@ SKIP_DIRS = frozenset({"partial", ".temp", ".tmp", "tmp", "lost+found"})
 
 @dataclass(frozen=True)
 class MountUsage:
+    """Size, use and free space of a mounted file system."""
+
     path: str
     total_bytes: int
     used_bytes: int
@@ -33,6 +35,7 @@ class MountUsage:
 
 
 def mount_usage(path: Path | None = None) -> MountUsage:
+    """Return the usage of the file system holding path (default: the data directory)."""
     settings = get_settings()
     target = path or settings.data_dir
     try:
@@ -49,6 +52,7 @@ def mount_usage(path: Path | None = None) -> MountUsage:
 
 
 def repo_path(slug: str, settings: Settings | None = None) -> Path:
+    """Return a repository's directory in the data directory."""
     return (settings or get_settings()).data_dir / slug
 
 
@@ -151,8 +155,10 @@ def start_refresh(settings: Settings | None = None) -> bool:
 
 
 def is_refreshing() -> bool:
+    """Return True while a background storage refresh runs."""
     return _running
 
 
 def cached(db: Session) -> dict[int, StorageCache]:
+    """Return the cached storage figures per repository id."""
     return {row.repo_id: row for row in db.exec(select(StorageCache)).all()}

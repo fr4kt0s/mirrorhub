@@ -17,6 +17,7 @@ def page(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Show the configuration export and import page."""
     return render(
         request,
         "config.html",
@@ -29,6 +30,7 @@ def download(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Download repositories and schedules as YAML."""
     return PlainTextResponse(
         yamlio.export_yaml(db),
         media_type="application/x-yaml",
@@ -42,6 +44,7 @@ async def import_config(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Preview or apply an uploaded YAML configuration."""
     form = await request.form()
     text = str(form.get("yaml_text") or "")
     overwrite = bool(form.get("overwrite"))

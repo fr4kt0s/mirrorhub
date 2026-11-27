@@ -31,6 +31,7 @@ def audit_page(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Show the audit log, filtered by actor, action prefix, target text and time."""
     page = max(page, 0)
     until_dt = _parse_day(until)
     rows = audit.query(

@@ -21,6 +21,7 @@ def page(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Show the Exports page: start exports, history, retention and drop-folder state."""
     repositories = repos.list_all(db)
     keep = export_jobs.keep_chains(db)
     plan = export_jobs.retention_plan(db, keep)
@@ -70,6 +71,7 @@ async def start(
     request: Request,
     user: CurrentUser = Depends(require_user),
 ) -> Response:
+    """Queue a full or incremental export (optionally since a chosen earlier export)."""
     form = await request.form()
     mode = str(form.get("mode") or "")
     if mode not in ("full", "incr"):
@@ -181,6 +183,7 @@ async def retention_save(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Save the "chains to keep" setting."""
     form = await request.form()
     try:
         keep = int(str(form.get("keep_chains") or "0"))
@@ -210,6 +213,7 @@ def retention_apply(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Remove the exports retention selects now."""
     try:
         export_jobs.apply_retention(
             db,
@@ -228,6 +232,7 @@ def failed_cleanup(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Remove failed export records and their unfinished directories."""
     try:
         export_jobs.delete_failed(
             db, get_settings(), actor=user.admin.username, ip=client_ip(request)

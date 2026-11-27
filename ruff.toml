@@ -20,9 +20,7 @@ convention = "pep257"
 "src/mirrorhub/models.py" = ["D"]
 "src/mirrorhub/queue/*" = ["D"]
 "src/mirrorhub/security/*" = ["D"]
-"src/mirrorhub/services/*" = ["D"]
 "src/mirrorhub/sync/*" = ["D"]
-"src/mirrorhub/web/*" = ["D"]
 "src/mirrorhub/worker/*" = ["D"]
 
 [lint.flake8-bugbear]

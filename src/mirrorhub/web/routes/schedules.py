@@ -60,7 +60,7 @@ def _values_of(schedule: Schedule) -> dict[str, Any]:
 
 
 def _values_from(form: FormData) -> dict[str, Any]:
-    """The submitted fields, to show them again next to an error."""
+    """Return the submitted fields, to show them again next to an error."""
     try:
         repo_id: int | None = int(str(form.get("repo_id") or 0))
     except ValueError:
@@ -121,12 +121,12 @@ def _parse(db: Session, form: FormData) -> _Fields | str:
 
 
 def _preset_for(cron: str) -> str:
-    """The preset label (shown in the table) of an expression that equals a preset."""
+    """Return the preset label (shown in the table) of an expression equal to a preset."""
     return next((key for key, (expr, _) in scheduler.PRESETS.items() if expr == cron), "")
 
 
 def _cron_context(expr: str, helper: cronhelp.Helper | None = None) -> dict[str, Any]:
-    """What schedules/_cron.html shows for an expression: helper, description, next runs."""
+    """Return what schedules/_cron.html shows: helper, description and next runs."""
     expr = expr.strip()
     error = validators.validate_cron(expr)
     next_runs: list[datetime] = []
@@ -185,6 +185,7 @@ def list_page(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Show the schedules and the form for a new one."""
     return _page(request, db)
 
 
@@ -194,6 +195,7 @@ async def create(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Create a schedule from the form (re-show the form with errors)."""
     form = await request.form()
     fields = _parse(db, form)
     if isinstance(fields, str):
@@ -257,6 +259,7 @@ def edit_page(
     _user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Show the form for editing a schedule."""
     schedule = db.get(Schedule, schedule_id)
     if schedule is None:
         return render(request, "error.html", {"status": 404, "detail": "Schedule not found"}, 404)
@@ -270,6 +273,7 @@ async def update(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Save the edited schedule and recompute its next run."""
     schedule = db.get(Schedule, schedule_id)
     if schedule is None:
         return _page(request, db, ["unknown schedule"])
@@ -312,6 +316,7 @@ def delete(
     user: CurrentUser = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Delete a schedule."""
     schedule = db.get(Schedule, schedule_id)
     if schedule is not None:
         audit.record(

@@ -96,11 +96,15 @@ def _defaults() -> dict[str, Any]:
 
 
 class ConfigError(ValueError):
+    """The configuration file cannot be read (syntax or structure)."""
+
     pass
 
 
 @dataclass
 class ImportPlan:
+    """What a configuration import would create, update or refuse."""
+
     creates: list[dict[str, Any]] = field(default_factory=list)
     updates: list[dict[str, Any]] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
@@ -109,6 +113,7 @@ class ImportPlan:
 
     @property
     def changes(self) -> int:
+        """Number of repositories and schedules the plan would write."""
         return len(self.creates) + len(self.updates) + len(self.schedules)
 
 
@@ -125,6 +130,7 @@ def _repo_dict(repo: Repository) -> dict[str, Any]:
 
 
 def export_document(db: Session) -> dict[str, Any]:
+    """Return repositories and schedules as a configuration document (no secrets)."""
     repo_rows = repos.list_all(db)
     by_id = {repo.id: repo.slug for repo in repo_rows}
     schedules = db.exec(select(Schedule).order_by(col(Schedule.id))).all()
@@ -149,10 +155,12 @@ def export_document(db: Session) -> dict[str, Any]:
 
 
 def export_yaml(db: Session) -> str:
+    """Return the configuration document as YAML."""
     return str(yaml.safe_dump(export_document(db), sort_keys=False, allow_unicode=True))
 
 
 def parse_yaml(text: str) -> dict[str, Any]:
+    """Parse a configuration file (ConfigError if it is not a YAML mapping)."""
     try:
         document = yaml.safe_load(text)
     except yaml.YAMLError as exc:
@@ -174,6 +182,11 @@ def build_plan(
     overwrite: bool = False,
     allow_disable_signatures: bool = False,
 ) -> ImportPlan:
+    """Check a configuration document against the database without changing anything.
+
+    Existing repositories are conflicts unless overwrite is set; turning signature
+    checks off needs allow_disable_signatures.
+    """
     plan = ImportPlan()
     seen: set[str] = set()
 
@@ -284,6 +297,7 @@ def build_plan(
 
 
 def apply_plan(db: Session, plan: ImportPlan, *, actor: str, ip: str = "") -> ImportPlan:
+    """Write a checked plan: create and update repositories, create or update schedules."""
     known = {repo.slug for repo in repos.list_all(db)}
     for data in plan.creates:
         repos.create(db, data, actor=actor, ip=ip)
