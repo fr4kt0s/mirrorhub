@@ -11,6 +11,9 @@ from pathlib import Path
 
 from mirrorhub.models import Job, Repository
 from mirrorhub.settings import Settings
+from mirrorhub.worker.followlog import FollowedLog
+
+__all__ = ["BuildError", "BuildPlan", "FollowedLog", "Step", "resolve_paths"]
 
 
 class BuildError(RuntimeError):
@@ -21,6 +24,7 @@ class BuildError(RuntimeError):
 class Step:
     argv: tuple[str, ...]
     label: str
+    follow: tuple[FollowedLog, ...] = ()
 
 
 @dataclass(frozen=True)

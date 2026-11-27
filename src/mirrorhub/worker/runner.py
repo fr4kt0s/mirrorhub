@@ -18,12 +18,14 @@ from pathlib import Path
 from typing import TextIO
 
 from mirrorhub.worker.builders import BuildPlan, Step
+from mirrorhub.worker.followlog import LogFollower
 from mirrorhub.worker.progress import ProgressParser
 
 log = logging.getLogger("mirrorhub.worker.runner")
 
 CANCEL_GRACE_S = 20.0
 TICK_INTERVAL_S = 2.0
+FOLLOW_INTERVAL_S = 0.5  # how often files a tool writes itself are read
 
 
 @dataclass
@@ -142,6 +144,7 @@ class Runner:
             log_file.flush()
             return 127
 
+        follower = LogFollower(step.follow) if step.follow else None
         stream: queue.Queue[str | None] = queue.Queue()
 
         def pump() -> None:
@@ -156,6 +159,7 @@ class Runner:
         reader.start()
 
         last_tick = 0.0
+        last_follow = 0.0
         cancel_sent_at: float | None = None
         kill_sent = False
         # Sticky: a process often closes stdout a moment before it exits. Checking
@@ -197,11 +201,13 @@ class Runner:
                     self._tick(self._parser.pct, self._parser.text)
 
                 if line is not None:
-                    self._lines += 1
-                    self._last_line = line[:300]
-                    log_file.write(line + "\n")
-                    log_file.flush()
+                    self._write(line, log_file)
                     self._parser.feed(line)
+
+                if follower is not None and now - last_follow >= FOLLOW_INTERVAL_S:
+                    last_follow = now
+                    for followed in follower.poll():
+                        self._write(followed, log_file)
 
                 if drained and proc.poll() is not None:
                     break
@@ -214,4 +220,22 @@ class Runner:
             reader.join(timeout=5)
             if proc.stdout is not None:
                 proc.stdout.close()
+            if follower is not None:
+                self._finish_follow(follower, log_file)
             log_file.flush()
+
+    def _write(self, line: str, log_file: TextIO) -> None:
+        self._lines += 1
+        self._last_line = line[:300]
+        log_file.write(line + "\n")
+        log_file.flush()
+
+    def _finish_follow(self, follower: LogFollower, log_file: TextIO) -> None:
+        """The rest of the followed files, their summaries, then keep them for download."""
+        try:
+            for followed in follower.finish():
+                self._write(followed, log_file)
+            for kept in follower.archive(self.log_path):
+                log_file.write(f"# complete log kept as {kept.name} (download on the job page)\n")
+        except OSError:
+            log.exception("could not finish followed logs")

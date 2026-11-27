@@ -337,6 +337,7 @@ The practical tests 3.1–3.4, 3.6 and 3.7 are referenced here, not repeated. Th
 - [ ] **C5** (P2) ftpsync with include and exclude at the same time → form error, nothing saved.
 - [ ] **C6** (P2) ftpsync with `none` as architecture → form error.
 - [ ] **C7** (P1) Log of an ftpsync job → no debmirror entries (original finding).
+- [ ] **C29** (P2) ftpsync job log → lines `[ftpsync]` (start and end of the run), `[rsync]` (first 500 lines, the note "further lines are not shown here" and the closing summary from `Number of files:`), `[rsync error]` if rsync reported errors; the last line `# complete log kept as <id>.rsync.log`. Job page *Download rsync log* → the complete rsync output (while running: as far as written). Delete the job → `<state>/logs/jobs/<id>.rsync.log` is gone.
 - [ ] **C8** (P2) rsync repository → sync succeeds, tree complete.
 - [ ] **C9** (P2) wget repository, mode *Whole directory tree* → saves without a file list (#51), sync succeeds, tree below the upstream root complete.
 - [ ] **C26** (P2) wget tree `download.docker.com` `/linux/ubuntu` with *Architectures to keep* `amd64` → `/data/<slug>/dists/*/pool/stable/` contains only `amd64`; `binary-arm64` etc. missing; edit page shows the generated regex; include/exclude regex survive editing.

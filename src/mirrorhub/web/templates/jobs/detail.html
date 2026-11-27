@@ -71,6 +71,13 @@
   <p class="muted">
     Showing a bounded log tail. Older output remains in the server log file.
   </p>
+  {% if rsync_log %}
+  <p>
+    <a class="btn btn-secondary" href="/jobs/{{ job.id }}/rsync-log">Download rsync log</a>
+    <span class="muted">The job log shows the first 500 rsync lines and the closing
+    summary; the download has all of them{% if not is_terminal %} (as far as written so far){% endif %}.</span>
+  </p>
+  {% endif %}
   <pre class="log" id="job-log"
     {% if not is_terminal %}
     data-sse="/jobs/{{ job.id }}/events?offset={{ log_offset }}"

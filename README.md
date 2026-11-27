@@ -1144,29 +1144,27 @@ Do not increase concurrency or busy_timeout without investigating the cause.
 
 ### Inspect FTPsync job logs
 
-MirrorHub runs FTPsync jobs in the universal `worker` service. The job-specific
-working directory and rsync log are created under the worker state volume.
+FTPsync writes its own protocol and the rsync output to files in its log
+directory (`/var/lib/mirrorhub/tmp/ftpsync/<slug>/log/`), not to stdout. The
+worker copies them into the job log while the job runs, each line with a prefix:
 
-For a repository with the slug `packages.linuxmint.com`, inspect the generated
-FTPsync log with:
+- `[ftpsync]` – FTPsync's own protocol (`ftpsync-<slug>.log`), complete.
+- `[rsync error]` – what rsync wrote to stderr (`rsync-ftpsync-<slug>.error` or
+  `.error.log`, depending on the FTPsync version),
+  complete.
+- `[rsync]` – the rsync output (`rsync-ftpsync-<slug>.log`): the first 500
+  lines, then a note, and at the end the closing summary from `Number of files:`.
 
-```sh
-docker compose exec worker cat \
-  /var/lib/mirrorhub/tmp/ftpsync/packages.linuxmint.com/log/rsync-ftpsync-packages.linuxmint.com.log
-```
+When the job ends, the complete rsync log is moved next to the job log as
+`<state>/logs/jobs/<job id>.rsync.log`. The job page offers it with **Download
+rsync log** (while the job runs: the file as far as written). It is deleted
+together with the job and by the log retention.
 
-To follow the log while a job is running:
+To follow the rsync file directly while a job runs:
 
 ```sh
 docker compose exec worker tail -f \
-  /var/lib/mirrorhub/tmp/ftpsync/packages.linuxmint.com/log/rsync-ftpsync-packages.linuxmint.com.log
-```
-
-To find the newest job log when the repository slug is unknown:
-
-```sh
-docker compose exec worker sh -c \
-  'find /var/lib/mirrorhub/tmp/ftpsync -type f -name "*.log" -printf "%T@ %p\n" | sort -nr | head'
+  /var/lib/mirrorhub/tmp/ftpsync/<slug>/log/rsync-ftpsync-<slug>.log
 ```
 
 The universal worker also writes aggregate logs to stdout:
@@ -1174,8 +1172,6 @@ The universal worker also writes aggregate logs to stdout:
 ```sh
 docker compose logs -f worker
 ```
-
-Use the UI job history to identify the job ID before inspecting a specific log.
 
 ### Job log shows output of another repository or tool
 
