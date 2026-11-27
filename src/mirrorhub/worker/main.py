@@ -68,6 +68,11 @@ class ExportCancelled(RuntimeError):
 
 @contextlib.contextmanager
 def repository_guard(settings: Settings, repo_id: int) -> Iterator[bool]:
+    """Hold the repository's file lock for the block; yield False if it is taken.
+
+    The second guard next to the database's repository lock: no two jobs change or
+    read the same tree at the same time, even across worker containers.
+    """
     directory = settings.state_dir / "repo-guards"
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / f"{repo_id}.lock").open("a+b") as handle:
@@ -132,6 +137,7 @@ class Lease:
             self.closed.wait(self.settings.heartbeat_interval_s)
 
     def cancelled(self) -> bool:
+        """Return True if the job should stop (ownership lost, worker stopping, cancel asked)."""
         if self.lost.is_set():
             return True
         if self.publication_started:
@@ -146,6 +152,7 @@ class Lease:
         return self._cancelled
 
     def update(self, pct: float | None, text: str) -> None:
+        """Record progress for the next heartbeat (LeaseLost if the job is no longer ours)."""
         if self.lost.is_set():
             raise LeaseLost("job ownership was lost")
         with self._progress_lock:
@@ -153,6 +160,10 @@ class Lease:
             self._text = text[:500]
 
     def export_pulse(self, pct: float | None, text: str) -> None:
+        """Report export progress and raise ExportCancelled if it was cancelled.
+
+        From 98 % on, publication has started and a cancel request is ignored.
+        """
         self.update(pct, text)
         if self.cancelled():
             raise ExportCancelled("export cancelled before publication")
@@ -644,6 +655,7 @@ def _parse_tools(value: str) -> tuple[Tool, ...]:
 
 
 def main() -> int:
+    """Run the worker loop (``mirrorhub-worker``) until stopped; return the exit code."""
     parser = argparse.ArgumentParser(prog="mirrorhub-worker")
     parser.add_argument(
         "--tool",

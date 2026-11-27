@@ -24,6 +24,7 @@ def _safe_destination(target: Path, relative_path: str) -> Path:
 
 
 def build(repo: Repository, job: Job, target: Path, cwd: Path) -> BuildPlan:
+    """Build the wget steps for a repository: whole tree or file list (BuildError if invalid)."""
     error = validators.validate_host(repo.upstream_host) or validators.validate_root(
         repo.upstream_root
     )

@@ -42,6 +42,7 @@ class UTCDateTime(TypeDecorator[datetime]):
     cache_ok = True
 
     def process_bind_param(self, value: Any, dialect: Any) -> Any:
+        """Convert an aware time to naive UTC before storing it."""
         if value is None:
             return None
         if value.tzinfo is None or value.tzinfo is None:
@@ -49,6 +50,7 @@ class UTCDateTime(TypeDecorator[datetime]):
         return value.astimezone(UTC).replace(tzinfo=None)
 
     def process_result_value(self, value: Any, dialect: Any) -> Any:
+        """Return stored times as naive UTC."""
         if value is None:
             return None
         if value.tzinfo is None:
@@ -57,6 +59,7 @@ class UTCDateTime(TypeDecorator[datetime]):
 
 
 def utcnow() -> datetime:
+    """Return the current time as naive UTC (the form every stored time has)."""
     return datetime.now(UTC).replace(tzinfo=None)
 
 
@@ -65,6 +68,7 @@ def _json() -> Any:
 
 
 def default_retry_policy() -> dict[str, Any]:
+    """Return the retry policy of a new repository (3 attempts, exponential backoff)."""
     return {
         "max_attempts": 3,
         "backoff": "exponential",  # fixed | linear | exponential
@@ -75,6 +79,8 @@ def default_retry_policy() -> dict[str, Any]:
 
 
 class Admin(SQLModel, table=True):
+    """The administrator account (one per installation)."""
+
     __tablename__ = "admin"
     id: int | None = Field(default=None, primary_key=True)
     username: str = Field(unique=True, index=True, max_length=64)
@@ -83,10 +89,10 @@ class Admin(SQLModel, table=True):
 
 
 class LoginThrottle(SQLModel, table=True):
-    """Failed-login counter and lockout per (username, client IP).
+    r"""Failed-login counter and lockout per (username, client IP).
 
     Locking per pair instead of per account means an attacker cannot lock the admin
-    out from another address. ``key`` is the SHA-256 of ``username\\0ip``.
+    out from another address. ``key`` is the SHA-256 of ``username\0ip``.
     """
 
     __tablename__ = "login_throttle"
@@ -99,6 +105,8 @@ class LoginThrottle(SQLModel, table=True):
 
 
 class AuthSession(SQLModel, table=True):
+    """A login session; the cookie carries a token, the table its hash and CSRF secret."""
+
     __tablename__ = "session"
     id: str = Field(primary_key=True, max_length=64)  # SHA-256 of the cookie token
     admin_id: int = Field(foreign_key="admin.id", index=True)
@@ -109,6 +117,8 @@ class AuthSession(SQLModel, table=True):
 
 
 class Repository(SQLModel, table=True):
+    """A mirrored repository: upstream, sync tool and options, export settings."""
+
     __tablename__ = "repository"
     id: int | None = Field(default=None, primary_key=True)
     slug: str = Field(unique=True, index=True, max_length=64)
@@ -172,6 +182,8 @@ class Preset(SQLModel, table=True):
 
 
 class Job(SQLModel, table=True):
+    """A queued, running or finished sync, export or rehash of a repository."""
+
     __tablename__ = "job"
     __table_args__ = (
         Index("ix_job_claim", "status", "tool", "next_run_at"),
@@ -221,6 +233,8 @@ class RepoLock(SQLModel, table=True):
 
 
 class Schedule(SQLModel, table=True):
+    """A cron schedule that queues one job type for a repository."""
+
     __tablename__ = "schedule"
     id: int | None = Field(default=None, primary_key=True)
     repo_id: int = Field(foreign_key="repository.id", index=True)
@@ -235,6 +249,8 @@ class Schedule(SQLModel, table=True):
 
 
 class Export(SQLModel, table=True):
+    """An export of a repository in the drop folder (building, published or failed)."""
+
     __tablename__ = "export"
     __table_args__ = (UniqueConstraint("repo_id", "export_id"),)
     id: int | None = Field(default=None, primary_key=True)
@@ -253,8 +269,12 @@ class Export(SQLModel, table=True):
 
 
 class ManifestSnapshot(SQLModel, table=True):
-    """Compressed JSONL file list on the state volume. The newest snapshot linked to a
-    published export of a repo is the diff base for the next incremental export."""
+    """Legacy file list of an export (no longer written).
+
+    Incremental exports take their base from the metadata copies on the state volume
+    (export/metadata_store.py). The table remains for old rows; deleting a job or
+    repository still unlinks or removes them.
+    """
 
     __tablename__ = "manifest_snapshot"
     id: int | None = Field(default=None, primary_key=True)
@@ -266,6 +286,8 @@ class ManifestSnapshot(SQLModel, table=True):
 
 
 class GpgKey(SQLModel, table=True):
+    """A key imported into the trusted keyring."""
+
     __tablename__ = "gpg_key"
     fingerprint: str = Field(primary_key=True, unique=True, index=True)
     uid: str = ""
@@ -275,6 +297,8 @@ class GpgKey(SQLModel, table=True):
 
 
 class NotificationChannel(SQLModel, table=True):
+    """Where notifications go (SMTP, webhook or event files); secrets encrypted."""
+
     __tablename__ = "notification_channel"
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(unique=True, max_length=64)
@@ -284,6 +308,8 @@ class NotificationChannel(SQLModel, table=True):
 
 
 class NotificationRule(SQLModel, table=True):
+    """Sends an event, optionally only for one repository, to a channel."""
+
     __tablename__ = "notification_rule"
     id: int | None = Field(default=None, primary_key=True)
     channel_id: int = Field(foreign_key="notification_channel.id", index=True)
@@ -292,9 +318,12 @@ class NotificationRule(SQLModel, table=True):
 
 
 class NotificationDelivery(SQLModel, table=True):
-    """Outbox: one row per (event, channel). The sender thread delivers due rows and
-    retries failed ones with backoff, so a slow or unreachable target never blocks the
-    scheduler and no event is lost while it is down."""
+    """Notification outbox: one row per (event, channel).
+
+    The sender thread delivers due rows and retries failed ones with backoff, so a
+    slow or unreachable target never blocks the scheduler and no event is lost while
+    it is down.
+    """
 
     __tablename__ = "notification_delivery"
     __table_args__ = (Index("ix_notification_delivery_due", "status", "next_attempt_at"),)
@@ -329,12 +358,16 @@ class AuditLog(SQLModel, table=True):
 
 
 class Setting(SQLModel, table=True):
+    """A key-value setting changed on the Settings or Exports page."""
+
     __tablename__ = "setting"
     key: str = Field(primary_key=True, max_length=64)
     value: Any = Field(default=None, sa_column=Column(JSON))
 
 
 class StorageCache(SQLModel, table=True):
+    """Cached size of a repository's tree, per architecture (Storage page)."""
+
     __tablename__ = "storage_cache"
     repo_id: int = Field(primary_key=True, foreign_key="repository.id")
     bytes: int = 0

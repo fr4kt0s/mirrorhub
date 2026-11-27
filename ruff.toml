@@ -13,15 +13,6 @@ convention = "pep257"
 [lint.per-file-ignores]
 "tests/*" = ["S", "D"]
 "migrations/*" = ["D"]
-# PEP 257 docstrings are added package by package; remove a line once it is done.
-"contrib/*" = ["D"]
-"scripts/*" = ["D"]
-"src/mirrorhub/enums.py" = ["D"]
-"src/mirrorhub/models.py" = ["D"]
-"src/mirrorhub/queue/*" = ["D"]
-"src/mirrorhub/security/*" = ["D"]
-"src/mirrorhub/sync/*" = ["D"]
-"src/mirrorhub/worker/*" = ["D"]
 
 [lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends"]

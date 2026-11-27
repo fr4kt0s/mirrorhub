@@ -18,6 +18,7 @@ class FtpsyncAdapter(SyncAdapter):
     result_label = "ftpsync"
 
     def validate_plan(self, plan: SyncPlan) -> None:
+        """Require an FtpsyncPlan; ftpsync has no dry run."""
         if not isinstance(plan, FtpsyncPlan):
             raise SyncConfigurationError("ftpsync adapter requires an FtpsyncPlan")
 
@@ -34,6 +35,7 @@ class FtpsyncAdapter(SyncAdapter):
         plan: SyncPlan,
         context: SyncExecutionContext,
     ) -> BuildPlan:
+        """Build the ftpsync configuration and command for the plan."""
         self.validate_plan(plan)
 
         return build_ftpsync(

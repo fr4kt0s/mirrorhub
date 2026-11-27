@@ -40,6 +40,7 @@ class Progress:
         self.last = 0.0
 
     def __call__(self, _pct: float | None, text: str) -> None:
+        """Print a progress line at most every five seconds."""
         now = time.monotonic()
         if now - self.last >= 5:
             self.last = now
@@ -47,6 +48,7 @@ class Progress:
 
 
 def drop_caches() -> None:
+    """Sync and drop the page cache (needs root), so reads come from disk."""
     os.sync()
     try:
         Path("/proc/sys/vm/drop_caches").write_text("3\n", encoding="ascii")
@@ -60,6 +62,7 @@ def measure(
     cache: manifest.HashCache | None,
     drop: bool,
 ) -> tuple[manifest.Inventory, dict[str, float]]:
+    """Build an inventory with or without the hash cache; return it with timings."""
     if drop:
         drop_caches()
 
@@ -90,6 +93,7 @@ def measure(
 
 
 def main() -> int:
+    """Run the command line; return the exit code."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", type=Path, required=True, help="one repository directory")
     parser.add_argument("--cache-dir", type=Path, default=None)

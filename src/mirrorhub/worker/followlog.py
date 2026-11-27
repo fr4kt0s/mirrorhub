@@ -34,8 +34,9 @@ SUMMARY_FALLBACK = 20  # without a marker: the last lines
 
 @dataclass(frozen=True)
 class FollowedLog:
-    """A log file a tool writes itself instead of stdout; the runner copies it into
-    the job log while the step runs (see worker/followlog.py).
+    """A log file a tool writes itself instead of stdout.
+
+    The runner copies it into the job log while the step runs (see LogFollower).
 
     paths: candidate names, the first one that exists is followed (names differ
     between tool versions). live_lines: how many lines go into the job log (None:
@@ -51,6 +52,7 @@ class FollowedLog:
 
 
 def hidden_notice(prefix: str) -> str:
+    """Return the log line that says further lines are only in the downloadable log."""
     return (
         f"{prefix} ... further lines are not shown here; the complete log can be "
         "downloaded on the job page"
@@ -149,7 +151,7 @@ class _Tail:
         ]
 
     def current_file(self) -> Path | None:
-        """The file of this run, if one was written (not an untouched earlier one)."""
+        """Return the file of this run, if one was written (not an untouched earlier one)."""
         if self.path is None or self.inode is None:
             return None
         before = self.initial.get(self.path)
@@ -159,10 +161,13 @@ class _Tail:
 
 
 class LogFollower:
+    """Copies the log files a step's tool writes into the job log while it runs."""
+
     def __init__(self, specs: tuple[FollowedLog, ...]) -> None:
         self._tails = [_Tail(spec) for spec in specs]
 
     def poll(self) -> list[str]:
+        """Return the new lines of all followed files."""
         lines: list[str] = []
         for tail in self._tails:
             lines.extend(tail.read())

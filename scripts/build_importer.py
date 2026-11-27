@@ -119,6 +119,7 @@ def build(output: Path) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Build the importer zipapp and its .sha256 file; return the exit code."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="archive path")
     arguments = parser.parse_args(argv)

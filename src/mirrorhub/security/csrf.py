@@ -32,14 +32,17 @@ def _app_key() -> str:
 
 
 def new_secret() -> str:
+    """Return a new random CSRF secret (stored in the session or a pre-login cookie)."""
     return secrets.token_urlsafe(32)
 
 
 def valid_secret_format(value: str | None) -> bool:
+    """Return True if value looks like a secret made by new_secret()."""
     return bool(value and _SECRET_RE.fullmatch(value))
 
 
 def make_token(secret: str, key: str | None = None) -> str:
+    """Return the CSRF token for a secret (HMAC-SHA256 with the application key)."""
     signing_key = key if key is not None else _app_key()
     return hmac.new(
         signing_key.encode(),
@@ -53,6 +56,7 @@ def verify_token(
     token: str,
     key: str | None = None,
 ) -> bool:
+    """Return True if token is the valid CSRF token for secret (constant-time compare)."""
     if not _TOKEN_RE.fullmatch(token):
         return False
     return hmac.compare_digest(make_token(secret, key), token)
@@ -92,6 +96,11 @@ def _parse_origin(value: str) -> Origin | None:
 
 
 def origin_ok(request: Request) -> bool:
+    """Return True if the request's Origin header names this site.
+
+    Compared with MIRRORHUB_PUBLIC_ORIGIN, or the request's own host if that is not
+    set. A missing Origin passes; the CSRF token is checked separately.
+    """
     supplied = request.headers.get("origin")
 
     # Missing Origin is permitted only alongside the separate mandatory
@@ -121,6 +130,7 @@ def origin_ok(request: Request) -> bool:
 
 
 async def extract_token(request: Request) -> str:
+    """Return the CSRF token from the request header or the form field ("" if none)."""
     header = request.headers.get(HEADER_NAME)
     if header:
         return header

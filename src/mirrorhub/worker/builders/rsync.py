@@ -42,6 +42,7 @@ def _source_url(host: str, root: str, suffix: str = "") -> str:
 
 
 def build(repo: Repository, job: Job, target: Path, cwd: Path) -> BuildPlan:
+    """Build the rsync command for a repository (BuildError if invalid)."""
     error = validators.validate_host(repo.upstream_host) or validators.validate_root(
         repo.upstream_root
     )

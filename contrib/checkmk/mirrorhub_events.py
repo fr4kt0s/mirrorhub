@@ -104,18 +104,22 @@ STATE_VERSION = 1
 
 @dataclass
 class Result:
+    """One Checkmk local-check service: state, name, metrics and text."""
+
     status: int
     service: str
     text: str
     metrics: list[str] = field(default_factory=list)
 
     def line(self) -> str:
+        """Return the service as one local-check output line."""
         metrics = "|".join(self.metrics) if self.metrics else "-"
         text = " ".join(self.text.split())  # one line, no control characters
         return f'{self.status} "{self.service}" {metrics} {text}'
 
 
 def load_config(path: str | None = None) -> dict[str, Any]:
+    """Read the JSON configuration over the defaults (missing file: defaults only)."""
     config = dict(DEFAULTS)
     candidate = Path(path or os.environ.get("MIRRORHUB_EVENTS_CONFIG") or CONFIG_PATH)
     if candidate.is_file():
@@ -127,6 +131,7 @@ def load_config(path: str | None = None) -> dict[str, Any]:
 
 
 def parse_time(value: Any) -> datetime | None:
+    """Parse an ISO 8601 time from an event; None if missing or invalid."""
     if not isinstance(value, str) or not value:
         return None
     try:
@@ -139,6 +144,7 @@ def parse_time(value: Any) -> datetime | None:
 
 
 def event_time(event: dict[str, Any]) -> datetime | None:
+    """Return when an event happened (finished_at, else time)."""
     return parse_time(event.get("finished_at")) or parse_time(event.get("time"))
 
 
@@ -170,13 +176,16 @@ IMPORTER_SLOTS = {
 
 
 def _same_or_newer(current: dict[str, Any] | None, candidate: dict[str, Any]) -> bool:
-    """Importer files are read in name order, which is chronological: on equal times
-    the later file wins."""
+    """Return True if candidate is at least as new as current.
+
+    Importer files are read in name order, which is chronological: on equal times
+    the later file wins.
+    """
     return current is None or str(candidate.get("time", "")) >= str(current.get("time", ""))
 
 
 def merge_importer_event(state: dict[str, Any], event: dict[str, Any], when: datetime) -> None:
-    """Importer events: newest import, failure and tree check per repository, last run."""
+    """Merge an importer event: newest import, failure and tree check per repository, last run."""
     importer = state.setdefault("importer", {})
     stamp = when.astimezone(timezone.utc).isoformat()
     if stamp > str(importer.get("newest", "")):
@@ -282,6 +291,7 @@ def read_events(directory: Path) -> tuple[list[dict[str, Any]], int, int]:
 
 
 def load_state(path: Path) -> dict[str, Any]:
+    """Read the state file; a fresh state if it is missing, unreadable or outdated."""
     try:
         state = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -292,6 +302,7 @@ def load_state(path: Path) -> dict[str, Any]:
 
 
 def save_state(path: Path, state: dict[str, Any]) -> None:
+    """Write the state file atomically."""
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
@@ -326,6 +337,10 @@ def _age_status(age: float, warn_s: float, crit_s: float) -> int:
 
 
 def sync_result(repo: str, entry: dict[str, Any], config: dict[str, Any], now: datetime) -> Result:
+    """Return the service of a repository's syncs.
+
+    CRIT after a failure without a later success; WARN/CRIT when the last success is old.
+    """
     warn_s = float(_option(config, repo, "sync_warn_hours")) * 3600
     crit_s = float(_option(config, repo, "sync_crit_hours")) * 3600
     ok, failed = entry.get("sync_ok"), entry.get("sync_failed")
@@ -358,6 +373,10 @@ def sync_result(repo: str, entry: dict[str, Any], config: dict[str, Any], now: d
 def export_result(
     repo: str, entry: dict[str, Any], config: dict[str, Any], now: datetime
 ) -> Result:
+    """Return the service of a repository's exports.
+
+    CRIT after a failure without a later success; WARN/CRIT when the last export is old.
+    """
     warn_s = float(_option(config, repo, "export_warn_hours")) * 3600
     crit_s = float(_option(config, repo, "export_crit_hours")) * 3600
     ok, failed = entry.get("export_ok"), entry.get("export_failed")
@@ -390,6 +409,7 @@ def export_result(
 
 
 def disk_result(state: dict[str, Any], config: dict[str, Any], now: datetime) -> Result | None:
+    """Return the service for the sender's low_disk events; None if there was none."""
     disk = state.get("disk")
     if disk is None:
         return None
@@ -417,6 +437,7 @@ def disk_result(state: dict[str, Any], config: dict[str, Any], now: datetime) ->
 def feed_result(
     state: dict[str, Any], files: int, errors: int, config: dict[str, Any], now: datetime
 ) -> Result:
+    """Return the service of the event feed: file count, read errors, newest event age."""
     newest = parse_time(state.get("feed", {}).get("newest"))
     parts = [f"{files} event files in {config['events_dir']}"]
     status = OK
@@ -453,8 +474,11 @@ def _ago(record: dict[str, Any] | None, now: datetime) -> str:
 def import_result(
     repo: str, entry: dict[str, Any], config: dict[str, Any], now: datetime
 ) -> Result:
-    """Last import; CRIT on a failure without later success; WARN/CRIT when the sender
-    published an export that has not been imported for import_lag_*_hours."""
+    """Return the service of a repository's imports.
+
+    CRIT on a failure without a later success; WARN/CRIT when the sender published
+    an export that has not been imported for import_lag_*_hours.
+    """
     service = f"MirrorHub import {repo}"
     ok, failed, published = (
         entry.get("import_ok"),
@@ -575,7 +599,7 @@ def tree_result(repo: str, entry: dict[str, Any], config: dict[str, Any], now: d
 def importer_result(
     state: dict[str, Any], files: int, errors: int, config: dict[str, Any], now: datetime
 ) -> Result:
-    """Importer event files and the last import run (heartbeat)."""
+    """Return the service of the importer's event files and its last run (heartbeat)."""
     directory = str(config["importer_events_dir"])
     importer = state.get("importer", {})
     run = importer.get("run")
@@ -607,6 +631,7 @@ def importer_result(
 
 
 def run(config: dict[str, Any], now: datetime | None = None) -> list[Result]:
+    """Read new event files, update the state and return all services."""
     now = now or datetime.now(timezone.utc)
     state_path = Path(str(config["state_file"]))
     state = load_state(state_path)
@@ -654,6 +679,7 @@ def run(config: dict[str, Any], now: datetime | None = None) -> list[Result]:
 
 
 def main() -> int:
+    """Print the local-check lines; always exit 0 (Checkmk reads the states from the lines)."""
     try:
         results = run(load_config())
     except Exception as exc:  # must always print a valid service line

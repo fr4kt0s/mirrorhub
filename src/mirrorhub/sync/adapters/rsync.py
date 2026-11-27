@@ -18,6 +18,7 @@ class RsyncAdapter(SyncAdapter):
     result_label = "rsync"
 
     def validate_plan(self, plan: SyncPlan) -> None:
+        """Require an RsyncPlan over the rsync protocol."""
         if not isinstance(plan, RsyncPlan):
             raise SyncConfigurationError("rsync adapter requires an RsyncPlan")
 
@@ -29,6 +30,7 @@ class RsyncAdapter(SyncAdapter):
         plan: SyncPlan,
         context: SyncExecutionContext,
     ) -> BuildPlan:
+        """Build the rsync command for the plan."""
         self.validate_plan(plan)
 
         return build_rsync(

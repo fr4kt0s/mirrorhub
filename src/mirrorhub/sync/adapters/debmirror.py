@@ -18,6 +18,7 @@ class DebmirrorAdapter(SyncAdapter):
     result_label = "debmirror"
 
     def validate_plan(self, plan: SyncPlan) -> None:
+        """Require a DebmirrorPlan over http, https or rsync."""
         if not isinstance(plan, DebmirrorPlan):
             raise SyncConfigurationError("debmirror adapter requires a DebmirrorPlan")
 
@@ -38,6 +39,7 @@ class DebmirrorAdapter(SyncAdapter):
         plan: SyncPlan,
         context: SyncExecutionContext,
     ) -> BuildPlan:
+        """Build the debmirror command for the plan."""
         self.validate_plan(plan)
 
         return build_debmirror(

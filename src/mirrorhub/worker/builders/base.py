@@ -17,11 +17,15 @@ __all__ = ["BuildError", "BuildPlan", "FollowedLog", "Step", "resolve_paths"]
 
 
 class BuildError(RuntimeError):
+    """A repository's settings cannot be turned into a command (configuration error, no retry)."""
+
     pass
 
 
 @dataclass(frozen=True)
 class Step:
+    """One command of a sync: argv, a label for the log and log files to follow."""
+
     argv: tuple[str, ...]
     label: str
     follow: tuple[FollowedLog, ...] = ()
@@ -29,6 +33,8 @@ class Step:
 
 @dataclass(frozen=True)
 class BuildPlan:
+    """The commands of a sync, run in order in cwd, writing into target."""
+
     steps: list[Step]
     cwd: Path
     target: Path

@@ -59,12 +59,15 @@ SKIP = {".temp", ".tmp", ".mirrorhub", ".rsync-partial", ".mirrorhub-import"}
 
 @dataclass
 class Findings:
+    """Problems found in one repository; printed as they are found and counted."""
+
     slug: str
     missing: set[str] = field(default_factory=set)
     errors: list[str] = field(default_factory=list)
     count: int = 0
 
     def add(self, kind: str, relative: str, detail: str = "") -> None:
+        """Record and print one finding (kind, path, optional detail)."""
         self.count += 1
         message = f"{kind} {relative!r}" + (f" ({detail})" if detail else "")
         print(f"[{self.slug}] {message}")
@@ -75,6 +78,7 @@ class Findings:
 
 
 def safe_relative(value: str) -> bool:
+    """Return True if value is a safe relative path (no absolute, ``..`` or control characters)."""
     return (
         bool(value)
         and not value.startswith("/")
@@ -85,10 +89,12 @@ def safe_relative(value: str) -> bool:
 
 
 def contained(path: Path, root: Path) -> bool:
+    """Return True if path resolves to a location inside root."""
     return path.resolve().is_relative_to(root.resolve())
 
 
 def digest(path: Path) -> str:
+    """Return the SHA-256 hex digest of a file."""
     result = hashlib.sha256()
     with path.open("rb") as handle:
         while chunk := handle.read(1024 * 1024):
@@ -97,6 +103,7 @@ def digest(path: Path) -> str:
 
 
 def differs(path: Path, entry: Mapping[str, Any]) -> bool:
+    """Return True if the file or symlink at path does not match its inventory entry."""
     if entry["type"] == "symlink":
         return not (path.is_symlink() and os.readlink(path) == entry["target"])
     if path.is_symlink() or not path.is_file():
@@ -105,10 +112,12 @@ def differs(path: Path, entry: Mapping[str, Any]) -> bool:
 
 
 def walk_error(error: OSError) -> None:
+    """Raise walk errors instead of skipping directories silently (os.walk onerror)."""
     raise error
 
 
 def check_inventory(export: Path, tree: Path, findings: Findings) -> None:
+    """Compare a tree with an export's files.json: missing, unsafe, differing and extra paths."""
     inventory = json.loads((export / "files.json").read_text(encoding="utf-8"))
     if not isinstance(inventory, dict):
         raise ValueError("files.json must be an object")
@@ -136,6 +145,7 @@ def check_inventory(export: Path, tree: Path, findings: Findings) -> None:
 
 
 def indexes(tree: Path) -> list[Path]:
+    """Return the Packages index files below ``dists/``."""
     found: list[Path] = []
     for directory, dirs, files in os.walk(tree / "dists", onerror=walk_error):
         dirs[:] = [name for name in dirs if name not in SKIP]
@@ -147,6 +157,7 @@ def indexes(tree: Path) -> list[Path]:
 
 
 def open_index(path: Path) -> IO[str]:
+    """Open a Packages index as text, decompressing .gz and .xz files."""
     if path.suffix == ".gz":
         return gzip.open(path, "rt", encoding="utf-8")
     if path.suffix == ".xz":
@@ -155,6 +166,7 @@ def open_index(path: Path) -> IO[str]:
 
 
 def packages(path: Path) -> Iterator[dict[str, str]]:
+    """Yield the stanzas of a Packages index as dictionaries."""
     entry: dict[str, str] = {}
     with open_index(path) as handle:
         for line in handle:
@@ -171,6 +183,7 @@ def packages(path: Path) -> Iterator[dict[str, str]]:
 
 
 def apt_problem(tree: Path, entry: Mapping[str, str], hashes: bool) -> str | None:
+    """Check the file a Packages stanza names; return the problem kind or None."""
     name = entry.get("Filename", "")
     if not safe_relative(name) or not contained(tree / name, tree):
         return "BADNAME"
@@ -191,6 +204,7 @@ def apt_problem(tree: Path, entry: Mapping[str, str], hashes: bool) -> str | Non
 
 
 def check_apt(tree: Path, hashes: bool, findings: Findings) -> None:
+    """Check every file the APT indexes name (size, optionally SHA-256)."""
     found = indexes(tree)
     if not found:
         findings.add("APT-INDEX", "dists/", "no Packages index found")
@@ -250,6 +264,7 @@ def write_report(log_dir: Path, findings: Findings) -> Path:
 
 
 def audit(tree: Path, export: Path | None, apt: bool, hashes: bool, log_dir: Path) -> int:
+    """Audit one repository tree; write a dated report only if something was found."""
     findings = Findings(tree.name)
     print(f"[{tree.name}] starting audit: {tree}")
     try:
@@ -286,6 +301,7 @@ def audit(tree: Path, export: Path | None, apt: bool, hashes: bool, log_dir: Pat
 
 
 def audit_all(root: Path, hashes: bool, log_dir: Path) -> int:
+    """Audit every APT repository (child with dists/) below the mirror root."""
     try:
         if not root.is_dir():
             raise ValueError(f"mirror root not found: {root}")
@@ -314,6 +330,7 @@ def audit_all(root: Path, hashes: bool, log_dir: Path) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the command line; return the exit code."""
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )

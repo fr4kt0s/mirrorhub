@@ -31,6 +31,8 @@ ARG_RE = re.compile(r"^--[a-z0-9][a-z0-9-]{0,40}(?:=[A-Za-z0-9._:/-]{1,64})?$")
 
 @dataclass(frozen=True)
 class ArgSpec:
+    """How an allowed extra argument of a sync tool is checked: a flag or a bounded integer."""
+
     kind: str  # "flag" or "int"
     lo: int = 0
     hi: int = 0
@@ -62,6 +64,7 @@ ALLOWED_ARGS: dict[str, dict[str, ArgSpec]] = {
 
 
 def validate_slug(value: str) -> str | None:
+    """Check a repository id (DNS-label rules); return an error message or None."""
     if not SLUG_RE.fullmatch(value):
         return (
             "repository ID: 1-253 characters; lowercase letters, digits, hyphens and dots; "
@@ -71,6 +74,7 @@ def validate_slug(value: str) -> str | None:
 
 
 def validate_name(value: str) -> str | None:
+    """Check a display name; return an error message or None."""
     if not value or len(value) > 128:
         return "name: required, at most 128 characters"
     if any(ord(character) < 32 for character in value):
@@ -79,6 +83,7 @@ def validate_name(value: str) -> str | None:
 
 
 def validate_host(value: str) -> str | None:
+    """Check an upstream host name (no scheme, no path); return an error message or None."""
     if not value or len(value) > 253:
         return "upstream host: required, at most 253 characters"
     if "://" in value or "/" in value or any(character.isspace() for character in value):
@@ -90,6 +95,7 @@ def validate_host(value: str) -> str | None:
 
 
 def validate_root(value: str) -> str | None:
+    """Check an upstream root path; return an error message or None."""
     if not value:
         return "upstream root: required (use / for the mirror root)"
     if value != "/" and value.endswith("/"):
@@ -107,6 +113,7 @@ def validate_list_field(
     *,
     max_items: int = MAX_LIST_ITEMS,
 ) -> str | None:
+    """Check a list of simple tokens (suites, sections, ...); return an error or None."""
     if len(values) > max_items:
         return f"{name}: at most {max_items} entries"
     for item in values:
@@ -116,6 +123,7 @@ def validate_list_field(
 
 
 def validate_architectures(values: list[str]) -> str | None:
+    """Check the architecture list (``none`` alone mirrors none); return an error or None."""
     if not values:
         return (
             "architectures: at least one entry is required (use 'none' to mirror no architectures)"
@@ -131,6 +139,7 @@ def validate_architectures(values: list[str]) -> str | None:
 
 
 def validate_patterns(name: str, values: list[str]) -> str | None:
+    """Check include or exclude patterns; return an error message or None."""
     if len(values) > MAX_LIST_ITEMS:
         return f"{name}: at most {MAX_LIST_ITEMS} patterns"
     for item in values:
@@ -140,6 +149,7 @@ def validate_patterns(name: str, values: list[str]) -> str | None:
 
 
 def validate_cron(expr: str) -> str | None:
+    """Check a five-field cron expression; return an error message or None."""
     text = expr.strip()
     if len(text.split()) != 5:
         return "cron: expected 5 fields (minute hour day month weekday)"
@@ -149,12 +159,14 @@ def validate_cron(expr: str) -> str | None:
 
 
 def validate_url(value: str) -> str | None:
+    """Check an http(s) URL of a wget file entry; return an error message or None."""
     if len(value) > 500 or not URL_RE.fullmatch(value):
         return f"url: invalid or unsupported URL {value[:80]!r}"
     return None
 
 
 def validate_rel_path(value: str) -> str | None:
+    """Check a relative target path of a wget file entry; return an error or None."""
     if not value or len(value) > 240:
         return "path: required, at most 240 characters"
     if value.startswith("/") or ".." in value.split("/"):
@@ -165,6 +177,10 @@ def validate_rel_path(value: str) -> str | None:
 
 
 def validate_extra_args(tool: str, args: list[str]) -> str | None:
+    """Check extra arguments against the tool's allow list (ALLOWED_ARGS).
+
+    Returns an error message or None.
+    """
     specs = ALLOWED_ARGS.get(tool, {})
     if len(args) > 16:
         return "extra arguments: at most 16 entries"
@@ -192,12 +208,14 @@ def validate_extra_args(tool: str, args: list[str]) -> str | None:
 
 
 def validate_bwlimit(value: int) -> str | None:
+    """Check a bandwidth limit in KB/s (0: unlimited); return an error message or None."""
     if not isinstance(value, int) or not 0 <= value <= 10_000_000:
         return "bandwidth limit: 0 (unlimited) to 10000000 KB/s"
     return None
 
 
 def validate_retry_policy(policy: dict[str, Any]) -> str | None:
+    """Check a retry policy (attempts, backoff, delays, exit codes); return an error or None."""
     attempts = policy.get("max_attempts")
     if not isinstance(attempts, int) or not 1 <= attempts <= 10:
         return "retry: max attempts must be 1-10"
@@ -221,6 +239,7 @@ def validate_retry_policy(policy: dict[str, Any]) -> str | None:
 
 
 def validate_export_fields(mode: str, fmt: str, split_mb: int) -> str | None:
+    """Check export mode, format and split size; return an error message or None."""
     if mode not in ("incr", "full"):
         return "export mode: incr or full"
     if fmt not in ("tar", "tar.zst"):
@@ -231,6 +250,7 @@ def validate_export_fields(mode: str, fmt: str, split_mb: int) -> str | None:
 
 
 def validate_extra_files(items: list[dict[str, str]]) -> str | None:
+    """Check the wget file list (count, URLs, target paths); return an error or None."""
     if len(items) > MAX_EXTRA_FILES:
         return f"extra files: at most {MAX_EXTRA_FILES} entries"
     for item in items:

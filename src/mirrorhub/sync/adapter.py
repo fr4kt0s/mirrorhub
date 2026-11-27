@@ -48,15 +48,18 @@ class SyncAdapterRegistry:
         self._adapters: dict[Tool, SyncAdapter] = {}
 
     def register(self, adapter: SyncAdapter) -> None:
+        """Register an adapter for its tool (ValueError if the tool already has one)."""
         if adapter.adapter in self._adapters:
             raise ValueError(f"adapter already registered: {adapter.adapter}")
         self._adapters[adapter.adapter] = adapter
 
     def get(self, adapter: Tool) -> SyncAdapter:
+        """Return the adapter of a tool (LookupError if none is registered)."""
         try:
             return self._adapters[adapter]
         except KeyError as exc:
             raise LookupError(f"no adapter registered for {adapter}") from exc
 
     def supported_tools(self) -> frozenset[Tool]:
+        """Return the tools that have an adapter."""
         return frozenset(self._adapters)

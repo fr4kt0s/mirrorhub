@@ -30,6 +30,8 @@ FOLLOW_INTERVAL_S = 0.5  # how often files a tool writes itself are read
 
 @dataclass
 class RunResult:
+    """Outcome of running a build plan: exit code, cancel flag, line count, last line."""
+
     exit_code: int
     cancelled: bool
     line_count: int = 0
@@ -37,6 +39,8 @@ class RunResult:
 
 
 class Runner:
+    """Runs a build plan's steps, writes their output to the job log and reports progress."""
+
     def __init__(
         self,
         plan: BuildPlan,
@@ -59,6 +63,10 @@ class Runner:
         self._cancelled = False
 
     def run(self) -> RunResult:
+        """Run the steps in order until one fails or the job is cancelled.
+
+        Output goes to the job log; a cancel sends SIGTERM to the step's process group.
+        """
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             self.plan.cwd.mkdir(parents=True, exist_ok=True)
@@ -231,7 +239,7 @@ class Runner:
         log_file.flush()
 
     def _finish_follow(self, follower: LogFollower, log_file: TextIO) -> None:
-        """The rest of the followed files, their summaries, then keep them for download."""
+        """Write the rest of the followed files and their summaries; keep them for download."""
         try:
             for followed in follower.finish():
                 self._write(followed, log_file)

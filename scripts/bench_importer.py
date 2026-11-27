@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure the receiver importer on synthetic exports, optionally for several versions.
+r"""Measure the receiver importer on synthetic exports, optionally for several versions.
 
 Builds exports in the export format (data.tar, files.json, manifest.json, deleted.txt,
 MANIFEST.sha256, .done) below --work and imports them with the importer CLI, each run
@@ -19,7 +19,7 @@ Each run reports wall time, fsync calls, and bytes read/written through system c
 Compare two versions of the importer by pointing --src at their src directories:
 
   git worktree add /tmp/importer-before 7a3f3b2
-  python3 scripts/bench_importer.py --work /tmp/bench \\
+  python3 scripts/bench_importer.py --work /tmp/bench \
       --src before=/tmp/importer-before/src --src after=src
 
 --drop-caches empties the page cache before each timed run (needs root). The disk
@@ -81,6 +81,7 @@ def build_export(
     deleted: list[str],
     base: str | None,
 ) -> None:
+    """Write a synthetic export (data.tar, files.json, manifests, .done) to the inbox."""
     directory = inbox / slug / export_id
     directory.mkdir(parents=True)
     mode = export_id.rsplit("-", 1)[1]
@@ -256,6 +257,7 @@ def _table(results: list[dict[str, Any]]) -> str:
 
 
 def main() -> int:
+    """Run the benchmark, or one importer run when called with --child; return the exit code."""
     if len(sys.argv) > 1 and sys.argv[1] == "--child":
         child(sys.argv[2:])
         return 0
