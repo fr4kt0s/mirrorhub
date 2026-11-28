@@ -149,3 +149,38 @@ def test_remove_job_logs_counts_jobs(configured: Settings) -> None:
         (logs.job_log_path(9).parent / name).write_text("x")
     assert logs.remove_job_logs([9, 10, 11]) == 2
     assert not list(logs.job_log_path(9).parent.glob("9.*"))
+
+
+def test_every_job_offers_its_complete_log(admin: TestClient, configured: Settings) -> None:
+    with Session(get_engine()) as db:
+        repo = Repository(slug="debian", name="Debian", tool="debmirror")
+        db.add(repo)
+        db.commit()
+        db.refresh(repo)
+        assert repo.id is not None
+        job = Job(repo_id=repo.id, tool="debmirror", status=JobStatus.SUCCEEDED.value)
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        job_id = job.id
+    assert job_id is not None
+    page = admin.get(f"/jobs/{job_id}").text
+    assert "Download job log" not in page and "Download rsync log" not in page
+    assert admin.get(f"/jobs/{job_id}/log").status_code == 404
+
+    text = "".join(f"line {n}\n" for n in range(500))  # more than the page shows
+    logs.job_log_path(job_id).write_text(text)
+    page = admin.get(f"/jobs/{job_id}").text
+    assert "Download job log" in page and "Download rsync log" not in page
+    response = admin.get(f"/jobs/{job_id}/log")
+    assert response.status_code == 200 and response.text == text
+    assert f'filename="job-{job_id}-debian-sync.log"' in response.headers["content-disposition"]
+
+
+def test_ftpsync_job_offers_both_logs(admin: TestClient, configured: Settings) -> None:
+    job_id, _slug = _ftpsync_job(JobStatus.FAILED.value)
+    logs.job_log_path(job_id).write_text("job log\n")
+    logs.kept_log_path(job_id, logs.RSYNC_LOG).write_text("rsync\n")
+    page = admin.get(f"/jobs/{job_id}").text
+    assert "Download job log" in page and "Download rsync log" in page
+    assert admin.get(f"/jobs/{job_id}/log").text == "job log\n"

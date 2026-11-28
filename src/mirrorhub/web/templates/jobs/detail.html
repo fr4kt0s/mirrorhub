@@ -69,13 +69,14 @@
 <section class="card">
   <h2>{{ "Final log" if is_terminal else "Live log" }}</h2>
   <p class="muted">
-    Showing a bounded log tail. Older output remains in the server log file.
+    Showing the last 200 lines{% if not is_terminal %} and new output as it arrives{% endif %}.
+    {% if job_log or rsync_log %}The downloads have everything{% if not is_terminal %} written so far{% endif %}.{% endif %}
   </p>
-  {% if rsync_log %}
-  <p>
-    <a class="btn btn-secondary" href="/jobs/{{ job.id }}/rsync-log">Download rsync log</a>
-    <span class="muted">The job log shows the first 500 rsync lines and the closing
-    summary; the download has all of them{% if not is_terminal %} (as far as written so far){% endif %}.</span>
+  {% if job_log or rsync_log %}
+  <p class="row-actions">
+    {% if job_log %}<a class="btn btn-secondary" href="/jobs/{{ job.id }}/log">Download job log</a>{% endif %}
+    {% if rsync_log %}<a class="btn btn-secondary" href="/jobs/{{ job.id }}/rsync-log">Download rsync log</a>
+    <span class="muted">The job log has the first 500 rsync lines and the closing summary; the rsync log has all of them.</span>{% endif %}
   </p>
   {% endif %}
   <pre class="log" id="job-log"
