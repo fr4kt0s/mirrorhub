@@ -21,7 +21,7 @@ from mirrorhub.db import get_engine
 from mirrorhub.enums import Trigger
 from mirrorhub.models import Repository, Schedule, utcnow
 from mirrorhub.security import auth
-from mirrorhub.services import appsettings, export_jobs, logs, notify, storage
+from mirrorhub.services import appsettings, export_jobs, logs, notify, security_keys, storage
 from mirrorhub.services import jobs as jobsvc
 from mirrorhub.settings import get_settings
 
@@ -153,6 +153,7 @@ def tick() -> dict[str, int]:
         # periodic sweep they would only disappear on the next restart.
         summary["sessions_purged"] = auth.purge_expired_sessions(db)
         summary["login_throttles_purged"] = auth.purge_stale_throttles(db)
+        summary["webauthn_challenges_purged"] = security_keys.purge_challenges(db)
         if _retention_due():
             summary["jobs_purged"] = jobsvc.purge_old(db, retention)
             try:

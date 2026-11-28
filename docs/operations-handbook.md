@@ -61,7 +61,7 @@ Run all commands in the project directory on the Docker host.
    docker compose ps          # all healthy, init-volumes "exited (0)"
    ```
 
-5. Check the database revision (must match the newest file in `migrations/versions`, currently `0010`):
+5. Check the database revision (must match the newest file in `migrations/versions`, currently `0011`):
 
    ```sh
    docker compose exec web python -c "import sqlite3; print(sqlite3.connect('/var/lib/mirrorhub/db/mirrorhub.sqlite3').execute('select version_num from alembic_version').fetchone()[0])"
@@ -297,7 +297,7 @@ The practical tests 3.1–3.4, 3.6 and 3.7 are referenced here, not repeated. Th
 #### A. Sender: deployment, login, security
 
 - [ ] **A1** (P1) `docker compose ps` → all services `healthy`, `init-volumes` `exited (0)`.
-- [ ] **A2** (P1) Database revision (1.1 step 5) → `0010`.
+- [ ] **A2** (P1) Database revision (1.1 step 5) → `0011`.
 - [ ] **A3** (P1) Smoke test → 8/8.
 - [ ] **A4** (P1) Commit in the footer and in `web`, `worker` and `worker-export` equals `git rev-parse --short=12 HEAD`:
   `for s in web worker worker-export; do docker compose exec $s python -c "from mirrorhub import buildinfo; print('$s', buildinfo.describe())"; done`
@@ -339,6 +339,8 @@ The practical tests 3.1–3.4, 3.6 and 3.7 are referenced here, not repeated. Th
 - [ ] **C7** (P1) Log of an ftpsync job → no debmirror entries (original finding).
 - [ ] **C29** (P2) ftpsync job log → lines `[ftpsync]` (start and end of the run), `[rsync]` (first 500 lines, the note "further lines are not shown here" and the closing summary from `Number of files:`), `[rsync error]` if rsync reported errors; the last line `# complete log kept as <id>.rsync.log`. Job page *Download rsync log* → the complete rsync output (while running: as far as written). Delete the job → `<state>/logs/jobs/<id>.rsync.log` is gone.
 - [ ] **C30** (P2) Job page of a debmirror, rsync, wget, export or rehash job with more than 200 log lines → *Download job log* gives the complete log (`job-<id>-<slug>-<type>.log`), also while the job runs; a job without a log file shows no button.
+- [ ] **C31** (P2) Security keys (4.9): Caddy root certificate trusted, page opens without warning; register two keys (PIN asked), second registration of the same key refused; log out → *Sign in with security key* with PIN → dashboard; wrong PIN or another key → error, audit `login.key_failure`.
+- [ ] **C32** (P2) Mode "password and security key": password alone → key step, dashboard only after touching the key; *Sign in with security key* no longer offered. `scripts/reset_password.sh --security-keys-only` → password alone logs in again.
 - [ ] **C8** (P2) rsync repository → sync succeeds, tree complete.
 - [ ] **C9** (P2) wget repository, mode *Whole directory tree* → saves without a file list (#51), sync succeeds, tree below the upstream root complete.
 - [ ] **C26** (P2) wget tree `download.docker.com` `/linux/ubuntu` with *Architectures to keep* `amd64` → `/data/<slug>/dists/*/pool/stable/` contains only `amd64`; `binary-arm64` etc. missing; edit page shows the generated regex; include/exclude regex survive editing.
@@ -901,12 +903,53 @@ mountstats /mnt/repository | less       # totals and RTT per operation since mou
 
 GETATTR round trip × number of files ≈ duration of one single-threaded walk. Then measure with `scripts/bench_exporter.py` (sender, 4.7) and `scripts/bench_importer.py` (receiver, `docs/importer.md`).
 
+### 4.9 Security keys (FIDO2, sender, from migration `0011`)
+
+The admin can log in with a FIDO2 security key (e.g. a YubiKey) instead of, or in addition to, the password. Without a registered key nothing changes.
+
+**Requirements**
+
+- `MIRRORHUB_PUBLIC_ORIGIN` with `https://` and the **host name** the browser uses (e.g. `https://mirrorhub.example.lan:8443`), not an IP address. Keys are bound to that host name: after changing it, register the keys again.
+- A certificate the browser trusts. Browsers refuse security keys on pages with a certificate warning. Without an own CA, trust Caddy's internal root certificate on every admin computer (valid for ten years; Caddy renews the server certificates below it by itself):
+
+  ```sh
+  docker compose cp proxy:/data/caddy/pki/authorities/local/root.crt ./mirrorhub-root.crt
+  ```
+
+  - Windows: double-click → *Install certificate* → *Local machine* → *Trusted Root Certification Authorities*.
+  - macOS: Keychain Access → *System* → import, then *Always trust*.
+  - Debian/Ubuntu: `sudo cp mirrorhub-root.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates`; Firefox: *Settings → Privacy & Security → Certificates → View certificates → Authorities → Import* (or `security.enterprise_roots.enabled`).
+
+  Afterwards `https://<host>:8443` must open without a warning. Over remote desktop sessions the USB key is usually not passed through.
+
+**Register** (*Settings → Security keys (FIDO2)*): name, password, *Register key*; touch the key and enter its FIDO2 PIN (the browser asks to set one if the key has none). Register at least two keys and keep the spare in a safe place. Each key shows when it was registered and last used; *Remove* needs the password.
+
+**Login mode** (shown once a key is registered, change needs the password):
+
+| Mode | Login | Note |
+| --- | --- | --- |
+| Password **or** security key (default) | password form, or *Sign in with security key* | the key alone needs its PIN, so a lost key is not enough |
+| Password **and** security key | password, then touch the key | two-factor; the password alone is not enough |
+
+Failed key logins count towards the same lockout per (user, address) as wrong passwords and are audited (`login.key_failure`). Successful logins record the method (`password`, `security key`, `password + security key`).
+
+**Locked out** (all keys lost or broken, or the host name changed), on the host:
+
+```sh
+scripts/reset_password.sh --security-keys-only    # remove all keys, keep the password
+scripts/reset_password.sh --remove-security-keys  # new password and remove all keys
+```
+
+Both set the mode back to "password or security key".
+
 ---
 
 ## 5. What to do when …
 
 | Incident | Action | Full export needed? |
 | --- | --- | --- |
+| Login: "This browser or connection does not support security keys" or the browser refuses | open MirrorHub by the host name of `MIRRORHUB_PUBLIC_ORIGIN` without certificate warning (4.9) | no |
+| Security key lost, or all keys unusable | log in with the spare key; otherwise `scripts/reset_password.sh --security-keys-only` on the host (4.9) | no |
 | Export lost in transit | Receiver: `status` shows `last`; sender: "Incremental since" with that export | no, as long as its metadata is kept |
 | Pickup delivers an export twice or late | nothing; the importer skips it as applied or superseded | no |
 | Sender database lost, state volume intact | restore repositories (backup or YAML import); the export history is restored from `export-meta` | no |

@@ -17,7 +17,7 @@ from mirrorhub.db import db_ok, get_engine
 from mirrorhub.logging_conf import configure_logging
 from mirrorhub.security import auth
 from mirrorhub.security.headers import SecurityHeadersMiddleware
-from mirrorhub.services import notify, presets, scheduler
+from mirrorhub.services import notify, presets, scheduler, security_keys
 from mirrorhub.settings import get_settings
 from mirrorhub.web.deps import NotAuthenticated, render, security_context
 from mirrorhub.web.routes import audit, dashboard
@@ -54,6 +54,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             auth.print_generated_password(settings.admin_username, generated)
         purged = auth.purge_expired_sessions(db)
         auth.purge_stale_throttles(db)
+        security_keys.purge_challenges(db)
         seeded = presets.seed(db)
         scheduler.ensure_next_fire(db)
 

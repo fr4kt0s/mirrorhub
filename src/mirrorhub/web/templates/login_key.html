@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Security key{% endblock %}
+{% block head %}<script src="/static/webauthn.js" defer></script>{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <p class="brand"><span class="brand-mark" aria-hidden="true"></span>MirrorHub</p>
+  <h1>Security key</h1>
+  <p>The password was correct. Insert your security key and touch it.</p>
+  <div data-webauthn-second data-options="{{ options }}">
+    <button type="button" class="btn" data-webauthn-second-start>Use security key</button>
+  </div>
+  <p class="alert alert-error" role="alert" data-webauthn-status hidden></p>
+  <p class="muted">This step expires after five minutes. <a href="/login">Back to the login</a></p>
+</section>
+{% endblock %}

@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/app.js" defer></script>
+  {% block head %}{% endblock %}
 </head>
 <body hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}' class="{% if user %}with-sidebar{% else %}no-sidebar{% endif %}">
 {% if user %}

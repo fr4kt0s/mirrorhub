@@ -21,6 +21,7 @@ dependencies = [
     "cryptography>=43",
     "croniter>=3.0",
     "pyyaml>=6.0",
+    "webauthn>=2.2",
 ]
 
 [dependency-groups]
@@ -51,6 +52,7 @@ files = ["src", "tests"]
 [[tool.mypy.overrides]]
 module = [
     "croniter.*",
+    "cbor2.*",
     "migrations.*",
     "alembic.*",
 ]
