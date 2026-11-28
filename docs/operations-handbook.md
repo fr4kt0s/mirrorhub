@@ -942,6 +942,12 @@ scripts/reset_password.sh --remove-security-keys  # new password and remove all 
 
 Both set the mode back to "password or security key".
 
+**Key PIN** (YubiKey; the PIN belongs to the key, MirrorHub never sees it):
+
+- *PIN known, to be changed:* `ykman fido access change-pin` (YubiKey Manager), or Yubico Authenticator → *WebAuthn (FIDO2/U2F)* → *Change PIN*. Nothing else changes; the key stays registered.
+- *PIN forgotten or blocked:* there is no recovery. After 8 wrong entries in a row the key's FIDO2 function locks (a correct entry resets the counter; `ykman fido info` shows the remaining tries). Only a FIDO2 reset helps: plug the key in again, within about 5 seconds run `ykman fido reset` and touch the key (or Yubico Authenticator → *Reset*). The reset **deletes all FIDO2 credentials on the key**, for every service, not only MirrorHub (PIV, OATH and OpenPGP on the key are not affected).
+- *After a reset:* log in with the password or the spare key, remove the old entry under *Settings → Security keys* and register the key again; the browser asks for a new PIN. In mode "password and security key" without a working spare key: `scripts/reset_password.sh --security-keys-only` on the host first.
+
 ---
 
 ## 5. What to do when …
@@ -949,6 +955,7 @@ Both set the mode back to "password or security key".
 | Incident | Action | Full export needed? |
 | --- | --- | --- |
 | Login: "This browser or connection does not support security keys" or the browser refuses | open MirrorHub by the host name of `MIRRORHUB_PUBLIC_ORIGIN` without certificate warning (4.9) | no |
+| Security key PIN forgotten or blocked | FIDO2 reset of the key (`ykman fido reset`, deletes its credentials), then register it again (4.9) | no |
 | Security key lost, or all keys unusable | log in with the spare key; otherwise `scripts/reset_password.sh --security-keys-only` on the host (4.9) | no |
 | Export lost in transit | Receiver: `status` shows `last`; sender: "Incremental since" with that export | no, as long as its metadata is kept |
 | Pickup delivers an export twice or late | nothing; the importer skips it as applied or superseded | no |
