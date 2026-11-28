@@ -116,6 +116,41 @@ class AuthSession(SQLModel, table=True):
     expires_at: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime, index=True)
 
 
+class SecurityKey(SQLModel, table=True):
+    """A FIDO2 security key (WebAuthn credential) registered for the admin.
+
+    Only the public key is stored; the private key never leaves the stick.
+    """
+
+    __tablename__ = "security_key"
+    id: int | None = Field(default=None, primary_key=True)
+    admin_id: int = Field(foreign_key="admin.id", index=True)
+    name: str = Field(max_length=64)
+    credential_id: str = Field(unique=True, index=True, max_length=1400)  # base64url
+    public_key: str  # COSE key, base64url
+    sign_count: int = 0
+    aaguid: str = ""
+    transports: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    created_at: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime)
+    last_used_at: datetime | None = Field(default=None, sa_type=UTCDateTime)
+
+
+class WebAuthnChallenge(SQLModel, table=True):
+    """A pending WebAuthn ceremony: single-use challenge, valid for a few minutes.
+
+    The browser holds a random token in a cookie; the table stores its hash. For a
+    registration or the second factor the admin is already known (``admin_id``).
+    """
+
+    __tablename__ = "webauthn_challenge"
+    id: str = Field(primary_key=True, max_length=64)  # SHA-256 of the cookie token
+    purpose: str = Field(max_length=16)  # register | login | second
+    challenge: str  # base64url
+    admin_id: int | None = Field(default=None, foreign_key="admin.id")
+    name: str = Field(default="", max_length=64)  # key name while registering
+    expires_at: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime, index=True)
+
+
 class Repository(SQLModel, table=True):
     """A mirrored repository: upstream, sync tool and options, export settings."""
 

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Settings{% endblock %}
+{% block head %}<script src="/static/webauthn.js" defer></script>{% endblock %}
 {% block content %}
 <h1>Settings</h1>
 {% if errors %}<ul class="alert alert-error">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
@@ -13,6 +14,64 @@
     <label>Disk critical threshold (%) <input name="disk_critical_percent" value="{{ values.disk_critical_percent }}" inputmode="numeric"></label>
     <button class="btn" type="submit">Save</button>
   </form>
+</section>
+
+<section class="card" id="security-keys">
+  <h2>Security keys (FIDO2)</h2>
+  {% if keys_unavailable %}
+  <p class="alert alert-error">{{ keys_unavailable }}.</p>
+  {% endif %}
+  <p class="muted">
+    Without a registered key the password alone logs in. Keys are bound to the host of
+    <code>MIRRORHUB_PUBLIC_ORIGIN</code> and need a certificate the browser trusts
+    (operations handbook, "Security keys"). Register at least two keys, so a lost key does
+    not lock you out; <code>scripts/reset_password.sh --security-keys-only</code> on the host
+    removes all keys.
+  </p>
+  {% if keys %}
+  {% if keys | length == 1 %}<p class="alert alert-error">Only one key is registered. Register a second one as a spare.</p>{% endif %}
+  <table class="table">
+    <thead><tr><th>Name</th><th>Registered</th><th>Last used</th><th></th></tr></thead>
+    <tbody>
+    {% for key in keys %}
+      <tr>
+        <td>{{ key.name }}</td>
+        <td>{{ key.created_at.strftime("%Y-%m-%d %H:%M") }} UTC</td>
+        <td>{{ key.last_used_at.strftime("%Y-%m-%d %H:%M") ~ " UTC" if key.last_used_at else "never" }}</td>
+        <td class="row-actions">
+          <form method="post" action="/settings/security-keys/{{ key.id }}/delete">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="password" name="password" placeholder="Password" maxlength="256" autocomplete="current-password" required aria-label="Password to remove {{ key.name }}">
+            <button class="btn btn-danger" type="submit">Remove</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <h3>Login mode</h3>
+  <form method="post" action="/settings/login-mode">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label><input type="radio" name="mode" value="either" {% if login_mode == "either" %}checked{% endif %}>
+      Password <strong>or</strong> security key (the key alone needs its PIN)</label>
+    <label><input type="radio" name="mode" value="both" {% if login_mode == "both" %}checked{% endif %}>
+      Password <strong>and</strong> security key (two-factor; touching the key is enough)</label>
+    <label>Password <input type="password" name="password" maxlength="256" autocomplete="current-password" required></label>
+    <button class="btn" type="submit">Save login mode</button>
+  </form>
+  {% endif %}
+
+  {% if not keys_unavailable %}
+  <h3>Register a key</h3>
+  <form data-webauthn-register>
+    <label>Name <input name="name" maxlength="64" placeholder="e.g. YubiKey blue" required></label>
+    <label>Password <input type="password" name="password" maxlength="256" autocomplete="current-password" required></label>
+    <button class="btn" type="submit">Register key</button>
+    <p class="alert alert-error" role="alert" data-webauthn-status hidden></p>
+    <p class="muted">The browser asks you to touch the key and to enter its PIN (or to set one, if the key has none yet).</p>
+  </form>
+  {% endif %}
 </section>
 
 <section class="card">

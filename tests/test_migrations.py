@@ -40,7 +40,7 @@ def test_migration_installs_append_only_audit_triggers(
 
     with get_engine().connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert version == "0010"
+        assert version == "0011"
 
     command.upgrade(config, "head")
 

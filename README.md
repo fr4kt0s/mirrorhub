@@ -327,7 +327,13 @@ Changing the Caddy CA volume changes the CA identity. Back up that volume.
   the scheduler every 30 seconds. A live job log stops streaming when the
   session ends.
 - `scripts/reset_password.sh` sets a new password, ends all sessions and lifts
-  all login lockouts.
+  all login lockouts. `--remove-security-keys` also removes all security keys,
+  `--security-keys-only` removes only the keys.
+- Optional FIDO2 security keys (e.g. YubiKey), registered under *Settings*: log in
+  with password **or** key (the key alone needs its PIN), or switch to password
+  **and** key (two-factor). Needs `MIRRORHUB_PUBLIC_ORIGIN` with a host name and a
+  trusted certificate (Caddy's root certificate imported on the admin computers);
+  see the operations handbook, section 4.9.
 
 ## UID/GID and NFS
 

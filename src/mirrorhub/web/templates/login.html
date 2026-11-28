@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Login{% endblock %}
+{% block head %}{% if key_login %}<script src="/static/webauthn.js" defer></script>{% endif %}{% endblock %}
 {% block content %}
 <section class="card narrow">
   <p class="brand"><span class="brand-mark" aria-hidden="true"></span>MirrorHub</p>
@@ -13,5 +14,12 @@
     <input id="password" name="password" type="password" maxlength="256" autocomplete="current-password" required>
     <button type="submit" class="btn">Log in</button>
   </form>
+  {% if key_login %}
+  <hr>
+  <p class="muted">Or without a password:</p>
+  <button type="button" class="btn btn-secondary" data-webauthn-login>Sign in with security key</button>
+  <p class="alert alert-error" role="alert" data-webauthn-status hidden></p>
+  <p class="muted">Insert the key, enter its PIN when asked and touch it.</p>
+  {% endif %}
 </section>
 {% endblock %}

@@ -184,6 +184,47 @@ def _throttle(db: Session, username: str, ip: str, now: datetime) -> LoginThrott
     return row
 
 
+def check_lock(
+    db: Session, username: str, ip: str = "", now: datetime | None = None
+) -> LoginThrottle:
+    """Raise LoginLocked while (username, ip) is locked; return its throttle row."""
+    now = now or utcnow()
+    throttle = _throttle(db, username, ip, now)
+    if throttle.locked_until is not None and throttle.locked_until > now:
+        raise LoginLocked(int((throttle.locked_until - now).total_seconds()) + 1)
+    return throttle
+
+
+def register_failure(
+    db: Session,
+    throttle: LoginThrottle,
+    settings: Settings | None = None,
+    now: datetime | None = None,
+) -> None:
+    """Count a failed login (password or security key); raise LoginLocked when locking."""
+    s = settings or get_settings()
+    now = now or utcnow()
+    throttle.failed_attempts += 1
+    throttle.updated_at = now
+    lock_s = 0
+    if throttle.failed_attempts >= s.login_max_attempts:
+        exponent = min(throttle.failed_attempts - s.login_max_attempts, 16)
+        lock_s = min(s.login_lockout_s * 2**exponent, MAX_LOCK_S)
+        throttle.locked_until = now + timedelta(seconds=lock_s)
+    db.add(throttle)
+    db.commit()
+    if lock_s:
+        raise LoginLocked(lock_s)
+
+
+def clear_failures(db: Session, throttle: LoginThrottle) -> None:
+    """Forget the failed attempts of (username, ip) after a successful login."""
+    existing = db.get(LoginThrottle, throttle.key)
+    if existing is not None:
+        db.delete(existing)
+    db.commit()
+
+
 def attempt_login(
     db: Session,
     username: str,
@@ -199,13 +240,10 @@ def attempt_login(
     other address, so a remote attacker cannot lock the account out. Unknown
     usernames are throttled the same way, which keeps responses uniform.
     """
-    s = settings or get_settings()
     now = now or utcnow()
     password = password[:MAX_PASSWORD_LEN]
 
-    throttle = _throttle(db, username, ip, now)
-    if throttle.locked_until is not None and throttle.locked_until > now:
-        raise LoginLocked(int((throttle.locked_until - now).total_seconds()) + 1)
+    throttle = check_lock(db, username, ip, now)
 
     admin = db.exec(select(Admin).where(Admin.username == username)).first()
     if admin is None:
@@ -215,27 +253,14 @@ def attempt_login(
         valid = verify_password(admin.password_hash, password)
 
     if not valid:
-        throttle.failed_attempts += 1
-        throttle.updated_at = now
-        lock_s = 0
-        if throttle.failed_attempts >= s.login_max_attempts:
-            exponent = min(throttle.failed_attempts - s.login_max_attempts, 16)
-            lock_s = min(s.login_lockout_s * 2**exponent, MAX_LOCK_S)
-            throttle.locked_until = now + timedelta(seconds=lock_s)
-        db.add(throttle)
-        db.commit()
-        if lock_s:
-            raise LoginLocked(lock_s)
+        register_failure(db, throttle, settings, now)
         raise InvalidCredentials
 
     assert admin is not None
     if _hasher.check_needs_rehash(admin.password_hash):
         admin.password_hash = hash_password(password)
         db.add(admin)
-    existing = db.get(LoginThrottle, throttle.key)
-    if existing is not None:
-        db.delete(existing)
-    db.commit()
+    clear_failures(db, throttle)
     return admin
 
 
