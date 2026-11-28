@@ -472,6 +472,11 @@ Stopping a subprocess sends SIGTERM, followed by SIGKILL after its grace period.
 
 Exports cancel cooperatively until publication begins.
 
+The job page shows the last 200 lines of the job log, live while the job runs.
+**Download job log** gives the complete log of any job (sync, export, rehash;
+while it runs: as far as written). ftpsync jobs also offer **Download rsync log**
+("Inspect FTPsync job logs").
+
 Finished jobs are deleted together with their logs after the job and log
 retention from the Settings page (default 30 days; checked once an hour). The
 newest finished job of each repository and job type is always kept, and so is

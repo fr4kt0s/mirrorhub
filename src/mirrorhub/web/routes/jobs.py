@@ -148,6 +148,7 @@ def detail(
             "lines": lines,
             "log_offset": offset,
             "is_terminal": is_terminal,
+            "job_log": job.id is not None and logs.job_log_path(job.id).is_file(),
             "rsync_log": _rsync_log(job, repo.slug if repo else None, is_terminal) is not None
             or (job.tool == Tool.FTPSYNC.value and not is_terminal),
         },
@@ -193,14 +194,44 @@ def rsync_log(
             {"status": 404, "detail": "No rsync log for this job (yet)"},
             404,
         )
+    name = f"job-{job_id}-rsync-{slug or job.repo_id}.log"
+    return _download(request, path, name)
+
+
+@router.get("/jobs/{job_id}/log")
+def job_log(
+    job_id: int,
+    request: Request,
+    _user: CurrentUser = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Download the complete job log of any job (the page shows the last 200 lines)."""
+    job = jobsvc.get(db, job_id)
+    if job is None or job.id is None:
+        return render(request, "error.html", {"status": 404, "detail": "Job not found"}, 404)
+    path = logs.job_log_path(job.id)
+    if not path.is_file():
+        return render(
+            request, "error.html", {"status": 404, "detail": "No log for this job (yet)"}, 404
+        )
+    repo = repos.get(db, job.repo_id)
+    name = f"job-{job.id}-{repo.slug if repo else job.repo_id}-{job.type}.log"
+    return _download(request, path, name)
+
+
+def _download(request: Request, path: Path, name: str) -> Response:
+    """Stream a log file as an attachment, up to its size when the download starts.
+
+    A running job keeps writing to the file; reading only what existed at the start
+    keeps the response length consistent.
+    """
     try:
         handle = path.open("rb")
         size = os.fstat(handle.fileno()).st_size
     except OSError:
-        return render(request, "error.html", {"status": 404, "detail": "rsync log gone"}, 404)
+        return render(request, "error.html", {"status": 404, "detail": "Log file gone"}, 404)
 
     def chunks() -> Iterator[bytes]:
-        # up to the size at the start: a running ftpsync keeps writing to the file
         left = size
         with handle:
             while left > 0:
@@ -210,7 +241,6 @@ def rsync_log(
                 left -= len(data)
                 yield data
 
-    name = f"job-{job_id}-rsync-{slug or job.repo_id}.log"
     return StreamingResponse(
         chunks(),
         media_type="text/plain; charset=utf-8",
